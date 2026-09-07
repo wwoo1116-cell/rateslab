@@ -228,7 +228,10 @@ describe('API base 의 모양', () => {
     /* 소스가 옳아도 **구워진 값**이 틀릴 수 있다 — 위 사고가 정확히 그랬다.
      * 청크에서 리터럴을 꺼내 같은 판정기에 건다. */
     const chunks = path.join(ROOT, '.next', 'static', 'chunks');
-    if (!existsSync(chunks)) return;
+    /* **dev 산출물이면 안 본다** [2026-09-07] — `pnpm dev` 의 청크에는 치환이
+       안 된 값과 에러 메시지 문구가 그대로 들어 있어서, 그걸 «구워진 값» 으로
+       읽으면 빨강이 난다. 아래 「산출물」 절과 같은 판정기를 쓴다. */
+    if (!existsSync(chunks) || !isProductionBuild()) return;
     const literals = new Set<string>();
     for (const file of walk(chunks, '.js')) {
       const js = readFileSync(file, 'utf8');
@@ -244,6 +247,28 @@ describe('API base 의 모양', () => {
   });
 });
 
+/** `.next` 가 **프로덕션 빌드**인가 — `pnpm dev` 가 남긴 것인가.
+ *
+ *  ★ 이 구분이 없어서 이 가드는 개발 기계에서 **늘 빨강**이었다 [실측 2026-09-07].
+ *  `pnpm dev` 도 `.next/static/chunks` 를 채우는데, 그 청크에는 개발 출처가
+ *  당연히 들어 있고 `NEXT_PUBLIC_API_BASE` 치환도 안 돼 있다. 가드는 그것을
+ *  «배포될 번들» 로 읽고 두 검사를 빨강으로 냈다 — 세션마다 「기존 문제」로
+ *  넘겨지다가 오늘 실제로 열어 보니 **가드가 옳았고 대상이 틀렸다**.
+ *
+ *  같은 날 프로덕션 빌드로 돌리니 18/18 초록이다:
+ *      NEXT_PUBLIC_API_BASE=https://<host>.ts.net/v2 pnpm build && pnpm test
+ *
+ *  **dev 산출물에서는 «건너뛴다»** — 「검사할 게 없었다」와 「검사했더니
+ *  깨끗하다」가 다른 사실이라는, 이 파일이 이미 아래에 적어 둔 그 규율의
+ *  세 번째 얼굴이다. 빨강으로 두면 진짜 회귀가 묻힌다(오늘 하루 종일 그랬다).
+ *
+ *  판별: 프로덕션 빌드는 `BUILD_ID` 를 남기고, dev 는 `static/development/` 를
+ *  만든다. 둘 다 보는 이유는 실패한 빌드가 중간 상태를 남기기 때문이다. */
+function isProductionBuild(): boolean {
+  return existsSync(path.join(ROOT, '.next', 'BUILD_ID'))
+    && !existsSync(path.join(ROOT, '.next', 'static', 'development'));
+}
+
 /** 청크 목록에서 **앱이 만든 것**만 — polyfills 는 빌드가 늘 두는 것이라
  * 그것 하나만 남은 상태는 "검사할 게 없다"이지 "깨끗하다"가 아니다. */
 function appChunksOf(files: string[]): string[] {
@@ -252,9 +277,9 @@ function appChunksOf(files: string[]): string[] {
 
 describe('빌드 산출물', () => {
   const chunks = path.join(ROOT, '.next', 'static', 'chunks');
-  const built = existsSync(chunks);
+  const built = existsSync(chunks) && isProductionBuild();
 
-  it.skipIf(!built)('청크에 개발 출처가 없다 (.next 가 있을 때만)', () => {
+  it.skipIf(!built)('청크에 개발 출처가 없다 (프로덕션 빌드가 있을 때만)', () => {
     const offenders: string[] = [];
     for (const file of walk(chunks, '.js')) {
       const hits = findDevOrigins(readFileSync(file, 'utf8'));
@@ -263,11 +288,20 @@ describe('빌드 산출물', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('.next 가 없으면 위 검사는 아무것도 증명하지 않는다', () => {
+  it('프로덕션 빌드가 없으면 위 검사는 아무것도 증명하지 않는다', () => {
     /* 이 테스트 자체가 기록이다. 초록을 "번들이 깨끗하다" 로 읽으면 안 되고,
      * 배포 전에는 `pnpm build` **뒤에** `pnpm vitest run` 을 한 번 더 돌린다.
-     * 청크는 빌드가 만들고, vitest 는 만들지 않는다. */
+     * 청크는 빌드가 만들고, vitest 는 만들지 않는다.
+     *
+     * ★ `.next` 가 **있어도** dev 산출물이면 마찬가지다 [2026-09-07]. 그때는
+     * 위 검사가 건너뛰므로, 이 줄이 그 사실을 화면에 남긴다. */
     expect(typeof built).toBe('boolean');
+    if (existsSync(chunks) && !isProductionBuild()) {
+      console.warn(
+        '[production-env] `.next` 가 dev 산출물이라 산출물 검사를 건너뛰었어요 — '
+        + '배포 전에 `NEXT_PUBLIC_API_BASE=… pnpm build` 뒤에 다시 도세요.',
+      );
+    }
   });
 
   /* ── 초록이 거짓말한 실측 [2026-08-21] ──────────────────────────────────
