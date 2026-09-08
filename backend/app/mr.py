@@ -170,6 +170,61 @@ def dirs_for(kind: str) -> dict:
     }
 
 
+def triggers_for(kind: str, v: float, up: float | None, lo: float | None,
+                 scale: float) -> list[dict]:
+    """밴드 경계를 **지금 만질 수 있는 거래**로 옮겨 적은 것 — 「얼마 레벨이면
+    어느 다리인가」 [OWNER 2026-09-09 — "누르면 얼마 레벨에서는 매수 추천과 같은
+    플로우"].
+
+    ## 계산이 아니라 **번역**이다 — 그래서 추천이 아니다
+
+    새 판정을 하나도 안 만든다. 밴드(SMA ± k·σ)는 이미 이 화면의 값이고,
+    방향과 다리 이름은 이미 `DIR_LEGS`·`TRADABLE_DIRS` 의 값이다. 이 함수가
+    더하는 것은 그 둘을 한 문장으로 **잇는 것**뿐이다: 「+25.57bp 이상이면
+    국고 매수 · IRS 페이」. 종전 화면은 둘을 따로 적어 두고 읽는 사람이 머리로
+    이으라고 했다 — 그런데 경계 레벨은 화면에 **숫자로 서 있지도 않았다**
+    (`upper`·`lower` 는 페이로드에만 있었다).
+
+    명구 의무는 그대로 산다(`MrPage` 머리 주석): 명목·손절·목표를 말하지 않고,
+    **진입 문턱 하나**만 말한다 [OWNER 2026-09-09 — 「트리거 레벨까지」].
+
+    ## 어느 경계가 어느 다리인가
+
+    엔진 규약은 `|z| ≥ 진입σ` 인 봉에서 `want = -1 if z > 0 else +1` 이다 —
+    **늘어난 쪽의 반대**에 건다. 그래서 경계마다 방향이 하나로 정해진다:
+
+        값 ≥ 상단  →  dir −1  (축소에 거는 쪽)
+        값 ≤ 하단  →  dir +1  (확대에 거는 쪽)
+
+    `TRADABLE_DIRS` 에 없는 방향은 **아예 안 싣는다** — BSS 의 하단은 국고
+    매도라 이 데스크가 못 하는 거래이고(`BLOCKED_WHY`), 그 자리에 레벨을
+    적으면 화면이 못 하는 거래의 문턱을 권하는 셈이다. 화면이 그 사실을 말할
+    수 있게 사유는 행의 `triggerBlocked` 가 따로 진다.
+
+    ## `gap` 의 부호 — 「아직 얼마 남았나」
+
+    양수면 그만큼 더 가야 문턱이고, 음수면 **이미 지났다**(그때 `reached`).
+    단위는 행의 변화 열과 같은 bp 다(`scale` 이 %-계열을 옮긴다) — 레벨은
+    계열의 자기 단위인데 거리를 그 단위로 적으면 선물 계열에서만 100배 작은
+    수가 된다(이 파일이 `d1`·`width` 에서 이미 지키는 규약).
+    """
+    legs = DIR_LEGS[kind]
+    out: list[dict] = []
+    for dirn, side, level, word in ((-1, "above", up, legs["minus"]),
+                                    (1, "below", lo, legs["plus"])):
+        if level is None or dirn not in TRADABLE_DIRS[kind]:
+            continue
+        gap = (level - v) if side == "above" else (v - level)
+        out.append({
+            "dir": dirn, "side": side,
+            "level": round(level, 4),
+            "short": word["short"], "legs": word["legs"],
+            "gap": round(gap * scale, 4),
+            "reached": gap <= 0,
+        })
+    return out
+
+
 # KRX 국채선물 이론가의 역함수 — 2026-08-25 선물·퓨처스왑이 백테스트/시뮬에
 # 합류하면서 `futures_pricing` 으로 승격했다(같은 수를 두 곳에서 정의하지
 # 않는다). 구간·횟수 등 산술은 바이트 단위로 그때 그대로다 — 이 별칭은 이
@@ -346,6 +401,12 @@ def _assemble(sid: str, label: str, kind: str, unit: str,
         "width": round(width * scale, 4) if width is not None else None,
         "asof": dates[-1],
         "state": _state(vals, up, lo),
+        # 「얼마 레벨이면 어느 다리인가」 — 밴드 경계의 번역이다(그 함수 머리).
+        # 0~2개이고, 못 하는 방향은 안 싣는다.
+        "triggers": triggers_for(kind, v, u, l, scale),
+        # 왜 한쪽만 서는가 — 빠진 경계를 화면이 조용히 숨기지 않는다(rv
+        # exclusions 문법과 같은 자리).
+        "triggerBlocked": dirs_for(kind)["why"],
     }
     lo_i = max(0, len(vals) - HISTORY_N)
     history = {

@@ -56,6 +56,7 @@ import { fmtKrw, fmtKrwFromMan, manUnits } from '@/lib/krw';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
 import { ReadoutCard, ReadoutFact, ReadoutLevel, ReadoutMoney, placeReadout } from '@/ui/ReadoutCard';
 import { Stat, StatColumn } from '@/ui/Stat';
+import { ThHelp } from '@/ui/ThHelp';
 
 import {
   MR_ENTRY_MODES,
@@ -80,7 +81,7 @@ import { backtestDays, futuresReconNote, reconNote, reconTenors } from '@/backte
 import { ReconStack, type ReconStackDay } from '@/ui/window/ReconStack';
 import { MrKnobBar, mrKnobsStale } from './KnobBar';
 import { OptimizePane } from './OptimizePane';
-import { Panel, RiskAdjusted, WHY_WORD, headFont } from './parts';
+import { Panel, RiskAdjusted, SplitColumn, WHY_WORD, headFont } from './parts';
 
 /* 얼라인 규칙 [OWNER 2026-08-25 — CLAUDE.md «얼라인» 절]. 첫 판은 라벨을
  * 컨트롤 **옆**에 붙였고, 라벨 폭이 제각각이라 컨트롤 시작점이 계단이 졌다
@@ -185,8 +186,46 @@ type MrEvent = {
   key: string;
 };
 
-/** 미청산 다리의 열쇠 — 청산일이 없으므로 거래와 같은 모양을 쓸 수 없다. */
-const OPEN_KEY = 'open';
+/** 미청산 다리를 **거래 줄 모양으로** [OWNER 2026-09-09 — "미청산도 PnL에
+ *  포함하기"].
+ *
+ *  ## 무엇이 빠져 있었나
+ *
+ *  총손익·낙폭은 종전에도 이 다리를 지고 있었다(누적이 보유 봉마다 MTM 을
+ *  더한다 — `mrbacktest` 의 그 주석). 빠져 있던 것은 **거래 표**였다: 표의
+ *  세로합이 누적과 갈리고, 열려 있는 손익은 KPI 타일 한 칸에만 있었다. 그래서
+ *  이 줄을 표의 마지막에 세운다 — 사유 칸이 「미청산」이고, 「청산」 쪽 값은
+ *  청산이 아니라 **마지막 봉의 평가**다.
+ *
+ *  ## 무엇을 안 바꾸나
+ *
+ *  **승률·거래 수는 안 건드린다.** 그 둘을 바꾸는 것은 `countOpen` 노브의 일이고
+ *  (엔진이 의사거래를 목록에 넣는다), 그 노브는 긴 표본에서 기각됐다
+ *  (`docs/MR_LANE_STATE.md` §긴 표본 판정). 그래서 화면은 표의 줄만 늘리고 KPI
+ *  타일의 「거래」는 그대로 둔다 — 각주가 그 사실을 적는다.
+ *
+ *  노브가 켜져 있으면 **이미 목록에 있으므로** null 이다(두 번 세지 않는다).
+ *  구 백엔드는 「청산」 쪽 셋과 성분을 모르므로 그때도 null 이다 — 없는 값을
+ *  0 으로 그리지 않는다(이 리포의 공란 정책). */
+function openAsTrade(run: MrStrategyRun): MrStrategyTrade | null {
+  const o = run.open;
+  if (!o || run.params.countOpen) return null;
+  if (o.exitT == null || o.exitV == null || o.dv == null) return null;
+  if (o.mtm == null || o.carry == null || o.cost == null) return null;
+  return {
+    entryT: o.entryT, exitT: o.exitT, dir: o.dir,
+    entryZ: o.entryZ, exitZ: o.exitZ ?? null,
+    entryV: o.entryV, exitV: o.exitV,
+    pnl: o.pnl, why: 'open',
+    mtm: o.mtm, carry: o.carry,
+    ...(o.rolldown != null ? { rolldown: o.rolldown } : {}),
+    ...(o.funding != null ? { funding: o.funding } : {}),
+    cost: o.cost,
+    bars: o.bars,
+    outFrom: o.outFrom, outDays: o.outDays, peakZ: o.peakZ,
+    dv: o.dv, dvNet: o.dvNet, masked: o.masked,
+  };
+}
 
 
 /** 그날 사건의 한 마디 — 판독과 대사표의 「구분」 칸이 같은 말을 쓴다. */
@@ -794,11 +833,20 @@ export function StrategyWindow({
      앞이다). 구간 안 진입만 세면 걸쳐 들어온 거래의 손익이 구간 순손익에는
      있는데 표에는 없어, 표와 곡선이 딴말을 하게 된다. */
   const winFrom = winPoints[0]?.t ?? '';
+  /* 표에 세울 줄 — 거래들 + **미청산 한 줄** [OWNER 2026-09-09 — "미청산도 PnL에
+     포함하기"]. 미청산은 늘 마지막 봉까지 열려 있으므로 어느 구간에도 걸린다
+     (그래서 구간 필터를 안 탄다). 번호는 마지막 거래 다음이다 — 「몇 번째
+     진입인가」를 세는 번호라 열려 있는 다리도 그 줄에 선다(`entryCount` 와 같은
+     셈). */
   const shownTrades = useMemo(
-    () =>
-      !run ? [] : run.trades
+    () => {
+      if (!run) return [];
+      const rows = run.trades
         .map((t, k) => ({ t, n: k + 1 }))
-        .filter(({ t }) => span === 'all' || t.exitT >= winFrom),
+        .filter(({ t }) => span === 'all' || t.exitT >= winFrom);
+      const op = openAsTrade(run);
+      return op ? [...rows, { t: op, n: run.trades.length + 1 }] : rows;
+    },
     [run, span, winFrom],
   );
 
@@ -827,11 +875,18 @@ export function StrategyWindow({
                    dir: t.dir, n: k + 1, key });
     });
     /* 미청산 다리도 사건이다 — 표본 끝에 열려 있는 포지션이 차트에서만
-       사라지면, 승률 옆의 「미청산 1건」이 어디 것인지 화면이 못 가리킨다. */
-    if (run.open) {
-      const e = at.get(run.open.entryT);
+       사라지면, 승률 옆의 「미청산 1건」이 어디 것인지 화면이 못 가리킨다.
+
+       열쇠는 **거래와 같은 모양**이다(`tradeKey`) — 종전에는 `'open'` 이라는
+       따로 된 상수였는데, 그 줄이 2026-09-09 에 거래 표의 줄이 되면서 표의
+       클릭과 차트의 강조가 같은 열쇠를 써야 하게 됐다(안 맞추면 미청산 줄을
+       눌러도 차트가 딴 거래를 굵게 세운다). */
+    const op = openAsTrade(run);
+    if (op) {
+      const e = at.get(op.entryT);
       if (e != null && !m.has(e))
-        m.set(e, { kind: 'entry', dir: run.open.dir, n: run.trades.length + 1, key: OPEN_KEY });
+        m.set(e, { kind: 'entry', dir: op.dir, n: run.trades.length + 1,
+                   key: tradeKey(op) });
     }
     return m;
   }, [run, dates]);
@@ -849,7 +904,13 @@ export function StrategyWindow({
 
   /* 펴 놓은 거래와 그 구간의 봉들 — 대사표의 재료. 키는 «진입-청산» 이라
      실행이 바뀌면 자연히 안 맞고, 그때는 목록으로 돌아간다. */
-  const sel = run?.trades.find((t) => tradeKey(t) === openTrade) ?? null;
+  /* 미청산 줄도 펴진다 — 표의 줄이 된 이상 누를 수 있어야 하고(같은 행동을
+     줄마다 다르게 두면 그 줄만 죽은 줄이다), 대사표는 진입→마지막 봉 구간을
+     그대로 편다. */
+  const sel = (run
+    ? [...run.trades, ...(openAsTrade(run) ? [openAsTrade(run)!] : [])]
+        .find((t) => tradeKey(t) === openTrade)
+    : null) ?? null;
   const reconRows = useMemo(
     () =>
       sel && run
@@ -907,6 +968,10 @@ export function StrategyWindow({
         span === 'all'
           ? `${run.trades.length}건`
           : `구간에 걸친 ${shownTrades.length}건 / 전체 ${run.trades.length}건`,
+        /* 미청산 줄은 **건수에 안 든다** — 표의 줄은 늘었지만 「몇 건 거래했나」는
+           원본 규약대로 청산된 것만이다(KPI 타일의 「거래」와 같은 수여야 한다).
+           그래서 그 줄이 표에 있다는 사실만 따로 적는다. */
+        openAsTrade(run) ? '미청산 1줄 포함(건수 밖)' : null,
         `Delta ${run.params.notional.toLocaleString()}원/bp`,
         run.principal ? `액면 약 ${fmtEok(run.principal.krw)}(지금 커브)` : null,
       ].filter((x): x is string => x != null).join(' · ');
@@ -1511,6 +1576,11 @@ export function StrategyWindow({
                   (`parts.RiskAdjusted`). 통합 장부도 같은 일곱을 쓰게 되면서
                   여기서 갈라 냈다 [2026-09-07] — 두 벌이면 한쪽만 낡는다. */}
               <RiskAdjusted perf={perf} />
+              {/* 누적 분해 [OWNER 2026-09-09 — "누적 채권 + 스왑 손익을 롤다운
+                  캐리로 분해해서 보여주기"]. **구간을 따라간다**(`perf.split`) —
+                  옆 열들과 같은 구간이어야 한 줄로 읽힌다. 두 창이 같은 부품을
+                  세운다(`parts.SplitColumn`). */}
+              <SplitColumn split={perf.split} />
               <StatColumn title="조건">
                 {/* 비용이 봉마다 다르면 「편도 몇 bp」가 한 숫자로 안 나온다 —
                     실제로 문 범위와 중앙값을 적는다. 상수 하나로 뭉개면 화면이
@@ -1829,6 +1899,17 @@ export function StrategyWindow({
                         <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
                           <Text font={headFont('Δ (bp)')} as="span" color="fgMuted" noWrap>Δ (bp)</Text>
                         </TableCell>
+                        {/* 순Δ [OWNER 2026-09-09 — "체결비용이 델타에는 반영되게
+                            해야 직관적으로 델타와 손익을 비교 가능"]. Δ 는 시장이
+                            움직인 것이고 순Δ 는 비용을 문 뒤 **우리가 가진** 것이다
+                            — 두 열이 있어야 「청산 − 진입 = Δ」 검산과 「Δ 대 손익」
+                            비교가 **동시에** 선다(산술은 서버 `mrmetrics.dv_net`). */}
+                        <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
+                          <ThHelp
+                            label="순Δ (bp)"
+                            help="체결비용을 bp 로 되돌려 Δ 에 실은 값이에요 — 감도(방향 × Delta) × 순Δ = 평가 + 비용 이에요. Δ 는 시장이 움직인 것이고, 이 열은 비용을 문 뒤에 남은 것이에요."
+                          />
+                        </TableCell>
                         <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
                           <Text font="caption" as="span" color="fgMuted">손익</Text>
                         </TableCell>
@@ -1919,6 +2000,13 @@ export function StrategyWindow({
                               {t.masked ? <RollMark n={t.masked} /> : null}
                             </Text>
                           </TableCell>
+                          {/* 구 백엔드는 이 열이 없다 — 0 으로 채우면 「비용이
+                              없었다」가 되므로 '—' 다(공란 정책). */}
+                          <TableCell className="sr-num" justifyContent="flex-end">
+                            <Text font="label2" as="span" tabularNumbers noWrap>
+                              {t.dvNet == null ? '—' : fmtBp(t.dvNet, 2)}
+                            </Text>
+                          </TableCell>
                           <TableCell className="sr-num" justifyContent="flex-end">
                             <Text
                               font="label2"
@@ -1951,8 +2039,13 @@ export function StrategyWindow({
                 : '|z|가 진입σ를 넘는 봉에 들어가요 — 밴드를 뚫는 그 봉이에요.'}{' '}
               거래 줄을 누르면 일별 대사가 열려요 — 하루가 다리마다 세 줄(KRD·Δbp·
               손익)이고 마지막이 종합이에요. 줄마다 −KRD × Δ = 손익 · 다리 손익을 더하면
-              평가 · 세로합 = 거래 손익이에요. 표본 끝의 미청산 포지션은 누적에는 있고
-              거래 수에는 없어요(원본 규약).
+              평가 · 세로합 = 거래 손익이에요. 표본 끝의 미청산 포지션은 **표의
+              마지막 줄**(사유 「미청산」)로 서요 — 누적에는 늘 들어 있었고, 승률·
+              거래 수에는 여전히 안 들어가요(원본 규약). 그 줄의 「청산」 칸은 청산이
+              아니라 마지막 봉의 평가예요. 순Δ 는 체결비용을 bp 로 되돌려 Δ 에 실은
+              값이라(감도 × 순Δ = 평가 + 비용) Δ 와 손익을 같은 자로 볼 수 있어요 —
+              실가격 회계에서는 평가가 자산스왑 대사의 값이라 그 곱이 원 단위까지는
+              안 닫혀요.
               {run.dirs.why
                 ? ` ${run.dirs.why} 그래서 못 들어간 진입 신호가 ${run.dirs.blocked.spells}회(${run.dirs.blocked.days}일) 있어요.`
                 : ''}

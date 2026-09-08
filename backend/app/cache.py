@@ -85,7 +85,13 @@ DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
 # [OWNER — "엔진(모집단 σ)으로 통일"]. 같은 SQL 이 다른 z·밴드·상태를 만든다
 # (창 60 에서 σ 가 0.84% 작아지고, BSS-3Y 2,958봉 중 9봉은 밴드 안팎이 뒤집힌다).
 # 안 올리면 v14 캐시가 옛 규약의 밴드를 계속 내준다.
-SCHEMA_VERSION = 15
+# v16 (2026-09-09): `mr` 행에 **`triggers`·`triggerBlocked`** 가 붙었다
+# [OWNER "누르면 얼마 레벨에서는 매수 추천과 같은 플로우"] — 밴드 경계를 「얼마
+# 레벨이면 어느 다리인가」로 옮겨 적은 칸이다. 같은 SQL 이 다른 모양을 만든다 —
+# 안 올리면 v15 캐시가 그 필드 없는 보드를 계속 내주고, 화면은 히어로의 트리거
+# 문장과 상세 카드의 「트리거」 칸을 **아예 안 그리면서** 아무 에러도 안 낸다
+# (v13 에서 `watch` 로 실제로 밟은 그 함정 — 이번에도 재기동만 하고 한 번 밟았다).
+SCHEMA_VERSION = 16
 
 
 def data_hash(path: Path, asof: "object | None" = None) -> str:

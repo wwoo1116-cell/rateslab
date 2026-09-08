@@ -56,6 +56,34 @@ export interface MrRow {
   width: number | null;
   asof: string;
   state: MrState;
+  /** 「얼마 레벨이면 어느 다리인가」 [OWNER 2026-09-09 — "누르면 얼마 레벨에서는
+   *  매수 추천과 같은 플로우"]. 0~2개이고, **못 하는 방향은 안 온다**(BSS 하단은
+   *  국고 매도다 — 사유는 `triggerBlocked`). 새 판정이 아니라 밴드 경계의
+   *  번역이다(`backend/app/mr.py::triggers_for` 머리). 구 백엔드는 `undefined`. */
+  triggers?: MrTrigger[];
+  /** 한쪽 경계가 빠진 사유 — 없으면 양쪽 다 거래할 수 있는 계열이다. */
+  triggerBlocked?: string | null;
+}
+
+/** 밴드 경계 하나를 거래로 옮겨 적은 것 — 판정이지 주문이 아니다.
+ *
+ *  화면이 이 줄로 하는 말은 한 문장뿐이다: 「`level` 이상(또는 이하)이면
+ *  `legs`」. 명목·손절·목표는 **안 말한다** [OWNER 2026-09-09 — 「트리거
+ *  레벨까지」] — 그것까지 적으면 이 화면이 주문 카드가 되고, 창설부터 지고 있는
+ *  명구 의무(`MrPage` 머리)가 깨진다. */
+export interface MrTrigger {
+  /** 엔진 부호 — 상단은 −1(축소에 거는 쪽), 하단은 +1. */
+  dir: number;
+  /** 어느 경계인가 — 상단(`above`)이면 「이 값 **이상**」이다. */
+  side: 'above' | 'below';
+  /** 문턱 레벨 — **계열의 자기 단위**(bp 또는 %). */
+  level: number;
+  /** 표 칸용 짧은 이름(「국고 매수」)과 문장용 다리(「국고 매수 · IRS 페이」). */
+  short: string;
+  legs: string;
+  /** 문턱까지 남은 거리(**bp**) — 음수면 이미 지났다(`reached`). */
+  gap: number;
+  reached: boolean;
 }
 
 /** 통합 줄의 다리 하나 — 만기 순으로 늘어선다(랭킹 순이 아니다). */
@@ -360,6 +388,11 @@ export interface MrPerf {
   numTrades: number;
   breakevenCostBp: number | null;
   breakevenCostMult: number | null;
+  /** 이 구간 누적 손익의 **성분** [OWNER 2026-09-09]. 구간 카드 안에 있어서
+   *  화면의 분해가 옆의 일곱(`RiskAdjusted`)과 같은 구간을 말한다.
+   *  근사 최적화 격자의 칸(`MrOptimizeCell`)에는 안 온다 — 162칸에 성분까지
+   *  실으면 페이로드만 커지고, 그 표가 답하는 물음은 순위다. */
+  split?: MrSplit;
 }
 
 export type MrSpanPerf = MrPerf & { span: MrSpan };
@@ -489,6 +522,13 @@ export interface MrStrategyTrade {
   /** 보유 동안의 총 변화(**bp**) — 대사표 「합계」 줄의 Δ 칸이고, 줄마다의
    *  Δ 를 세로로 더한 값과 같아야 한다. **거래 가능한** Δ 의 합이다. */
   dv: number;
+  /** **체결비용까지 문 Δ**(bp) [OWNER 2026-09-09 — "체결비용이 델타에는 반영되게
+   *  해야 직관적으로 델타와 손익을 비교 가능"]. `Δ + 비용/감도` 이고 감도는
+   *  `방향 × 명목` 이다 — 그래서 `감도 × 순Δ = 평가 + 비용` 이 닫힌다(산술과
+   *  한계는 `backend/app/mrmetrics.py::dv_net` 머리). 원 Δ 를 **지우지 않는** 이유:
+   *  Δ 는 「청산 레벨 − 진입 레벨」과 닫히는 대사의 열이고, 순Δ 는 「그래서 우리가
+   *  얼마를 가졌나」다. 구 백엔드는 `undefined`. */
+  dvNet?: number | null;
   /** 보유 중 지난 롤의 수. 0 이 아니면 **「청산 − 진입 ≠ Δ」가 정상**이고,
    *  그 차이가 곧 실현하지 못한 롤 점프다 [OWNER 2026-09-02]. 화면은 그 줄에
    *  표식을 세워 읽는 사람이 어긋남을 결함으로 읽지 않게 한다. 구 백엔드는
@@ -523,6 +563,17 @@ export interface MrStrategyDirs {
  * 누적에만 있다 — 그래서 화면이 이걸 승률 옆에서 말하지 않으면 열려 있는 손실
  * 포지션이 승률에서 조용히 사라진다(실측 2026-08-26: 승률 80% = 12/15 였고
  * 빠진 한 건은 표본 두 번째로 나쁜 −600만이었다). */
+/** 표본 끝의 미청산 다리 — **거래 줄과 같은 열을 다 갖는다**
+ *  [OWNER 2026-09-09 — "미청산도 PnL에 포함하기"].
+ *
+ *  총손익·낙폭은 종전에도 이 다리를 지고 있었다(누적이 보유 봉마다 MTM 을
+ *  더한다). 빠져 있던 것은 **거래 표**였고, 그래서 표의 세로합이 누적과 갈렸다.
+ *  지금은 표의 마지막 줄로 선다 — 사유 칸이 「미청산」이고, **승률·거래 수는
+ *  안 건드린다**(그건 `countOpen` 노브의 일이고 긴 표본에서 기각됐다).
+ *
+ *  「청산」 쪽 값은 청산이 아니라 **마지막 봉의 평가**다. 구 백엔드는 그 셋이
+ *  `undefined` 라, 화면은 그때 이 줄을 세우지 않는다(없는 값을 0 으로 그리지
+ *  않는다는 이 리포의 규약). */
 export interface MrStrategyOpen {
   entryT: string;
   /** 엔진 부호 — 이름은 `run.dirs` 가 진다. */
@@ -535,6 +586,21 @@ export interface MrStrategyOpen {
   outFrom: string | null;
   outDays: number | null;
   peakZ: number | null;
+  /** 마지막 봉 — 날짜·레벨·z. 구 백엔드에는 없다. */
+  exitT?: string | null;
+  exitV?: number | null;
+  exitZ?: number | null;
+  /** 진입 이후의 **거래 가능한** 총 변화(bp)와 지나온 롤 수. */
+  dv?: number;
+  /** 체결비용까지 문 Δ — 거래 줄의 그 열과 같은 산술이다. */
+  dvNet?: number | null;
+  masked?: number;
+  /** 성분 — 거래 줄과 같은 분해(실가격은 다섯, 근사는 셋). */
+  mtm?: number;
+  carry?: number;
+  rolldown?: number;
+  funding?: number;
+  cost?: number;
 }
 
 /** 노브 하나를 프리셋 안에서 옮겼을 때의 결과 한 칸. */
@@ -670,7 +736,33 @@ export interface MrStrategyRun {
     breakevenCostBp: number | null;
     /** 주어진 비용 **경로의 몇 배**까지 견디는가. 고정 비용 판에서는 null. */
     breakevenCostMult: number | null;
+    /** 누적 손익의 성분. 구 백엔드는 `undefined`. */
+    split?: MrSplit;
   };
+}
+
+/** 누적 손익의 성분 [OWNER 2026-09-09 — "누적 채권 + 스왑 손익을 롤다운 캐리로
+ *  분해해서 보여주기"].
+ *
+ *  정의는 **v1 대사 엔진의 것**이다 [OWNER 2026-09-09 — 「v1 대사 엔진 정의
+ *  이식」]: 캐리는 가만히 있어 확정되는 현금흐름(액크루얼 + 정산 CF), 롤다운은
+ *  커브가 그대로인데 잔존만기가 짧아져 생기는 클린 가격 변화, 평가는 커브가
+ *  움직여서 생긴 잔여다. 산술은 `backend/app/mrmetrics.py::split` 이고 그 값은
+ *  `cashbond.book_recon`(백테스트·시뮬 대사가 쓰는 그 함수)에서 온다 — 이 앱의
+ *  세 화면이 「롤다운」을 같은 뜻으로 쓴다.
+ *
+ *  **롤다운·조달은 null 일 수 있다 — 0 이 아니다.** 엔진 근사 판에는 그 항이
+ *  아예 없고, 0 으로 적으면 「롤다운이 0 이었다」는 다른 말이 된다. */
+export interface MrSplit {
+  /** 커브가 움직여서 번 것(클린 변화의 잔여). */
+  mtm: number | null;
+  carry: number | null;
+  rolldown: number | null;
+  funding: number | null;
+  /** 체결비용 + (선물 계열의) 롤 갈아타기 — 음수다. */
+  cost: number | null;
+  /** 봉의 그날 손익을 더한 것 — 성분의 합이 아니라 **검산의 상대**다. */
+  total: number;
 }
 
 /* ── BSS 테너 통합 장부 [OWNER 2026-09-01 — "BSS 테너 통합 밴드 워치를 하나
@@ -726,6 +818,11 @@ export interface MrBookTrade extends MrStrategyTrade {
   tenor: string;
 }
 
+/** 통합 장부의 미청산 다리 — 만기마다 하나씩 있을 수 있다.
+ *
+ *  낱개 창의 `MrStrategyOpen` 과 같은 이유로 거래 줄의 열을 다 갖는다
+ *  [OWNER 2026-09-09 — "미청산도 PnL에 포함하기"]: 모은 거래 표의 세로합이
+ *  누적과 갈리지 않게. 구 백엔드는 셋(`exitT`·`exitV`·`exitZ`)이 없다. */
 export interface MrBookOpen {
   sid: string;
   label: string;
@@ -736,6 +833,20 @@ export interface MrBookOpen {
   entryV: number;
   pnl: number;
   bars: number;
+  exitT?: string | null;
+  exitV?: number | null;
+  exitZ?: number | null;
+  outFrom?: string | null;
+  outDays?: number | null;
+  peakZ?: number | null;
+  mtm?: number;
+  carry?: number;
+  rolldown?: number;
+  funding?: number;
+  cost?: number;
+  /** 진입 이후의 총 변화(bp)와 체결비용까지 문 Δ. */
+  dv?: number;
+  dvNet?: number | null;
 }
 
 /** 구간 하나의 통합 장부 성적 — 성과 카드 + 만기별 + 「묶어서 나아졌나」.
@@ -840,6 +951,9 @@ export interface MrBookRun {
     openPnl: number | null;
     breakevenCostBp: number | null;
     breakevenCostMult: number | null;
+    /** 누적 손익의 성분 — 아홉 다리의 봉을 한 통에 모아 더한 것. 다리별 분해는
+     *  「만기별 성적」이 진다. 구 백엔드는 `undefined`. */
+    split?: MrSplit;
   };
   /** 걸린 돈 — 동일가중 합의 대가다. 안 적으면 화면의 「명목」이 실제로 움직인
    *  돈을 최대 아홉 배 작게 말한다. */

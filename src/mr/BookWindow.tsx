@@ -69,10 +69,11 @@ import {
   type MrSpan,
   type MrStrategyParams,
   type MrBookRun,
+  type MrBookTrade,
 } from './api';
 import { MrKnobBar, mrKnobsStale } from './KnobBar';
 import { OptimizePane } from './OptimizePane';
-import { Panel, RiskAdjusted, WHY_WORD, fmtRatio, ym } from './parts';
+import { Panel, RiskAdjusted, SplitColumn, WHY_WORD, fmtRatio, ym } from './parts';
 
 /* 차트 높이 두 급·표 높이 — **낱개 창과 같은 값**(`StrategyWindow` 그 상수:
    Backtest LINKED PAIR 의 200/140). 주인공(누적 곡선)이 크고 파생(동시 다리
@@ -185,7 +186,49 @@ function LegTable({ legs, onPick }: { legs: MrBookSpanLeg[]; onPick?: (id: strin
   );
 }
 
-/** 한 통에 모은 거래 — 첫 칸이 **어느 만기**다. */
+/** 모은 거래에 세울 줄 — 거래들 + **미청산 다리들** [OWNER 2026-09-09 —
+ *  "미청산도 PnL에 포함하기"].
+ *
+ *  낱개 창과 같은 이유다(`StrategyWindow.openAsTrade` 머리): 총손익은 열려 있는
+ *  다리를 이미 지고 있는데 목록에는 없어서, 표의 세로합이 누적과 갈렸다. 만기가
+ *  섞인 이 표에서는 그 갈림이 더 나빴다 — 「미청산 2다리」라는 숫자만 있고 **어느
+ *  만기**인지는 표에 없었다.
+ *
+ *  「청산」 칸은 청산이 아니라 **마지막 봉**이고 사유 칸이 「미청산」이라고 말한다.
+ *  `countOpen` 을 켜면 엔진이 이미 목록에 넣으므로 더하지 않는다. 구 백엔드는
+ *  마지막 봉 셋을 모르므로 그때는 종전처럼 거래만 선다.
+ *
+ *  차례는 **진입일 순**이다 — 서버가 거래를 그렇게 정렬해 보내므로(`mrbook`),
+ *  미청산을 뒤에 붙이면 그 줄만 시간 순서에서 튄다. */
+function bookRows(run: MrBookRun): MrBookTrade[] {
+  const opens: MrBookTrade[] = run.params.countOpen
+    ? []
+    : run.open
+        .filter((o) => o.exitT != null && o.exitV != null)
+        .map((o) => ({
+          sid: o.sid, label: o.label, tenor: o.tenor,
+          entryT: o.entryT, exitT: o.exitT!, dir: o.dir,
+          entryZ: o.entryZ, exitZ: o.exitZ ?? null,
+          entryV: o.entryV, exitV: o.exitV!,
+          pnl: o.pnl, why: 'open' as const,
+          mtm: o.mtm ?? 0, carry: o.carry ?? 0, cost: o.cost ?? 0,
+          ...(o.rolldown != null ? { rolldown: o.rolldown } : {}),
+          ...(o.funding != null ? { funding: o.funding } : {}),
+          bars: o.bars,
+          outFrom: o.outFrom ?? null, outDays: o.outDays ?? null,
+          peakZ: o.peakZ ?? null,
+          dv: o.dv ?? 0, dvNet: o.dvNet,
+        }));
+  return [...run.trades, ...opens].sort((a, b) =>
+    a.entryT < b.entryT ? -1 : a.entryT > b.entryT ? 1 : a.sid < b.sid ? -1 : 1,
+  );
+}
+
+/** 한 통에 모은 거래 — 첫 칸이 **어느 만기**다.
+ *
+ *  **Δ·레벨 열이 없는 것은 의도다**(이 파일 머리 「없는 것」 목록) — 만기가
+ *  섞인 표에서 6M 과 10Y 의 레벨을 한 열에 세로로 세우면 그 열이 무엇인지 말할
+ *  수 없다. 2026-09-09 에 낱개 창에 생긴 「순Δ」도 같은 이유로 여기 없다. */
 function TradeTable({ run }: { run: MrBookRun }) {
   return (
     <Box style={{ position: 'relative', height: TABLE_H, overflow: 'auto' }} width="100%">
@@ -216,7 +259,7 @@ function TradeTable({ run }: { run: MrBookRun }) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {run.trades.map((t) => (
+          {bookRows(run).map((t) => (
             <TableRow key={`${t.sid}-${t.entryT}-${t.exitT}`}>
               <TableCell>
                 <Text font="label2" as="span" noWrap>
@@ -495,6 +538,13 @@ export function BookWindow({
               {/* 절대수익형 일곱 — 낱개 창과 **같은 부품**이다(`parts.RiskAdjusted`).
                   샤프가 여기서 내려갔다 [OWNER 2026-09-04 · 2026-09-07]. */}
               <RiskAdjusted perf={perf} />
+
+              {/* 누적 분해 [OWNER 2026-09-09 — "누적 채권 + 스왑 손익을 롤다운
+                  캐리로 분해해서 보여주기"] — 낱개 창과 **같은 부품**이다.
+                  이 창에서는 아홉 다리의 봉을 한 통에 모아 더한 값이고(다리별
+                  분해는 「만기별 성적」이 진다), 한 다리라도 그 성분이 없으면
+                  그 칸이 «—» 다(`backend/app/mrbook.py::_pooled_parts`). */}
+              <SplitColumn split={perf.split} />
 
               {/* 걸린 돈 — 동일가중 합의 **대가**다. 이 칸이 없으면 「Delta
                   100만원/bp」가 실제로 움직인 돈을 최대 아홉 배 작게 말한다.

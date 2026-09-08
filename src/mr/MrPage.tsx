@@ -50,6 +50,7 @@ import {
   type MrParams,
   type MrRow,
   type MrState,
+  type MrTrigger,
   type MrWatch,
 } from './api';
 import { BandChart } from './BandChart';
@@ -83,6 +84,35 @@ function watchText(w: MrWatch): string {
     w.inside ? `밴드 안 ${w.inside}` : null,
   ].filter((x): x is string => x !== null);
   return parts.join(' · ') || '—';
+}
+
+/** 트리거 한 문장 — 「25.6bp 이상이면 국고 매수 · IRS 페이」
+ *  [OWNER 2026-09-09 — "누르면 얼마 레벨에서는 매수 추천과 같은 플로우로"].
+ *
+ *  **문턱과 다리만 말한다.** 명목·손절·목표는 적지 않는다 [OWNER 2026-09-09 —
+ *  「트리거 레벨까지」] — 그 셋을 적으면 이 화면이 주문 카드가 되고, 창설부터
+ *  지고 있는 명구 의무(이 파일 머리)가 깨진다. 레벨은 계열의 자기 단위이고
+ *  거리는 bp 다(서버가 그렇게 끝낸다 — `mr.triggers_for`).
+ *
+ *  이미 지난 문턱을 「남았어요」로 적으면 거짓이라 문장이 갈린다. */
+function triggerText(t: MrTrigger, unit: string, dUnit: string): string {
+  const lv = `${fmtLevel(t.level, unit as Unit)}${unitSuffix(unit as Unit)}`;
+  const word = t.side === 'above' ? '이상' : '이하';
+  const gap = `${fmtLevel(Math.abs(t.gap), dUnit as Unit)}${unitSuffix(dUnit as Unit)}`;
+  return t.reached
+    ? `${lv} ${word}(${gap} 지났어요) → ${t.legs}`
+    : `${lv} ${word}이면 ${t.legs} — ${gap} 남았어요`;
+}
+
+/** 히어로 한 줄이 적을 트리거 — **지난 것이 먼저, 없으면 가까운 것**.
+ *
+ *  양방향 계열(선물·퓨처스왑)은 경계가 둘이라 고르는 규칙이 있어야 한다. 지난
+ *  문턱이 곧 「지금 할 수 있는 것」이라 그쪽이 먼저이고, 둘 다 멀면 더 가까운
+ *  쪽이 다음에 닿을 문턱이다. 둘 다 보여 주는 자리는 상세 카드의 「트리거」 칸.
+ *  트리거가 아예 없으면(창 미달·한 방향이 막힌 계열의 반대쪽) `undefined` 다. */
+function heroTrigger(r: MrRow): MrTrigger | undefined {
+  const ts = r.triggers ?? [];
+  return ts.find((t) => t.reached) ?? [...ts].sort((a, b) => a.gap - b.gap)[0];
 }
 
 /** z 표기 — 부호 명시, 반올림 후 0 은 부호 없이(rv fmt 의 규칙 그대로). */
@@ -386,6 +416,15 @@ export function MrPage() {
             두 소스의 종가 날짜가 달라요 — 각 행은 자기 소스의 날짜 기준이에요.
           </Text>
         ) : null}
+        {/* 트리거가 무엇인지 **화면이 말한다** [OWNER 2026-09-09 — 「트리거
+            레벨까지」]. 안 적으면 읽는 사람이 그 수를 「추천 진입가」로 읽는데,
+            그것은 위 두 알약이 정한 밴드의 경계일 뿐이다 — 알약을 바꾸면 같이
+            움직인다. 명구 의무(오른쪽 줄)와 한 몸이다. */}
+        <Text font="legal" as="span" color="fgMuted">
+          트리거는 위에서 고른 밴드({bandWindow}일 · {bandK}σ)의 경계 레벨이에요 —
+          거기서 이 데스크가 할 수 있는 다리를 적은 것이고, 명목·손절·목표는 안
+          말해요.
+        </Text>
         {board.excluded.length > 0 ? (
           /* 못 읽은 테너 — 조용히 빼지 않는다(rv 의 exclusions 문법). */
           <Text font="legal" as="span" color="fgMuted">
@@ -393,6 +432,58 @@ export function MrPage() {
           </Text>
         ) : null}
       </VStack>
+
+      {/* ── 히어로 — **1순위를 바로 띄운다** [OWNER 2026-09-09 — "1순위를 바로
+          띄우기 … Credit RV에서 은행채 AAA가 가장 매력적이다라고 블록으로
+          보여주는 것처럼"] ──────────────────────────────────────────────────
+          문법은 **rv 의 그 블록을 이식**한 것이다(`RvPage` 「지금 가장
+          매력적이에요」): 작은 라벨 한 줄 + 이름이 display3 로 선 버튼 +
+          뮤트 메타 한 줄. 부품도 그쪽 것이다 — `.sr-rv-linkbtn`(글자를
+          버튼으로 만드는 리셋)은 이름만 rv 이고 `theme/type.css` 의 앱 공용
+          리셋이다(CLAUDE.md 캐논 규칙 2: 「클래스 이름은 소유권이 아니다」).
+
+          **표에 1위가 이미 골라져 있는데 왜 이 블록인가.** 선택은 칸 하나의
+          테두리로만 표시돼서, 열세 줄 중 어느 것이 1위인지 눈이 표를 훑어야
+          알았다. 그리고 이 화면이 답해야 하는 물음이 「지금 무엇을 볼까」이므로
+          (오너의 말 그대로 「지금 모니터링할 테너가 뭐냐가 중요함」) 그 답은
+          표 안이 아니라 표 **앞**에 서야 한다.
+
+          메타 줄이 트리거를 진다 — 블록 하나로 「무엇을·지금 얼마고·어디서
+          들어가나」가 닫힌다. 명목·손절·목표는 없다(`triggerText` 머리). */}
+      {rows[0] ? (
+        <VStack flexShrink={0} gap={0} width="100%">
+          <Text font="label1" as="span" color="fgMuted" noWrap>
+            지금 모니터링할 테너예요
+          </Text>
+          <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
+            <button
+              type="button"
+              className="sr-rv-linkbtn"
+              aria-label={`${rows[0].label} 골라서 전략 실험 창 열기`}
+              onClick={() => {
+                setSelId(rows[0]!.id);
+                setStratOpen(true);
+              }}
+            >
+              <Text font="display3" as="span" noWrap>
+                {rows[0].label}
+              </Text>
+            </button>
+            <Text font="body" as="span" color="fgMuted" tabularNumbers>
+              {fmtLevel(rows[0].v, rows[0].unit as Unit)}
+              {unitSuffix(rows[0].unit as Unit)} · {fmtZ(rows[0].z)} ·{' '}
+              {stateText(rows[0].state)}
+              {/* 트리거는 **한 개만** 적는다 — 양방향 계열(선물·퓨처스왑)은
+                  경계가 둘인데 히어로 한 줄에 둘을 적으면 그 줄이 접힌다.
+                  고르는 규칙: 지난 것이 있으면 그것, 없으면 가까운 것. 둘 다
+                  보려면 아래 상세 카드의 「트리거」 칸이 진다. */}
+              {heroTrigger(rows[0])
+                ? ` · ${triggerText(heroTrigger(rows[0])!, rows[0].unit, rows[0].dUnit)}`
+                : ''}
+            </Text>
+          </HStack>
+        </VStack>
+      ) : null}
 
       {/* ── 2열: 보드가 주인공, 상세가 나머지를 받는다 ───────────────────── */}
       <HStack gap={2} alignItems="stretch" width="100%" flexGrow={1} minHeight={0}>
@@ -770,6 +861,34 @@ export function MrPage() {
                 <Stat label="상태" value={stateText(sel.state)} />
                 <Stat label="종가" value={sel.asof} />
               </StatColumn>
+              {/* ── 트리거 [OWNER 2026-09-09 — "누르면 얼마 레벨에서는 매수
+                  추천과 같은 플로우로 가야함"] ──────────────────────────────
+                  히어로는 1순위 한 줄만 말하므로, **고른 줄**의 문턱은 여기가
+                  진다(표를 누르는 플로우의 끝). 양방향 계열은 칸이 둘이다.
+                  값은 문턱 레벨이고 note 가 다리와 남은 거리를 적는다 —
+                  `Stat` 의 그 두 칸 문법(`ui/Stat.tsx`).
+
+                  막힌 방향은 **칸을 안 만들고 사유를 적는다**(rv exclusions
+                  문법) — 빈칸으로 두면 화면이 「그쪽은 문턱이 없다」고 말한다. */}
+              {sel.triggers && sel.triggers.length > 0 ? (
+                <StatColumn title="트리거">
+                  {sel.triggers.map((t) => (
+                    <Stat
+                      key={t.side}
+                      label={t.side === 'above' ? '상단 밖이면' : '하단 밖이면'}
+                      value={`${fmtLevel(t.level, sel.unit as Unit)}${unitSuffix(sel.unit as Unit)}`}
+                      note={`${t.legs} · ${
+                        t.reached
+                          ? `${fmtLevel(Math.abs(t.gap), sel.dUnit as Unit)}${unitSuffix(sel.dUnit as Unit)} 지났어요`
+                          : `${fmtLevel(t.gap, sel.dUnit as Unit)}${unitSuffix(sel.dUnit as Unit)} 남았어요`
+                      }`}
+                    />
+                  ))}
+                  {sel.triggerBlocked ? (
+                    <Stat label="반대 방향" value="안 해요" note={sel.triggerBlocked} />
+                  ) : null}
+                </StatColumn>
+              ) : null}
             </HStack>
               </>
             )}

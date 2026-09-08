@@ -215,3 +215,55 @@ def test_every_series_kind_has_a_direction_rule():
     for _, _, kind in mr.SERIES:
         assert kind in mr.TRADABLE_DIRS and kind in mr.DIR_LEGS
         assert mr.dirs_for(kind)["plus"]["short"] and mr.dirs_for(kind)["minus"]["short"]
+
+
+# ── 트리거 레벨 [OWNER 2026-09-09 — "누르면 얼마 레벨에서는 매수 추천"] ──────
+#
+# 이 번역이 지켜야 하는 것 넷.
+#   ① **경계마다 방향이 하나**다 — 엔진 규약(`want = -1 if z > 0`)과 같은 쪽.
+#   ② **못 하는 방향은 아예 안 싣는다** — BSS 하단은 국고 매도다.
+#   ③ `gap` 은 **bp** 다 — %-계열에서도(레벨만 계열의 자기 단위).
+#   ④ 새 판정을 안 만든다 — 레벨은 `_assemble` 의 밴드와 **같은 수**여야 한다.
+
+def test_trigger_pairs_each_band_edge_with_the_tradable_direction():
+    t = mr.triggers_for("fsw", v=0.0, up=10.0, lo=-10.0, scale=1.0)
+    by_side = {x["side"]: x for x in t}
+    assert by_side["above"]["dir"] == -1 and by_side["below"]["dir"] == 1
+    # 상단을 넘으면 **축소에 거는 쪽**이다 — 늘어난 쪽의 반대.
+    assert by_side["above"]["legs"] == mr.DIR_LEGS["fsw"]["minus"]["legs"]
+    assert by_side["below"]["legs"] == mr.DIR_LEGS["fsw"]["plus"]["legs"]
+    # 아직 양쪽 다 10 만큼 남았다.
+    assert by_side["above"]["gap"] == 10.0 and by_side["below"]["gap"] == 10.0
+    assert not by_side["above"]["reached"] and not by_side["below"]["reached"]
+
+
+def test_trigger_omits_the_direction_this_desk_cannot_do():
+    t = mr.triggers_for("bss", v=0.0, up=10.0, lo=-10.0, scale=1.0)
+    assert [x["side"] for x in t] == ["above"]
+    assert "국고 매수" in t[0]["legs"]
+
+
+def test_trigger_gap_goes_negative_once_it_is_past():
+    t = mr.triggers_for("bss", v=26.5, up=25.5734, lo=12.5133, scale=1.0)
+    assert t[0]["reached"] and t[0]["gap"] < 0
+    assert t[0]["level"] == 25.5734
+
+
+def test_trigger_gap_is_bp_even_when_the_level_is_percent():
+    # 선물 내재금리는 % 계열 — 레벨은 % 이고 거리는 bp 다(행의 `d1`·`width` 규약).
+    t = mr.triggers_for("fut", v=3.0, up=3.1, lo=2.9, scale=100.0)
+    by_side = {x["side"]: x for x in t}
+    assert by_side["above"]["level"] == 3.1
+    assert math.isclose(by_side["above"]["gap"], 10.0, abs_tol=1e-6)
+
+
+def test_assemble_trigger_levels_are_the_bands_themselves():
+    body = _synthetic("bp")
+    pts = body["points"]
+    row, _ = mr._assemble("BSS-3Y", "BSS 3Y", "bss", "bp",
+                          [p["t"] for p in pts], [p["v"] for p in pts])
+    assert [x["side"] for x in row["triggers"]] == ["above"]
+    assert row["triggers"][0]["level"] == row["upper"]
+    assert row["triggerBlocked"] == mr.BLOCKED_WHY
+    # 「지금 거리」와 z 가 같은 밴드를 말한다 — 문턱을 지났으면 z 도 그쪽이다.
+    assert row["triggers"][0]["reached"] == (row["v"] >= row["upper"])

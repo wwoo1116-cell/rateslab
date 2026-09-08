@@ -291,3 +291,60 @@ def test_grid_refuses_to_run_when_it_would_be_too_big():
     with pytest.raises(HTTPException) as e:
         M._mr_optimize(dates, vals, base, (-1, 1), span="all")
     assert e.value.status_code == 422
+
+
+# ── ⑤ 누적 분해 [OWNER 2026-09-09] ─────────────────────────────────────────
+#
+# 분해가 지켜야 하는 것은 둘이다: **성분의 합이 누적과 같다**(안 같으면 그
+# 분해는 거짓이다), 그리고 **없는 성분은 0 이 아니라 None 이다**(0 은 「그날
+# 롤다운이 없었다」는 다른 말이고, 화면은 그 0 을 사실로 읽는다).
+
+def _split_points(rows: list[tuple[float, float, float, float, float]],
+                  *, real: bool = True) -> list[dict]:
+    out = []
+    for v, c, rd, f, cost in rows:
+        p = {"mtm": v, "barCarry": c, "barCost": cost,
+             "dailyPnl": v + c + (rd + f if real else 0.0) + cost}
+        if real:
+            p["barRolldown"] = rd
+            p["barFunding"] = f
+        out.append(p)
+    return out
+
+
+def test_split_parts_sum_to_the_cumulative():
+    pts = _split_points([(100.0, 10.0, 5.0, -3.0, -2.0),
+                         (-40.0, 11.0, 5.0, -3.0, 0.0)])
+    s = mrm.split(pts)
+    assert s == {"mtm": 60.0, "carry": 21.0, "rolldown": 10.0,
+                 "funding": -6.0, "cost": -2.0, "total": 83.0}
+    assert s["mtm"] + s["carry"] + s["rolldown"] + s["funding"] + s["cost"] == s["total"]
+
+
+def test_split_leaves_missing_parts_empty_not_zero():
+    s = mrm.split(_split_points([(100.0, 10.0, 0.0, 0.0, -2.0)], real=False))
+    assert s["rolldown"] is None and s["funding"] is None
+    assert s["mtm"] == 100.0 and s["total"] == 108.0
+
+
+def test_split_refuses_a_part_that_only_some_bars_have():
+    # 통합 장부는 다리 아홉의 봉을 한 통에 모으므로 **섞인 판**이 실제로 생긴다.
+    mixed = (_split_points([(1.0, 0.0, 2.0, 0.0, 0.0)])
+             + _split_points([(1.0, 0.0, 0.0, 0.0, 0.0)], real=False))
+    s = mrm.split(mixed)
+    assert s["rolldown"] is None
+    assert s["total"] == 4.0
+
+
+def test_split_closes_on_the_engine_itself():
+    # 엔진 근사 판에서도 항등이 선다 — 그때 성분은 셋이다.
+    dates = _bizdays(dt.date(2020, 1, 1), 120)
+    vals = [100.0 + 5.0 * math.sin(i / 7.0) for i in range(120)]
+    r = bt.simulate(dates, vals, lookback=20, entry_z=1.5, exit_z=0.5,
+                    stop_z=3.0, cost_bp=0.5, notional=1_000_000.0)
+    s = mrm.split(r["points"])
+    assert s["rolldown"] is None and s["funding"] is None
+    # 성분은 **2자리로 반올림해서** 나간다(화면이 읽는 자리) — 그래서 허용차는
+    # 원의 1/100 이다. 1e-6 으로 잡으면 이 시험이 반올림을 잡는 시험이 된다.
+    assert abs(s["total"] - r["summary"]["totalPnl"]) < 0.01
+    assert abs(s["mtm"] + s["carry"] + s["cost"] - s["total"]) < 0.01

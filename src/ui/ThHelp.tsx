@@ -12,6 +12,8 @@
 import { Tooltip } from '@coinbase/cds-web/overlays';
 import { Text } from '@coinbase/cds-web/typography';
 
+import { headFont } from '@/lib/format';
+
 export function ThHelp({
   label,
   help,
@@ -64,7 +66,14 @@ export function ThHelp({
           {label}
         </span>
       ) : (
-        <Text font="caption" as="span" color="fgMuted" className="sr-rv-thhelp" tabIndex={0}>
+        /* 활자는 **라벨이 정한다**(`headFont`) — 소문자가 든 머리는 `legal`
+           이다. `caption` 은 CDS 테마가 대문자화를 걸어 「bp」를 「BP」로 세우고,
+           그건 오타가 아니라 **틀린 단위**다(이 리포가 대사표 머리에서 이미
+           밟은 판례). 2026-09-09 에 「순Δ (bp)」가 이 부품을 통과하면서 화면에
+           「(BP)」로 섰다 — 그때 이 한 줄이 생겼다. 소문자가 없는 기존 라벨
+           일곱(룩백·밴드 폭·늘어남·위치·상태·한 달 수익·버퍼…)은 전부 `caption`
+           그대로다. */
+        <Text font={headFont(label)} as="span" color="fgMuted" className="sr-rv-thhelp" tabIndex={0}>
           {label}
         </Text>
       )}

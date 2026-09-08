@@ -153,3 +153,18 @@ export function dirClass(v: number | null | undefined): string {
   if (v == null || v === 0) return "text-ink";
   return v > 0 ? "text-up" : "text-down";
 }
+
+/** 표 머리의 활자를 고른다 — **소문자가 들어 있으면 `legal`, 아니면 `caption`**.
+ *
+ *  CDS 기본 테마의 `textTransform.caption = 'uppercase'` 가 「z」를 「Z」로,
+ *  「bp」를 「BP」로 만든다. 둘은 크기가 같고(0.8125rem) 중량·대문자화만 다르므로,
+ *  **기호와 단위가 든 머리**만 `legal` 이다. MR 대사표·거래 표 머리가 이 기준을
+ *  주석으로 지고 있었고 2026-09-02 에 함수가 됐다(눈대중에 걸리지 않게).
+ *
+ *  ⚠ 2026-09-09 에 `src/mr/parts.tsx` 에서 여기로 옮겼다 — `ui/ThHelp` 도 같은
+ *  기준을 써야 하는데(도움말이 달린 머리에서 「bp」가 「BP」로 섰다) `ui/` 가
+ *  기능 폴더(`mr/`)를 임포트할 수는 없다. 기준이 둘이 되면 한 표 안에서 도움말이
+ *  달린 머리만 다른 활자로 선다. `mr/parts` 는 이 함수를 다시 내보낸다. */
+export function headFont(label: string): "caption" | "legal" {
+  return /[a-z]/.test(label) ? "legal" : "caption";
+}

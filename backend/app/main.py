@@ -2213,6 +2213,10 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
             "peakZ": round(t["peakZ"], 2) if t["peakZ"] is not None else None,
             # 보유 동안의 총 변화(bp) — 대사표 합계 줄의 Δ.
             "dv": round(t["dv"], 4),
+            # 체결비용까지 문 Δ [OWNER 2026-09-09 — "체결비용이 델타에는
+            # 반영되게 해야 직관적으로 델타와 손익을 비교 가능"]. 산술은
+            # `_mr_dv_net` 머리에 — 「2bp 움직였는데 1.9bp 만 남았다」.
+            "dvNet": mrm.dv_net(t["dv"], t["cost"], t["direction"], notional),
             # 보유 중 롤을 몇 번 지났나 — 0 이 아니면 「청산 − 진입 ≠ Δ」가
             # 정상이다(그 차이가 곧 실현 못 한 롤 점프다).
             "masked": int(t.get("masked", 0)),
@@ -2282,6 +2286,37 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
         # 「안 들어갔다」는 사실만 화면이 승률 옆에 적을 수 있게 낸다.
         "open": ({
             "entryT": r["open"]["entryDate"],
+            # ── 미청산 다리도 **거래 줄의 어휘를 다 갖는다** [OWNER 2026-09-09
+            #    — "미청산도 PnL에 포함하기"] ────────────────────────────────
+            # 총손익·낙폭은 종전에도 이 다리를 실시간으로 지고 있었다
+            # (`mrbacktest` 의 그 주석 — 누적이 보유 봉마다 MTM 을 더한다).
+            # 빠져 있던 것은 **거래 표**였다: 표의 세로합이 누적과 갈리고, 열려
+            # 있는 손익이 목록 어디에도 없었다. 그래서 낱개 창이 이 줄을 표의
+            # 마지막에 세울 수 있게 같은 열들을 채워 보낸다 — 승률·거래 수는
+            # 원본 규약대로 **안 건드린다**(그 둘을 바꾸는 것은 `countOpen`
+            # 노브의 일이고, 긴 표본에서 기각된 노브다).
+            #
+            # 「청산」 쪽 값은 **마지막 봉**이다(청산이 아니라 지금 평가다) —
+            # 그 사실은 화면의 사유 칸(「미청산」)이 말한다.
+            "exitT": dates[-1] if dates else None,
+            "exitV": points[-1]["v"] if points else None,
+            "exitZ": points[-1]["z"] if points else None,
+            # Δ·롤 횟수는 봉에서 센다 — 엔진의 `close_open_at_end` 가 같은
+            # 구간을 같은 배열로 더하고(그 블록), 여기서 또 유도하면 두 수가
+            # 갈릴 자리가 생기므로 **이미 페이로드에 있는 봉의 Δ** 를 쓴다.
+            "dv": round(sum(p["dv"] or 0.0
+                            for p in points[r["open"]["entryIdx"] + 1:]), 4),
+            "dvNet": mrm.dv_net(
+                sum(p["dv"] or 0.0 for p in points[r["open"]["entryIdx"] + 1:]),
+                r["open"]["cost"], r["open"]["direction"], notional),
+            "masked": sum(1 for p in points[r["open"]["entryIdx"] + 1:] if p["roll"]),
+            # 성분 — 거래 줄과 같은 분해(실가격 회계에서는 다섯, 근사는 셋).
+            "mtm": round(r["open"]["mtm"], 2),
+            "carry": round(r["open"]["carry"], 2),
+            **({"rolldown": round(r["open"]["rolldown"], 2),
+                "funding": round(r["open"]["funding"], 2)}
+               if leg["real"] and "rolldown" in r["open"] else {}),
+            "cost": round(r["open"]["cost"], 2),
             # 방향 — 화면이 미청산 다리를 차트에 세우려면 필요하다(마커의 색이
             # 방향이다). 승률·거래 수에 안 들어가는 것과 별개의 사실이다.
             "dir": r["open"]["direction"],
@@ -2325,6 +2360,10 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
             # 화면의 손익분기 칸이 통째로 비어 버린다(실측 2026-08-28).
             "breakevenCostMult": (round(s["breakevenCostMult"], 3)
                                   if s.get("breakevenCostMult") is not None else None),
+            # 누적 손익의 성분 [OWNER 2026-09-09 — "누적 채권 + 스왑 손익을
+            # 롤다운 캐리로 분해해서 보여주기"]. 봉마다 이미 서 있던 다섯을
+            # 더하기만 한다(`mrmetrics.split` 머리 — 정의는 v1 대사 엔진의 것).
+            "split": mrm.split(r["points"]),
         },
     }
 

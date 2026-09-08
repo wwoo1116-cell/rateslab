@@ -262,6 +262,10 @@ def score(dates: list[str], points: list[dict], trades: list[dict],
         "recovered": recovered,
         "winRate": _r(win_rate, 4),
         "numTrades": len(wt),
+        # 이 구간 누적 손익의 **성분** [OWNER 2026-09-09]. 구간 카드 안에 있어야
+        # 화면의 분해가 옆 칸들과 같은 구간을 말한다 — 전체 기간의 분해를 구간
+        # 카드 옆에 세우면 두 칸이 딴 구간의 수다(이 모듈 §구간의 그 규율).
+        "split": split(win),
         "breakevenCostMult": _r(mult, 3),
         "breakevenCostBp": _r(cost_bp * mult if mult is not None else None, 3),
     }
@@ -269,6 +273,94 @@ def score(dates: list[str], points: list[dict], trades: list[dict],
 
 def _r(v: float | None, nd: int) -> float | None:
     return None if v is None else round(v, nd)
+
+
+def dv_net(dv: float, cost: float, direction: int, notional: float) -> float | None:
+    """**체결비용까지 문 Δ**(bp) [OWNER 2026-09-09 — "체결비용이 델타에는
+    반영되게 해야 직관적으로 델타와 손익을 비교 가능"].
+
+    거래 표의 Δ 는 종전에 **수준의 변화**였다 — 「2.00bp 움직였다」. 그런데 옆
+    칸의 손익은 비용을 문 뒤의 돈이라, 두 칸을 나란히 보면 Δ 가 언제나 손익보다
+    좋아 보였다(편도 0.5bp 짜리 왕복이면 1bp 가 Δ 에서만 빠져 있다).
+
+    그래서 비용을 **bp 로 되돌려** Δ 에 싣는다. 감도(₩/bp)가 `방향 × 명목` 이고
+    평가가 `감도 × Δ` 이므로,
+
+        감도 × (Δ + 비용/감도) = 평가 + 비용
+
+    이다 — 비용은 음수이므로 부호가 저절로 «나쁜 쪽» 으로 간다(방향이 −1 이면
+    순Δ 가 커지고, 그쪽이 손실 방향이다). 두 칸이 **같은 것을 잰 두 단위**가
+    되므로 Δ 와 손익을 눈으로 비교할 수 있다.
+
+    ## 원 Δ 를 지우지 않는다
+
+    Δ 는 **대사의 열**이다 — 「청산 레벨 − 진입 레벨 = Δ」가 줄에서 닫히고,
+    그 항등이 이 표의 자기검사다(거래 표 머리 주석). 비용을 섞으면 그 검산이
+    깨지므로 열을 **둘** 둔다: Δ 는 시장이 움직인 것, 순Δ 는 우리가 가진 것.
+
+    ## 실가격 회계에서는 **근사**다
+
+    실가격 판(`_mr_real_accounting`)의 평가는 `감도 × Δ` 가 아니라 자산스왑
+    대사의 값이라, 위 항등이 원 단위까지는 안 닫힌다. 이 수가 답하는 물음
+    (「비용이 Δ 로 몇 bp 인가」)은 그대로 서지만, 「순Δ × 감도 = 순손익」을
+    그 판에서 원까지 맞추려 들면 안 된다 — 화면이 그 사실을 각주로 적는다.
+    """
+    if notional == 0 or direction == 0:
+        return None
+    return round(dv + cost / (direction * notional), 4)
+
+
+#: 누적 분해의 성분 — (페이로드 이름, 봉의 엔진 키).
+#: 순서가 화면 순서다: 값이 움직여 번 것 → 가만히 있어서 번 것 셋 → 비용.
+SPLIT_PARTS: tuple[tuple[str, str], ...] = (
+    ("mtm", "mtm"),
+    ("carry", "barCarry"),
+    ("rolldown", "barRolldown"),
+    ("funding", "barFunding"),
+    ("cost", "barCost"),
+)
+
+
+def split(points: list[dict]) -> dict[str, Any]:
+    """누적 손익을 **성분별로** 더한다 [OWNER 2026-09-09 — "누적 채권 + 스왑
+    손익을 롤다운 캐리로 분해해서 보여주기"].
+
+    ## 정의는 v1 대사 엔진의 것이다 [OWNER 2026-09-09 — 「v1 대사 엔진 정의 이식」]
+
+    성분은 여기서 새로 정의하지 않는다 — `main._mr_real_accounting` 이 봉마다
+    세워 둔 그 다섯이고, 그 함수는 `cashbond.book_recon`(백테스트·시뮬 대사가
+    쓰는 바로 그 함수)을 부르므로 **v1 `app/backtest.py` 의 3분해와 같은 말**이다:
+
+        캐리   = 가만히 있어 확정되는 현금흐름(미정산 순액크루얼 + 정산 CF)
+        롤다운 = 커브가 그대로인데 잔존만기가 짧아져서 생기는 클린 가격 변화
+                 (전일 커브 위에서 오늘의 짧아진 물건을 다시 가격 — Tuckman
+                 unchanged-term-structure)
+        평가   = 클린 변화의 **잔여** = 커브가 움직여서 생긴 것
+        조달   = 현물 다리의 조달 비용(선물에는 없는 항 — `mrcarry` 머리)
+        비용   = 전략의 노브(체결비용·롤 갈아타기) — 상품의 성질이 아니다
+
+    이 함수가 하는 일은 **더하기뿐**이다. 성분을 여기서 다시 유도하면 화면과
+    대사표가 다른 수를 말할 자리가 생긴다(`mrbook` 머리의 그 규율).
+
+    ## 엔진 근사 판에서는 둘이 **None 이다 — 0 이 아니다**
+
+    실가격 회계가 못 선 실행(민평 이력 밖·선물 계열의 일부)에는 롤다운·조달이
+    라는 항이 **아예 없다**. 0 으로 채우면 「그날 롤다운이 0 이었다」는 다른
+    말이 되고, 화면은 그 0 을 사실로 읽는다(`api.ts` 의 그 주석과 같은 규약).
+
+    `total` 은 성분의 합이 아니라 **봉의 그날 손익을 더한 것**이다 — 둘이
+    갈리면 분해가 거짓이라는 뜻이라, 시험이 그 항등을 잰다
+    (`tests/test_mr_split.py`).
+    """
+    out: dict[str, Any] = {}
+    for name, key in SPLIT_PARTS:
+        vals = [p[key] for p in points if key in p]
+        # **일부 봉에만 있으면 안 싣는다.** 섞인 합은 성분이 아니라 잡탕이다 —
+        # 통합 장부는 다리 아홉을 한 통에 모으므로 한 다리만 실가격인 판이
+        # 실제로 생긴다(민평 이력 밖 구간·선물 다리).
+        out[name] = round(sum(vals), 2) if vals and len(vals) == len(points) else None
+    out["total"] = round(sum(p["dailyPnl"] for p in points), 2)
+    return out
 
 
 def spans_for(dates: list[str], points: list[dict], trades: list[dict],

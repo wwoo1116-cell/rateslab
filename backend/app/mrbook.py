@@ -157,6 +157,34 @@ def _pooled(legs: list[dict[str, Any]]) -> tuple[list[str], list[float], list[in
     return dates, daily, live, cost
 
 
+#: 봉의 성분 — (집계 키, 다리 봉의 엔진 키). `mrmetrics.SPLIT_PARTS` 와 같은
+#: 어휘다(비용은 `_pooled` 이 이미 따로 센다).
+_PART_KEYS: tuple[str, ...] = ("mtm", "barCarry", "barRolldown", "barFunding")
+
+
+def _pooled_parts(legs: list[dict[str, Any]], dates: list[str]) -> list[dict[str, float]]:
+    """봉마다 아홉 다리의 **성분**을 더한다 — 누적 분해가 구간을 따라가게
+    [OWNER 2026-09-09 — "누적 채권 + 스왑 손익을 롤다운 캐리로 분해해서"].
+
+    **한 다리라도 그 성분이 없으면 아예 안 싣는다.** 실가격 회계가 못 선 다리가
+    섞이면 남은 여덟의 합이 되는데, 그 수는 「여덟 다리의 롤다운」이지 이 장부의
+    롤다운이 아니다 — 지어낸 분해를 화면에 올리지 않는 이 리포의 규율이고,
+    `mrmetrics.split` 도 같은 판정을 자기 쪽에서 한 번 더 한다.
+    """
+    at = {t: i for i, t in enumerate(dates)}
+    have = {k: all(k in p for leg in legs for p in leg["r"]["points"])
+            for k in _PART_KEYS}
+    out: list[dict[str, float]] = [
+        {k: 0.0 for k in _PART_KEYS if have[k]} for _ in dates
+    ]
+    for leg in legs:
+        for j, p in enumerate(leg["r"]["points"]):
+            row = out[at[leg["dates"][j]]]
+            for k in row:
+                row[k] += p[k]
+    return out
+
+
 def _curve(daily: list[float]) -> tuple[list[float], float, float]:
     """(누적, 총손익, 최대낙폭) — `mrbacktest.summarize` 와 같은 정의."""
     cum: list[float] = []
@@ -333,8 +361,17 @@ def aggregate(legs: list[dict[str, Any]], *, notional: float,
                 "outFrom": t["outFrom"], "outDays": t["outDays"],
                 "peakZ": round(t["peakZ"], 2) if t["peakZ"] is not None else None,
                 "dv": round(t["dv"], 4),
+                # 체결비용까지 문 Δ [OWNER 2026-09-09] — 낱개 창과 **같은 함수**
+                # 다(`mrmetrics.dv_net`). 두 표가 같은 열을 다르게 계산하면 그
+                # 순간 두 화면이 딴 수를 말한다.
+                "dvNet": mrm.dv_net(t["dv"], t["cost"], t["direction"], notional),
                 "pnl": round(t["pnl"], 2), "why": t["exitReason"],
                 "mtm": round(t["mtm"], 2), "carry": round(t["carry"], 2),
+                # 롤다운·조달은 **실가격 회계에서만** 있다 — 낱개 창과 같은
+                # 규약으로 없으면 안 싣는다(0 은 「그날 롤다운이 0」이라는 다른
+                # 말이다). 한 장부에 두 회계가 섞일 수 있어 다리마다 본다.
+                **({"rolldown": round(t["rolldown"], 2),
+                    "funding": round(t["funding"], 2)} if "rolldown" in t else {}),
                 "cost": round(t["cost"], 2), "bars": t["bars"],
             })
     trades.sort(key=lambda t: (t["entryT"], t["sid"]))
@@ -352,10 +389,36 @@ def aggregate(legs: list[dict[str, Any]], *, notional: float,
         if o is None:
             continue
         show = leg.get("disp") or (lambda v: round(v, 4))
+        pts = leg["r"]["points"]
+        # 진입 이후의 총 변화(bp) — **수준의 차**다. 이 장부는 BSS 전용이고
+        # (`bss_series`) BSS 는 상수만기라 롤 마스크가 없으므로 「거래 가능한 Δ」와
+        # 수준의 차가 같다(`main._mr_leg` 의 `tradable` 이 BSS 에서는 None).
+        # 마스크가 있는 계열이 이 장부에 들어오는 날에는 그 배열로 세야 한다 —
+        # `leg` 의 계약(id·label·dates·r)에는 그 배열이 없으므로 그때는 이 함수의
+        # 입력을 늘려야 한다. 지금 조용히 수준 차를 적으면 그 계열에서만 틀린다.
+        ei = o["entryIdx"]
+        o_dv = pts[-1]["value"] - pts[ei]["value"] if pts else 0.0
         opens.append({
             "sid": leg["id"], "label": leg["label"], "tenor": tenor_of(leg["id"]),
             "entryT": o["entryDate"], "dir": o["direction"],
             "entryZ": round(o["entryZ"], 2), "entryV": show(o["entryValue"]),
+            # ── 모은 거래 표에 **줄로 설 수 있게** [OWNER 2026-09-09 —
+            #    "미청산도 PnL에 포함하기"] ──────────────────────────────────
+            # 종전에는 손익과 봉 수만 나갔다. 그러면 화면이 승률 옆에 「열린
+            # 다리 둘」이라고만 말할 수 있고, **모은 거래 표의 세로합이 누적과
+            # 갈린다**. 「청산」 쪽 값은 마지막 봉의 평가다(청산이 아니다).
+            "exitT": leg["dates"][-1] if leg["dates"] else None,
+            "exitV": show(pts[-1]["value"]) if pts else None,
+            "exitZ": (round(pts[-1]["z"], 2)
+                      if pts and pts[-1]["z"] is not None else None),
+            "outFrom": o["outFrom"], "outDays": o["outDays"],
+            "peakZ": round(o["peakZ"], 2) if o["peakZ"] is not None else None,
+            "mtm": round(o["mtm"], 2), "carry": round(o["carry"], 2),
+            **({"rolldown": round(o["rolldown"], 2),
+                "funding": round(o["funding"], 2)} if "rolldown" in o else {}),
+            "cost": round(o["cost"], 2),
+            "dv": round(o_dv, 4),
+            "dvNet": mrm.dv_net(o_dv, o["cost"], o["direction"], notional),
             "pnl": round(o["pnl"], 2), "bars": o["bars"],
         })
 
@@ -391,7 +454,11 @@ def aggregate(legs: list[dict[str, Any]], *, notional: float,
     # 채점용 봉 — `mrmetrics.score` 는 엔진 봉의 어휘를 먹는다(`dailyPnl`·
     # `barCost`). 화면 페이로드가 아니라 이 어휘로 넘겨야 낱개 창의 구간 카드와
     # **같은 자**가 된다(두 번째 정의 없음).
-    spoints = [{"dailyPnl": daily[i], "barCost": barcost[i]}
+    #: 성분까지 실어 둔다 [OWNER 2026-09-09] — 구간 카드의 누적 분해가 이 봉에서
+    #: 나오고, 장부 전체의 분해도 **같은 배열**에서 나온다(두 수가 갈릴 자리를
+    #: 안 만든다).
+    parts = _pooled_parts(legs, dates)
+    spoints = [{"dailyPnl": daily[i], "barCost": barcost[i], **parts[i]}
                for i in range(len(dates))]
     peak_i = max(range(len(live)), key=lambda i: live[i]) if live else None
 
@@ -420,6 +487,11 @@ def aggregate(legs: list[dict[str, Any]], *, notional: float,
             "breakevenCostBp": (None if dynamic_cost or mult is None
                                 else round(cost_bp * mult, 3)),
             "breakevenCostMult": round(mult, 3) if mult is not None else None,
+            # 누적 손익의 성분 [OWNER 2026-09-09 — "누적 채권 + 스왑 손익을
+            # 롤다운 캐리로 분해해서 보여주기"]. 아홉 다리의 봉을 한 통에 모아
+            # 더한다 — 다리별 분해는 「만기별 성적」이 이미 진다. 한 다리라도
+            # 성분이 없으면 그 성분은 None 이다(`mrmetrics.split` 의 그 규율).
+            "split": mrm.split(spoints),
         },
         # 걸린 돈 — 동일가중 합의 대가다. 이걸 안 적으면 화면의 「명목」이
         # 실제로 움직인 돈을 최대 아홉 배 작게 말한다.

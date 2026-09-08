@@ -710,3 +710,107 @@ describe('소스 표기는 화면에 안 샌다 — 주석의 문법과 문장�
     expect(bad, `${f} 의 문장에 소스 표기가 남았다`).toEqual([]);
   });
 });
+
+/* ── 2026-09-09 피드백 여섯 중 넷 [OWNER] ────────────────────────────────────
+ *
+ * 「미청산도 PnL에 포함」·「1순위를 바로 띄우기」·「누적을 롤다운·캐리로 분해」·
+ * 「체결비용이 델타에 반영」. 넷 다 **한 벌로만** 서야 하고, 그 규율이 화면에서
+ * 지켜지는지는 눈이 아니라 이 파일이 잰다.
+ */
+describe('미청산은 거래 표의 줄이다 — 승률은 안 건드린다', () => {
+  const win = () => src('src/mr/StrategyWindow.tsx');
+
+  it('미청산 줄은 한 함수가 만든다 — 표·차트·서랍이 같은 것을 읽는다', () => {
+    const code = win();
+    expect(code).toMatch(/function openAsTrade\(run: MrStrategyRun\)/);
+    /* 세 자리가 다 그 함수를 부른다: 표(shownTrades)·차트 사건(events)·서랍(sel).
+       한 자리라도 손으로 다시 만들면 열쇠가 갈려 줄을 눌러도 딴 것이 굵어진다. */
+    expect(code.match(/openAsTrade\(run\)/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+  });
+
+  it('`countOpen` 이 켜져 있으면 줄을 안 더한다 — 두 번 세지 않는다', () => {
+    expect(win()).toMatch(/if \(!o \|\| run\.params\.countOpen\) return null;/);
+  });
+
+  it('구 백엔드에서는 줄을 안 세운다 — 없는 값을 0 으로 그리지 않는다', () => {
+    const code = win();
+    expect(code).toMatch(/o\.exitT == null \|\| o\.exitV == null \|\| o\.dv == null/);
+    expect(code).toMatch(/o\.mtm == null \|\| o\.carry == null \|\| o\.cost == null/);
+  });
+
+  it('통합 장부도 같은 규율이다 — 미청산이 모은 거래에 진입일 순으로 선다', () => {
+    const code = src('src/mr/BookWindow.tsx');
+    expect(code).toMatch(/function bookRows\(run: MrBookRun\): MrBookTrade\[\]/);
+    expect(code).toMatch(/run\.params\.countOpen/);
+    expect(code).toMatch(/bookRows\(run\)\.map/);
+  });
+});
+
+describe('1순위를 바로 띄운다 — rv 히어로의 문법으로', () => {
+  const page = () => src('src/mr/MrPage.tsx');
+
+  it('히어로가 rv 의 부품·활자를 쓴다', () => {
+    const code = page();
+    expect(code).toMatch(/지금 모니터링할 테너예요/);
+    expect(code).toMatch(/className="sr-rv-linkbtn"/);
+    expect(code).toMatch(/font="display3"/);
+  });
+
+  it('히어로는 **1위**를 세운다 — 고른 줄이 아니다', () => {
+    /* 표의 선택(`sel`)을 세우면 줄을 누를 때마다 히어로가 따라 움직여서
+       「지금 무엇을 볼까」의 답이 아니라 선택의 메아리가 된다. */
+    expect(page()).toMatch(/\{rows\[0\] \?/);
+  });
+
+  it('트리거는 서버가 끝낸 값이다 — 화면이 밴드를 다시 계산하지 않는다', () => {
+    const code = page();
+    expect(code).toMatch(/r\.triggers \?\? \[\]/);
+    /* 레벨·거리를 화면에서 만들면 §16 이 깨지고 보드와 다른 수가 선다. */
+    expect(code).not.toMatch(/upper - |ma \+ |sd \*/);
+  });
+
+  it('트리거가 무엇인지 화면이 말한다 — 명구 의무와 한 몸', () => {
+    const code = page();
+    expect(code).toMatch(/트리거는 위에서 고른 밴드/);
+    expect(code).toMatch(/명목·손절·목표는 안/);
+    /* 창설부터 지고 있는 명구는 그대로 산다. */
+    expect(code).toMatch(/투자판단이 아니에요/);
+  });
+});
+
+describe('누적 분해와 순Δ는 서버가 끝낸다', () => {
+  it('분해 카드는 앱에 한 벌이고 두 창이 그것을 세운다', () => {
+    expect(src('src/mr/parts.tsx')).toMatch(/export function SplitColumn/);
+    for (const f of ['src/mr/StrategyWindow.tsx', 'src/mr/BookWindow.tsx']) {
+      expect(src(f), `${f} 가 공용 분해 카드를 안 쓴다`).toMatch(/<SplitColumn split=\{perf\.split\}/);
+    }
+  });
+
+  it('분해는 **구간을 따라간다** — 전체 기간 값을 구간 카드 옆에 안 세운다', () => {
+    /* `perf` 는 구간 카드다(`spans`). `run.summary.split` 을 세우면 옆 칸들과
+       다른 구간의 수가 한 줄에 선다. */
+    for (const f of ['src/mr/StrategyWindow.tsx', 'src/mr/BookWindow.tsx']) {
+      expect(src(f)).not.toMatch(/SplitColumn split=\{run\.summary\.split\}/);
+    }
+  });
+
+  it('순Δ 는 서버 값을 그대로 적는다 — 화면이 비용을 bp 로 되돌리지 않는다', () => {
+    const code = src('src/mr/StrategyWindow.tsx');
+    expect(code).toMatch(/t\.dvNet == null \? '—' : fmtBp\(t\.dvNet, 2\)/);
+    expect(code).not.toMatch(/t\.cost \/ /);
+  });
+
+  it('두 라우트가 같은 함수로 순Δ 를 낸다 — 두 표가 다른 수를 말하지 않게', () => {
+    const main = fs.readFileSync(path.join(root, 'backend/app/main.py'), 'utf8');
+    const book = fs.readFileSync(path.join(root, 'backend/app/mrbook.py'), 'utf8');
+    expect(main).toMatch(/mrm\.dv_net\(/);
+    expect(book).toMatch(/mrm\.dv_net\(/);
+  });
+
+  it('없는 성분은 0 이 아니라 빈칸이다 — 서버도 화면도', () => {
+    const met = fs.readFileSync(path.join(root, 'backend/app/mrmetrics.py'), 'utf8');
+    /* 일부 봉에만 있는 성분은 아예 안 싣는다(섞인 합은 성분이 아니다). */
+    expect(met).toMatch(/len\(vals\) == len\(points\)/);
+    expect(src('src/mr/parts.tsx')).toMatch(/v == null \? '—' : fmtKrw\(v\)/);
+  });
+});

@@ -16,7 +16,7 @@ import { Text } from '@coinbase/cds-web/typography';
 import { fmtKrw } from '@/lib/krw';
 import { Stat, StatColumn } from '@/ui/Stat';
 
-import type { MrPerf, MrStrategyTrade } from './api';
+import type { MrPerf, MrSplit, MrStrategyTrade } from './api';
 
 /** 청산 사유의 우리말 — 서버의 어휘를 화면에서 **한 번만** 옮긴다.
  *  우선순위가 곧 이름이다: 손절 > 청산 > 역신호 > 타임스탑. `미청산` 은 판정이
@@ -29,19 +29,14 @@ export const WHY_WORD: Record<MrStrategyTrade['why'], string> = {
   open: '미청산',
 };
 
-/** 표 머리의 활자를 고른다 — **소문자가 들어 있으면 `legal`, 아니면 `caption`**.
+/** 표 머리의 활자 기준 — **정의는 `lib/format` 에 있다**.
  *
- *  이 리포가 이미 정해 둔 기준이다(`StrategyWindow` 대사표 머리 주석·
- *  `BookWindow` 만기별 표 주석): CDS 기본 테마의 `textTransform.caption =
- *  'uppercase'` 가 「z」를 「Z」로, 「bp」를 「BP」로 만든다. 둘은 크기가 같고
- *  (0.8125rem) 중량·대문자화만 다르므로, **기호와 단위가 든 머리**만 `legal` 이다.
- *
- *  기준이 사람의 눈대중에 걸리지 않게 함수로 둔다 — 2026-09-02 감사에서 거래 표
- *  머리 넷(`#`·`진입 IRS`·`진입 CD`·`이탈 최대`)이 소문자가 없는데도 `legal` 로
- *  서 있었다. 대문자화가 망칠 글자가 없으니 화면은 안 틀렸지만, 같은 행의 머리가
- *  두 중량으로 갈렸다. */
-export const headFont = (label: string): 'caption' | 'legal' =>
-  /[a-z]/.test(label) ? 'legal' : 'caption';
+ *  이 리포가 이미 정해 둔 기준이고(`StrategyWindow` 대사표 머리 주석·
+ *  `BookWindow` 만기별 표 주석) 2026-09-02 에 함수가 됐다. 2026-09-09 에 `ui/ThHelp`
+ *  (도움말이 달린 머리)도 같은 기준을 써야 해서 `lib/format` 으로 내려갔다 —
+ *  `ui/` 가 `mr/` 를 임포트할 수는 없기 때문이다. 여기서는 **다시 내보내기만**
+ *  한다: 이 레인의 파일들이 부르던 이름을 지키고, 정의는 하나로 남긴다. */
+export { headFont } from '@/lib/format';
 
 /** 짧은 날짜 — 구간 라벨용. `2020-01-02` → `20-01`. 칸이 좁아 연·월만 남긴다. */
 export const ym = (iso: string): string => `${iso.slice(2, 4)}-${iso.slice(5, 7)}`;
@@ -162,6 +157,59 @@ export function RiskAdjusted({ perf }: { perf: MrPerf }) {
         note={perf.profitFactor == null
           ? (perf.numTrades ? '진 거래가 없어요' : '거래가 없어요')
           : '거래 기준'}
+      />
+    </StatColumn>
+  );
+}
+
+/** **누적 분해** — 두 창이 같은 카드를 세운다 [OWNER 2026-09-09 — "누적 채권 +
+ *  스왑 손익을 롤다운 캐리로 분해해서 보여주기"].
+ *
+ *  ## 정의는 v1 대사 엔진의 것이다 [OWNER 2026-09-09 — 「v1 대사 엔진 정의 이식」]
+ *
+ *  서버가 봉마다 이미 세워 둔 다섯을 더한 값이고(`backend/app/mrmetrics.py::split`),
+ *  그 값은 `cashbond.book_recon` — 백테스트·시뮬 대사가 쓰는 바로 그 함수 — 에서
+ *  온다. 그래서 이 앱의 세 화면이 「롤다운」을 같은 뜻으로 쓴다: 커브가 그대로인데
+ *  잔존만기가 짧아져서 생긴 클린 가격 변화(전일 커브 위의 재평가), 캐리는 가만히
+ *  있어 확정되는 현금흐름, 평가는 커브가 **움직여서** 생긴 잔여.
+ *
+ *  ## 구간을 따라간다
+ *
+ *  값은 구간 카드(`perf.split`)에서 오므로 옆의 일곱(`RiskAdjusted`)과 **같은
+ *  구간**이다. 전체 기간의 분해를 구간 카드 옆에 세우면 두 칸이 딴 구간의 수다.
+ *
+ *  ## 없는 항은 «—» 다 — 0 이 아니다
+ *
+ *  엔진 근사 판에는 롤다운·조달이라는 항이 **아예 없다**. 0 으로 적으면 「그
+ *  구간에 롤다운이 없었다」는 다른 말이 되고, 읽는 사람은 그 0 을 사실로 읽는다
+ *  (이 리포의 공란 정책 — `fmtRatio` 머리와 같은 근거).
+ *
+ *  다섯을 더하면 구간 순손익이다. 그 항등이 이 카드의 자기검사이고, 서버 시험이
+ *  같은 항등을 잰다(`tests/test_mrmetrics.py::test_split_parts_sum_to_the_cumulative`). */
+export function SplitColumn({ split }: { split?: MrSplit }) {
+  if (!split) return null;
+  const money = (v: number | null, why: string) => ({
+    value: v == null ? '—' : fmtKrw(v),
+    note: v == null ? why : undefined,
+    tone: v == null ? undefined : v > 0 ? ('up' as const) : v < 0 ? ('down' as const) : undefined,
+  });
+  /* 근사 판이면 그 사실을 **카드 안에서** 말한다 — 「왜 두 칸이 비었나」의 답이
+     카드 밖에 있으면 읽는 사람이 못 찾는다. */
+  const why = '엔진 근사라 이 항이 없어요';
+  return (
+    <StatColumn title="누적 분해">
+      <Stat label="평가" {...money(split.mtm, why)} />
+      <Stat label="캐리" {...money(split.carry, why)} />
+      <Stat label="롤다운" {...money(split.rolldown, why)} />
+      <Stat label="조달" {...money(split.funding, why)} />
+      <Stat label="비용" {...money(split.cost, why)} />
+      {/* 검산 줄 — 다섯을 더한 값이 곧 구간 순손익이다. 합을 적어 두면 눈으로
+          닫을 수 있고, 안 닫히는 날이 있으면 그게 결함이라는 뜻이다. */}
+      <Stat
+        label="합"
+        value={fmtKrw(split.total)}
+        tone={split.total > 0 ? 'up' : split.total < 0 ? 'down' : undefined}
+        note="다섯의 합 = 구간 순손익"
       />
     </StatColumn>
   );
