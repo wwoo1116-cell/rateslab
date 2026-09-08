@@ -236,16 +236,27 @@ def test_a_free_knob_value_joins_the_grid_as_its_own_cell():
 
 
 def test_grid_cell_matches_a_standalone_simulate_of_the_same_knobs():
-    """격자가 «다른 엔진» 이면 채택 버튼이 거짓말이 된다 — 같은 수인지 잰다."""
-    from app import main as M
+    """격자가 «다른 엔진» 이면 채택 버튼이 거짓말이 된다 — 같은 수인지 잰다.
 
+    고르는 칸은 **프리셋에서 유도한다**. 예전에는 `(120, 2.5, 0.0, 4.0, "touch")`
+    라고 적어 뒀는데, 손절 목록이 3.0/3.5/4.0 → 2.5/3.0/3.5 로 바뀌자
+    (2026-09-08 오너 결정) 그 칸이 사라져 이 시험이 `StopIteration` 으로 죽었다.
+    이 시험이 지키려는 것은 «어느 칸» 이 아니라 «격자 칸 = 낱개 시뮬» 이므로,
+    목록의 끝값을 집어 기본 노브와 다른 칸 하나를 만든다.
+    """
+    from app import main as M
+    from app import mr as mr_mod
+
+    ps = mr_mod.STRATEGY_PRESETS
+    lb, ez, xz, sz = (int(ps["lookback"][-1]), ps["entryZ"][-1],
+                      ps["exitZ"][0], ps["stopZ"][-1])
     dates, vals = _walk()
     got = M._mr_optimize(dates, vals, dict(BASE), (-1, 1), span="1y")
     cell = next(c for c in got["cells"]
                 if (c["lookback"], c["entryZ"], c["exitZ"], c["stopZ"],
-                    c["entryMode"]) == (120, 2.5, 0.0, 4.0, "touch"))
-    r = bt.simulate(dates, vals, lookback=120, entry_z=2.5, exit_z=0.0,
-                    stop_z=4.0, cost_bp=BASE["costBp"],
+                    c["entryMode"]) == (lb, ez, xz, sz, "touch"))
+    r = bt.simulate(dates, vals, lookback=lb, entry_z=ez, exit_z=xz,
+                    stop_z=sz, cost_bp=BASE["costBp"],
                     notional=BASE["notional"], allow_dirs=(-1, 1),
                     entry_mode="touch")
     m = mrm.score(dates, r["points"], r["trades"],
