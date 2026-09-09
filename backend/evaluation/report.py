@@ -36,6 +36,15 @@ def _num(v: Any, nd: int = 4, suffix: str = "") -> str:
     return f"{v:,.{nd}f}{suffix}"
 
 
+def _ci_row(label: str, ci: Any) -> str:
+    """구간 한 줄 — **폭 배수**를 같이 적는다. 넓다는 사실이 요점이라서다."""
+    if not ci or ci[0] is None or ci[1] is None:
+        return f"| {label} | — |"
+    lo, hi = ci
+    span = (f" · 폭 {hi / lo:,.1f}배" if lo > 0 else "")
+    return f"| {label} | [{_num(lo, 3)}, {_num(hi, 3)}]{span} |"
+
+
 def render(out: dict[str, Any]) -> str:
     """평가 결과 → 마크다운 한 장."""
     g, r, d, i = out["gate"], out["ranking"], out["diagnostics"], out["inputs"]
@@ -91,6 +100,13 @@ def render(out: dict[str, Any]) -> str:
          f"{_num(r.get('total_episodes'), 0)} "
          f"(꼬리 관측 {_num(r.get('tail_points'), 0)}점) |"),
         f"| 연환산 수익(정규화 후) | {_num(r['ann_return_normalized'])} |",
+        # ★**점추정 하나만 적으면 없는 정밀도를 주장하게 된다.** 종속 꼬리 관측을
+        # 독립처럼 세면 표준오차가 극단지수 θ 배로 줄어든다(Ferro 2003) — 위 줄의
+        # 「사건 수」가 곧 그 θ 다. 두 지표를 같은 부트스트랩으로 재서 **이 표본에서
+        # 어느 쪽이 식별되는지**까지 보이게 한다(Van Hemert 외 2020 의 「낙폭 통계는
+        # 관측을 낭비한다」가 폭 배수로 나온다).
+        _ci_row("CDaR 비 90% 구간", r.get("cdar_ratio_ci")),
+        _ci_row("Lo 보정 SR 90% 구간 — **같은 자로 견준다**", r.get("sr_lo_ci")),
         "",
         "## 동반 진단 — **순위에 안 쓴다**",
         "",

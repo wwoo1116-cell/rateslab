@@ -196,9 +196,13 @@ def test_contract_shape_is_the_agreed_one():
     # 순위 블록에 **자기 근거의 두께**가 더해졌다(2026-09-09) — 그 비율이 몇 개의
     # 낙폭 «사건» 위에 서 있는지. Calmar → CDaR 로 옮긴 이유가 「MaxDD 는 단일관측」
     # 이었으므로, CDaR 이 실제로 사건 둘 위에 서 있으면 그것도 적혀야 한다.
+    # 그리고 **오차막대**가 붙었다 — 종속 꼬리 관측을 독립처럼 세면 표준오차가
+    # 극단지수 θ 배로 줄어 없는 정밀도를 주장하게 된다(Ferro 2003). 두 지표를 같은
+    # 부트스트랩으로 재서 이 표본에서 어느 쪽이 식별되는지까지 보인다.
     assert set(out["ranking"]) == {"cdar_ratio", "cdar", "ann_return_normalized",
                                    "tail_episodes", "total_episodes",
-                                   "tail_points", "reason_if_null", "reference"}
+                                   "tail_points", "cdar_ratio_ci", "sr_lo_ci",
+                                   "reason_if_null", "reference"}
     #: 비용 가정은 **계산에 안 쓰지만 적혀 나간다** — 전략마다 다른 가정을 쓰지
     #: 않으려면 무엇을 가정했는지가 보고서에 있어야 한다(오너 규율).
     assert out["inputs"]["cost_bp"] == 1.0
@@ -518,3 +522,64 @@ def test_blocked_ar1_needs_enough_blocks():
     from evaluation.metrics import ar1_blocked
 
     assert ar1_blocked(pd.Series([0.01] * 40), block=21)[0] is None
+
+
+# ── 순위값의 오차막대 — 종속 꼬리를 독립처럼 세지 않는다 ──────────────────
+
+def test_block_bootstrap_is_deterministic():
+    """씨앗이 고정이라 **같은 입력이 같은 구간**을 낸다.
+
+    판정문은 리포에 남는 산출물이다. 매번 다른 수가 나오면 diff 가 생겨 「무엇이
+    바뀌었나」를 못 읽는다 — 생성 시각을 안 적는 것과 같은 규율이다.
+    """
+    import numpy as np
+    from evaluation.metrics import block_bootstrap_ci, sharpe_lo
+
+    rng = np.random.default_rng(2)
+    r = pd.Series(rng.normal(0.0004, 0.01, 1200))
+    a = block_bootstrap_ci(r, sharpe_lo)
+    b = block_bootstrap_ci(r, sharpe_lo)
+    assert a["lo"] == b["lo"] and a["hi"] == b["hi"]
+    assert a["lo"] < a["hi"]
+
+
+def test_block_bootstrap_says_it_cannot_instead_of_faking_a_range():
+    """봉이 블록의 두 배도 안 되면 **못 뽑는다고 말한다** — 0 이나 좁은 구간이 아니다."""
+    from evaluation.metrics import block_bootstrap_ci, sharpe_lo
+
+    got = block_bootstrap_ci(pd.Series([0.001] * 50), sharpe_lo, block=63)
+    assert got["lo"] is None and got["why"]
+
+
+def test_drawdown_ratio_is_less_identified_than_sharpe_on_the_same_series():
+    """★**낙폭 비의 구간이 Sharpe 의 구간보다 넓다** — 같은 계열·같은 부트스트랩.
+
+    Van Hemert 외(2020, JPM)가 적은 「총수익은 평균의 **효율적 통계량**인데 낙폭
+    통계는 **경로 의존이라 관측을 더 낭비한다**」가 이 성질이다. 실측(2026-09-09)
+    으로 MR BSS-2Y 는 CDaR 비 12.6배 대 Lo SR 2.6배였다. 합성 계열에서도 방향이
+    같아야 그 말이 이 구현에 실제로 살아 있는 것이다.
+    """
+    import numpy as np
+    from evaluation.metrics import (block_bootstrap_ci, cdar_ratio, sharpe_lo,
+                                    vol_normalize)
+
+    rng = np.random.default_rng(31)
+    r = pd.Series(rng.normal(0.0004, 0.01, 1600))
+    cd = block_bootstrap_ci(r, lambda y: cdar_ratio(vol_normalize(y)[0])["cdar_ratio"])
+    sr = block_bootstrap_ci(r, sharpe_lo)
+    assert cd["lo"] is not None and sr["lo"] is not None
+    span_cd = cd["hi"] / cd["lo"]
+    span_sr = sr["hi"] / sr["lo"]
+    assert span_cd > span_sr, (span_cd, span_sr)
+
+
+def test_ranking_carries_both_intervals():
+    """순위 블록이 **두 구간을 같이** 낸다 — 어느 쪽이 식별되는지 보이라고."""
+    import numpy as np
+
+    rng = np.random.default_rng(8)
+    r = pd.Series(rng.normal(0.0005, 0.01, 1400))
+    out = ev.evaluate(r, trials=9, configs=_matrix(), is_oos_splits=8)
+    rk = out["ranking"]
+    assert rk["cdar_ratio_ci"][0] is not None
+    assert rk["sr_lo_ci"][0] is not None

@@ -321,6 +321,67 @@ def ar1_blocked(returns: pd.Series,
     return (v if np.isfinite(v) else None), int(m.size)
 
 
+#: 부트스트랩 기본값 — **씨앗을 고정한다.** 판정문은 리포에 남는 산출물이라
+#: 같은 입력이 같은 수를 내야 한다(시각을 안 적는 이유와 같은 규율).
+BOOT_SEED = 20260909
+BOOT_N = 400
+#: 블록 길이 63봉(≈분기). 21·63·126 에서 결론이 안 바뀌는 것을 확인하고 가운데를
+#: 골랐다 — 이 자리의 결론은 「구간이 넓다」이지 「정확히 얼마」가 아니다.
+BOOT_BLOCK = 63
+
+
+def block_bootstrap_ci(returns: pd.Series, stat, *, block: int = BOOT_BLOCK,
+                       n: int = BOOT_N, seed: int = BOOT_SEED,
+                       lo: float = 5.0, hi: float = 95.0) -> dict[str, Any]:
+    """**순환 블록 부트스트랩**으로 지표 하나의 구간을 낸다 (Politis & Romano 1992).
+
+    ## 왜 이게 필요한가 — 이 층의 순위값에 오차막대가 없었다
+
+    극단값 이론의 그 사실 때문이다: 종속 초과관측을 독립처럼 세면 **유효 표본이
+    부풀고 표준오차가 극단지수 θ 배로 줄어든다**(Ferro 2003, Leadbetter). 유효
+    표본은 초과관측 수가 아니라 **군집 수**다 — 우리 CDaR 은 꼬리 관측이 80점인데
+    군집(낙폭 사건)이 **둘**이라 θ ≈ 0.025 이고, 그대로 두면 오차를 40배 과소평가한다.
+
+    그래서 점추정 하나만 적으면 **없는 정밀도를 주장하게 된다.** 블록을 통째로 다시
+    뽑아 블록 안의 의존을 살린 채 분포를 낸다.
+
+    ## 실측 (2026-09-09) — 두 지표의 식별력이 다르다
+
+        계열              CDaR 비 [5%,95%] 폭      Lo 보정 SR [5%,95%] 폭
+        MR BSS-2Y         1.68 [0.33, 4.11] 12.6배   1.07 [0.57, 1.48] 2.6배
+        Momentum 50/50    0.44 [0.06, 1.15] 18.1배   0.68 [0.14, 1.13] 8.3배
+        CRS 상한판         3.26 [0.56, 3.32]  5.9배   1.00 [0.65, 1.36] 2.1배
+
+    **Lo 보정 Sharpe 가 CDaR 비보다 3~5배 좁다.** Van Hemert 외(2020)가 적은
+    「총수익은 평균의 효율적 통계량인데 낙폭 통계는 관측을 낭비한다」가 이 장부에서
+    숫자로 나온 것이다. ⚠ 그리고 CDaR 비 쪽은 세 계열의 구간이 서로 **겹친다** —
+    지금 표본에서 그 지표로는 셋을 못 가른다.
+
+    `stat` 은 `pd.Series -> float | None` 이다. `None` 이 나온 표본은 버린다.
+    """
+    x = np.asarray(returns.dropna(), dtype=float)
+    N = x.size
+    if N < block * 2:
+        return {"lo": None, "hi": None, "n": 0,
+                "why": f"봉({N})이 블록({block})의 두 배는 돼야 뽑아요"}
+    rng = np.random.default_rng(seed)
+    nb = int(np.ceil(N / block))
+    vals: list[float] = []
+    for _ in range(n):
+        starts = rng.integers(0, N, nb)
+        y = np.concatenate([np.take(x, np.arange(s, s + block), mode="wrap")
+                            for s in starts])[:N]
+        v = stat(pd.Series(y))
+        if v is not None and np.isfinite(v):
+            vals.append(float(v))
+    if len(vals) < 20:
+        return {"lo": None, "hi": None, "n": len(vals),
+                "why": "쓸 만한 재표집이 스물도 안 나왔어요"}
+    return {"lo": float(np.percentile(vals, lo)),
+            "hi": float(np.percentile(vals, hi)),
+            "n": len(vals), "why": None}
+
+
 def cdar_ratio(returns: pd.Series, alpha: float = 0.05,
                freq: str = "D") -> dict[str, Any]:
     """CDaR 과 그 비율 — **최악 α 꼬리 낙폭의 평균**으로 연환산 수익을 나눈다.
@@ -567,6 +628,14 @@ def evaluate(returns: pd.Series,
 
     scaled, vol_estimator = vol_normalize(r, target_vol, freq)
     c = cdar_ratio(scaled, freq=freq)
+    # ★**순위값에 오차막대를 붙인다.** 종속 꼬리 관측을 독립처럼 세면 표준오차가
+    # 극단지수 θ 배로 줄어 없는 정밀도를 주장하게 된다(Ferro 2003) — 우리 CDaR 은
+    # 꼬리 80점이 낙폭 사건 **둘**에서 오므로 θ ≈ 0.025 다. 두 지표를 같은 방식으로
+    # 재서 **어느 쪽이 이 표본에서 식별되는지**까지 보이게 한다.
+    ci_cdar = block_bootstrap_ci(
+        r, lambda y: cdar_ratio(vol_normalize(y, target_vol, freq)[0],
+                                freq=freq)["cdar_ratio"])
+    ci_sr = block_bootstrap_ci(r, lambda y: sharpe_lo(y, freq))
 
     overall = dsr_pass and pbo_pass
     reason = None
@@ -607,6 +676,9 @@ def evaluate(returns: pd.Series,
             "tail_episodes": c["tail_episodes"],
             "total_episodes": c["total_episodes"],
             "tail_points": c["tail_points"],
+            #: 90% 구간(순환 블록 부트스트랩) — **게이트와 무관하게 낸다.**
+            "cdar_ratio_ci": [ci_cdar["lo"], ci_cdar["hi"]],
+            "sr_lo_ci": [ci_sr["lo"], ci_sr["hi"]],
             "reason_if_null": None if overall else reason,
             "reference": CDAR_REFERENCE,
         },
