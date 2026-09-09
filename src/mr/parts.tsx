@@ -137,7 +137,22 @@ export function RiskAdjusted({ perf }: { perf: MrPerf }) {
         value={fmtRatio(perf.martin)}
         note={perf.martin == null ? '낙폭이 없었어요' : '연환산 ÷ Ulcer'}
       />
-      <Stat label="Ulcer" value={fmtKrw(-perf.ulcer)} note="RMS 낙폭" />
+      {/* ── Ulcer 는 **비율**이고 **부호가 없다** [2026-09-09] ────────────────
+          종전에는 `fmtKrw(-perf.ulcer)` 였다. 둘 다 틀렸다: 원 정의(Martin &
+          McCann)의 Ulcer Index 는 **백분율 낙폭의 RMS** 라 무단위이고, 낙폭의
+          «크기» 이므로 음수가 아니다 — 「낙폭은 음수로 적는다」는 이 화면의 습관이
+          크기 자체에 붙어 있었다. 서버가 이제 액면 대비 비율을 같이 보낸다
+          (`ulcerPct`, 분모는 오너가 정한 **액면**).
+
+          액면을 못 세운 실행에서는 종전 값(원)이 그대로 서되 **부호는 안 붙인다** —
+          그때 note 가 왜 비율이 아닌지를 적는다(공란 정책의 문장 판). */}
+      <Stat
+        label="Ulcer"
+        value={perf.ulcerPct != null
+          ? `${(perf.ulcerPct * 100).toFixed(2)}%`
+          : fmtKrw(perf.ulcer)}
+        note={perf.ulcerPct != null ? 'RMS 낙폭 · 액면 대비' : 'RMS 낙폭 · 액면을 못 세워 원이에요'}
+      />
       {/* GPR 이 없는 이유가 둘이라 화면이 가른다 — 월 버킷이 모자란 것과
           손실 월이 하나도 없는 것은 다른 사실이다. */}
       <Stat

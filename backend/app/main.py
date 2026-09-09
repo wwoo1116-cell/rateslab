@@ -2467,7 +2467,11 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
         # 워밍업이 구간 앞에 있어야 z 가 선다 — `mrmetrics` 머리 §구간),
         # 바뀌는 것은 채점뿐이라 네 벌의 값이 봉 배열을 네 번 훑는 값이다.
         # 그래서 화면의 구간 고르개는 재실행도 stale 도 안 만든다.
-        "spans": mrm.spans_for(dates, r["points"], r["trades"], costBp),
+        # 자본 기준 = **액면**(원금) [OWNER 2026-09-09] — Ulcer 를 무단위로 세우고
+        # 연환산 수익률을 비율로 내는 분모다. 「지금 커브」의 한 값이라 표본 안에서
+        # 5~16% 움직이는 근사이고(`principal` 주석), 못 세우면 그 칸이 «—» 다.
+        "spans": mrm.spans_for(dates, r["points"], r["trades"], costBp,
+                               (principal or {}).get("krw")),
         "summary": {
             "totalPnl": round(s["totalPnl"], 2),
             "maxDrawdown": round(s["maxDrawdown"], 2),

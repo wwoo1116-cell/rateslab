@@ -185,7 +185,8 @@ def _monthly(dates: list[str], daily: list[float]) -> list[float]:
 
 
 def score(dates: list[str], points: list[dict], trades: list[dict],
-          start: int, cost_bp: float) -> dict[str, Any]:
+          start: int, cost_bp: float,
+          capital: float | None = None) -> dict[str, Any]:
     """구간 하나의 성과 카드 한 벌.
 
     `points` 는 엔진(`mrbacktest.simulate`)의 봉이고 `trades` 는 그 거래다 —
@@ -222,6 +223,22 @@ def score(dates: list[str], points: list[dict], trades: list[dict],
 
     ulcer = math.sqrt(sum(d * d for d in dd_path) / n) if n else 0.0
     martin = ann / ulcer if ulcer > 0 else None
+    # ── Ulcer 는 **비율**이다 [평가층 레인 Phase 1-1, 2026-09-09] ─────────────
+    #
+    # 원 정의(Martin & McCann)의 Ulcer Index 는 **전고점 대비 백분율 낙폭의 RMS**
+    # 이고 무단위·비음수다. 이 함수가 내던 `ulcer` 는 그 RMS 를 **원(₩)** 위에서
+    # 잰 것이라 이름이 가리키는 물건이 아니었고(그래서 문헌값과 크기를 못 견준다),
+    # 화면은 거기에 **마이너스까지 붙여** 그렸다(`parts.tsx` — 낙폭은 음수라는
+    # 습관이 낙폭의 «크기» 에 붙었다).
+    #
+    # 자본 기준은 **액면(원금)** 이다 [OWNER 2026-09-09] — 이 데스크에 AUM 이 없고,
+    # 이 거래가 실제로 물리는 돈이 액면이기 때문이다(진입일 커브로 환산한 값이라
+    # 표본 안에서 5~16% 움직인다 — 그래서 이 %는 «그 크기» 의 근사다).
+    #
+    # `capital` 이 없으면 **안 낸다**(None). 0 이나 원 단위 값을 대신 넣으면 그
+    # 순간 이 칸이 다시 두 단위를 오간다.
+    ulcer_pct = (math.sqrt(sum((d / capital) ** 2 for d in dd_path) / n)
+                 if (n and capital and capital > 0) else None)
 
     since = wdates[0] if wdates else None
     wt = [t for t in trades if since is not None and t["exitDate"] >= since]
@@ -255,6 +272,11 @@ def score(dates: list[str], points: list[dict], trades: list[dict],
         "omega": _r(omega, 3),
         "profitFactor": _r(profit_factor, 3),
         "ulcer": round(ulcer, 2),
+        # 무단위 Ulcer(비율) — 화면과 평가층이 읽는 값. 위 주석의 그 정의다.
+        "ulcerPct": _r(ulcer_pct, 6),
+        # **연환산 수익률**(비율) — 액면 대비. Ulcer% 와 짝이라 Martin 을 무단위로
+        # 다시 세울 수 있고, 평가층의 «정규화 안 한 수익률 금지» 규율이 여기서 산다.
+        "annReturnPct": _r(ann / capital, 6) if (capital and capital > 0) else None,
         "martin": _r(martin, 3),
         # 회복일수와 «회복했는가» 는 **다른 사실**이다. 「74일」만 적으면 아직
         # 물속인 구간이 회복한 구간처럼 읽힌다.
@@ -364,7 +386,7 @@ def split(points: list[dict]) -> dict[str, Any]:
 
 
 def spans_for(dates: list[str], points: list[dict], trades: list[dict],
-              cost_bp: float) -> list[dict]:
+              cost_bp: float, capital: float | None = None) -> list[dict]:
     """네 구간을 **한 번에** 낸다 — 화면이 고르개를 돌려도 서버에 안 묻는다.
 
     구간은 엔진을 다시 안 돌리므로(모듈 머리 §구간) 네 벌을 내는 비용이 봉
@@ -374,5 +396,5 @@ def spans_for(dates: list[str], points: list[dict], trades: list[dict],
     out = []
     for key, months in SPANS:
         i = span_start(dates, months)
-        out.append({"span": key, **score(dates, points, trades, i, cost_bp)})
+        out.append({"span": key, **score(dates, points, trades, i, cost_bp, capital)})
     return out
