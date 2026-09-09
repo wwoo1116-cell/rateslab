@@ -40,7 +40,7 @@
  * 그 사실을 말한다). 신호 검증(NO-GO)과 딴 물건임도 aside 가 말한다.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Box, HStack, VStack } from '@coinbase/cds-web/layout';
 import { Table, TableBody, TableCell, TableHeader, TableRow } from '@coinbase/cds-web/tables';
@@ -64,6 +64,7 @@ import {
   MR_STRATEGY_DEFAULTS,
   fetchMrOptimize,
   fetchMrStrategy,
+  rankCells,
   type MrOptimizeCell,
   type MrOptimizeRun,
   type MrPerf,
@@ -730,72 +731,130 @@ export function StrategyWindow({
      여전히 서랍 탭이다. */
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  /* 종목이 바뀌면 지난 실행은 딴 종목의 숫자다 — 남겨 두지 않는다. */
-  useEffect(() => {
-    setRun(undefined);
-    setError(undefined);
-    setOpt(undefined);
-    setOptError(undefined);
-  }, [id]);
+  /* ── 창을 열면 **격자부터 돈다** [OWNER 2026-09-09 — "전략 실험을 누름과
+     동시에 그냥 바로 최적화 값을 보여주는 것이 합당해 보임"] ─────────────────
+     순서는 셋이다: ① 근사 최적화 162칸 → ② 순위 기준의 1등을 노브에 꽂고 →
+     ③ 그 조건으로 실행. 사람이 누르는 것은 **비용·Delta** 뿐이고, 그 둘이
+     바뀌면 ①부터 다시 돈다 [OWNER — "자동으로 다시 돌리기"].
 
-  /* 구간이 바뀌면 격자도 딴 구간의 채점이다 — 성과 카드는 서버가 네 벌을 다
-     보내 와서 즉각 갈아 끼지만, 격자는 구간마다 다시 돌아야 한다(162칸 × 넷을
-     늘 보내면 페이로드가 네 배가 되고 대부분은 안 읽힌다). */
-  useEffect(() => {
-    setOpt(undefined);
-    setOptError(undefined);
-  }, [span]);
+     **왜 비용이 격자를 다시 돌리나.** 비용은 칸마다 다르게 문다(거래 수가
+     달라서) — 편도 0.25 에서 1등인 칸이 1.0 에서는 아닐 수 있다. 반대로
+     **Delta 는 순위를 안 바꾼다**: 비율 지표(Calmar·Sortino·Martin·GPR)의
+     분자·분모가 같은 배로 커져 불변이다. 그래도 같이 다시 도는 이유는 총손익
+     기준으로 볼 때의 표와 「지금 칸」이 갈리지 않게 하기 위해서다(그 기준은
+     채택 금지지만 화면에는 있다).
 
-  const exec = useCallback(() => {
+     경합은 순번으로 버린다 — 비용을 빨리 두 번 바꾸면 첫 격자의 늦은 응답이
+     둘째의 결과를 덮을 수 있다(보드 딥링크에서 이미 밟은 그 판례). */
+  const seq = useRef(0);
+
+  /** ②③ — 격자의 한 칸을 노브에 꽂고 **그 조건으로 실행**한다.
+   *
+   *  종전에는 채택이 노브만 바꾸고 사람이 「실행」을 눌러야 했다. 노브 줄에서
+   *  다섯이 내려간 지금은 그 버튼이 없으므로, 채택이 곧 실행이다 — 안 그러면
+   *  TOP 5 의 「채택」이 아무 일도 안 하는 버튼이 된다. */
+  const adoptAndRun = useCallback((c: {
+    lookback: number; entryZ: number; exitZ: number; stopZ: number;
+    entryMode: MrStrategyParams['entryMode'];
+  }, my: number) => {
+    const next: MrStrategyParams = { ...knobsRef.current, ...c };
+    setKnobs(next);
     /* 다른 실행의 거래를 펴 놓고 있으면 그 대사가 거짓이 된다. */
     setOpenTrade(null);
     setDrawerOpen(false);
     setError(undefined);
-    /* 최적화 표도 같이 버린다 — 「지금 칸」이 어디인지가 노브에 달려 있어서,
-       옛 격자를 들고 있으면 표가 딴 실행의 순위를 이 실행의 것처럼 적는다. */
-    setOpt(undefined);
-    setOptError(undefined);
     setRunning(true);
-    fetchMrStrategy(id, knobs)
-      .then(setRun)
+    fetchMrStrategy(id, next)
+      .then((r) => {
+        if (seq.current === my) setRun(r);
+      })
       .catch((e: unknown) => {
+        if (seq.current !== my) return;
         if (e instanceof BacktestUnavailable) setError('실행 중인 백엔드(:8200)가 필요해요.');
         else setError(e instanceof Error ? e.message : String(e));
       })
-      .finally(() => setRunning(false));
-  }, [id, knobs]);
+      .finally(() => {
+        if (seq.current === my) setRunning(false);
+      });
+  }, [id]);
 
-  /* 격자를 부른다 — **누를 때만**. 실행 시점의 노브(`run.params`)로 부르는
-     이유는 「지금 칸」이 표에서 한 칸으로 서야 순위를 읽을 수 있기 때문이다:
-     아직 안 실행한 노브로 부르면 그 칸이 머리 카드와 다른 규칙의 수가 된다. */
-  const runOptimize = useCallback(() => {
-    if (!run) return;
+  /** ① — 격자를 돌리고 1등을 채택한다. 실패해도 **창이 비지 않는다**: 원본
+   *  PMS 규칙(기본 노브)으로 실행하고 왜 격자가 없는지를 최적화 절이 적는다.
+   *  빈 화면은 「백엔드가 죽었나」와 「이 종목은 격자가 안 선다」를 구분해 주지
+   *  못한다. */
+  const runAuto = useCallback(() => {
+    const my = ++seq.current;
+    setOpt(undefined);
     setOptError(undefined);
     setOptRunning(true);
-    fetchMrOptimize(id, run.params, span)
-      .then(setOpt)
+    fetchMrOptimize(id, knobsRef.current, span)
+      .then((o) => {
+        if (seq.current !== my) return;
+        setOpt(o);
+        const best = rankCells(o.cells, rankKeyRef.current)[0];
+        adoptAndRun(best ?? knobsRef.current, my);
+      })
       .catch((e: unknown) => {
+        if (seq.current !== my) return;
         if (e instanceof BacktestUnavailable) setOptError('실행 중인 백엔드(:8200)가 필요해요.');
         else setOptError(e instanceof Error ? e.message : String(e));
+        adoptAndRun(knobsRef.current, my);
       })
-      .finally(() => setOptRunning(false));
-  }, [id, run, span]);
+      .finally(() => {
+        if (seq.current === my) setOptRunning(false);
+      });
+  }, [id, span, adoptAndRun]);
 
-  /* 「이 조건으로 실행」 — 격자의 한 칸을 노브에 꽂는다. **실행까지 하지는
-     않는다**: 격자는 엔진 근사고 머리 카드는 실가격일 수 있어서, 사람이
-     「실행」을 눌러야 그 차이가 화면에 서는 순서가 지켜진다(그리고 stale
-     배너가 «지금 노브가 실행과 다르다» 를 말해 준다). */
+  /* 노브·순위 기준의 **지금 값**을 콜백이 읽는다 — 의존 배열에 넣으면 채택이
+     노브를 바꿀 때마다 격자가 다시 도는 고리가 된다(채택 → 노브 → 격자 →
+     채택 …). 격자를 다시 도는 조건은 아래 효과가 명시적으로 정한다. */
+  const knobsRef = useRef(knobs);
+  knobsRef.current = knobs;
+  const rankKeyRef = useRef(rankKey);
+  rankKeyRef.current = rankKey;
+
+  /* 격자가 다시 도는 자리는 **넷뿐**이다: 종목 · 구간 · 비용 · Delta.
+     (다시 돌리기 버튼은 같은 함수를 손으로 부른다.) */
+  useEffect(() => {
+    runAuto();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, span, knobs.costBp, knobs.notional]);
+
+  /* 순위 기준이 바뀌면 **격자는 그대로**, 1등만 다시 고른다 — 서버는 칸마다
+     지표를 다 실어 보내므로 다시 물을 이유가 없다(`OptimizePane` 머리의 그
+     판단). 실행은 다시 한다: 조건이 바뀌었으니 머리 카드가 옛 조건의 수를
+     들고 있으면 안 된다. */
+  const firstRank = useRef(true);
+  useEffect(() => {
+    if (firstRank.current) {                 // 첫 렌더는 위 효과가 이미 돈다
+      firstRank.current = false;
+      return;
+    }
+    if (!opt) return;
+    const best = rankCells(opt.cells, rankKey)[0];
+    if (best) adoptAndRun(best, ++seq.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rankKey]);
+
+  /** 「채택」 — TOP 5 의 한 칸을 조건으로 삼는다(= 곧 실행). 노브 줄에서 다섯이
+   *  내려간 뒤로 **조건을 바꾸는 유일한 길**이다. */
   const adopt = useCallback((c: MrOptimizeCell) => {
-    setKnobs((k) => ({
-      ...k, lookback: c.lookback, entryZ: c.entryZ,
-      exitZ: c.exitZ, stopZ: c.stopZ, entryMode: c.entryMode,
-    }));
-  }, []);
+    adoptAndRun(c, ++seq.current);
+  }, [adoptAndRun]);
 
   /* pinned 규율 — 실행 시점 파라미터와 지금 노브가 갈리면 stale. 판정은
      **공용**이다(`KnobBar.mrKnobsStale`) — 통합 장부 창과 같은 조건을 써야
      같은 노브를 돌렸을 때 한 창만 낡은 숫자를 들고 있는 일이 없다. */
-  const stale = useMemo(() => (run ? mrKnobsStale(run.params, knobs) : false), [run, knobs]);
+  /* ⚠ **도는 중에는 stale 을 안 세운다** [2026-09-09]. 종전에는 사람이 노브를
+     바꾸고 실행을 누르기 전까지가 stale 이었다. 지금은 화면이 스스로 조건을
+     꽂고 곧바로 실행하므로, 그 사이(요청이 도는 동안)에도 판정이 참이 되어
+     배너가 깜빡이고 마커가 사라졌다 가 돌아온다. 「지금 노브가 실행과 다르다」는
+     사실은 **응답을 기다리는 동안에는 정보가 아니다** — 기다림은 「돌리는 중…」
+     이 이미 말한다. */
+  const stale = useMemo(
+    () => (run && !running && !optRunning ? mrKnobsStale(run.params, knobs) : false),
+    [run, knobs, running, optRunning],
+  );
 
   const dates = useMemo(() => run?.points.map((p) => p.t) ?? [], [run]);
 
@@ -1396,16 +1455,18 @@ export function StrategyWindow({
       onRankKey={setRankKey}
       span={span}
       headReal={run.real}
-      onRun={runOptimize}
+      onRun={runAuto}
       onAdopt={adopt}
-      intro={'누르면 룩백 3 × 진입 3 × 청산 3 × 손절 3 × 진입 규칙 2 = 162칸을 이 '
-        + '구간에서 채점해요. 비용·Delta 와 실전 규칙은 안 흔들어요 — 그 둘은 '
-        + '통상값이 아니라 그날의 호가폭이고 이 데스크의 포지션 크기예요.'}
+      currentParams={run.params}
+      intro={'격자를 아직 못 돌렸어요 — 룩백 3 × 진입 3 × 청산 3 × 손절 3 × 진입 '
+        + '규칙 2 = 162칸을 이 구간에서 채점해요. 비용·Delta 와 실전 규칙은 안 '
+        + '흔들어요: 그 둘은 통상값이 아니라 그날의 호가폭이고 이 데스크의 포지션 '
+        + '크기예요.'}
     />
   );
 
   const reconWhy = !run
-    ? '실행하면 거래가 서고, 거래 줄을 누르면 하루씩 대사가 열려요.'
+    ? '재현이 끝나면 거래가 서고, 거래 줄을 누르면 하루씩 대사가 열려요.'
     : !sel
       ? '거래 줄을 누르면 하루씩 대사가 서요 — 실제 가격기로 다시 세워서 재요.'
       : run.real && recon === null
@@ -1450,7 +1511,7 @@ export function StrategyWindow({
           content: levelPane,
           unavailable: run
             ? '거래 줄을 누르면 그 구간의 레벨·z·다리 레벨이 하루씩 서요.'
-            : '실행하면 거래가 서고, 거래 줄을 누르면 레벨이 하루씩 열려요.',
+            : '재현이 끝나면 거래가 서고, 거래 줄을 누르면 레벨이 하루씩 열려요.',
         },
       ]}
     >
@@ -1464,8 +1525,8 @@ export function StrategyWindow({
           lead={label}
           knobs={knobs}
           onChange={set}
-          onRun={exec}
-          running={running}
+          onRun={runAuto}
+          running={running || optRunning}
           /* 구간은 **전역 설정값**이라 노브 줄 위에 선다 [OWNER 2026-09-04].
              결과가 있어야 「언제부터」를 말할 수 있으므로 안내 문장은 실행
              뒤에만 붙는다 — 없으면 고르개만 서고 그것도 맞는 화면이다. */
@@ -1480,7 +1541,7 @@ export function StrategyWindow({
         {stale ? (
           /* 조용한 재계산 금지 — 원본의 stale 배너 + 마커 숨김 규율 그대로. */
           <Text font="body" as="p" color="fgMuted">
-            설정이 실행과 달라요 — 실행을 눌러야 아래 숫자에 반영돼요. 진입 마커는 숨겼어요.
+            설정이 실행과 달라요 — 「다시 돌리기」를 눌러야 아래 숫자에 반영돼요. 진입 마커는 숨겼어요.
           </Text>
         ) : null}
         {error ? (
@@ -1494,8 +1555,13 @@ export function StrategyWindow({
             {/* 표본 구간을 **박아 두지 않는다** — 2026-08-28 에 출처를 옮기며
                 2020~ 이 2014~ 가 됐고, 그때 이 문장만 옛 구간을 말하고 있었다.
                 구간은 실행 결과가 진다(아래 「종가」·차트 축). */}
-            실행을 누르면 이 종목의 과거 전체를 원본 규칙으로 재현해요. 당일 종가
-            체결 규약이라 체결 가능성은 담보하지 않아요.
+            {/* 자동 흐름이라 «누르면» 이 아니다 [OWNER 2026-09-09] — 창을 열면
+                격자 162칸이 돌고 그 1등 조건으로 과거 전체를 재현한다. 무엇을
+                기다리는지 화면이 말한다: 격자와 재현은 다른 기다림이다. */}
+            {optRunning ? '최적화 격자 162칸을 이 구간에서 채점하는 중이에요…'
+              : running ? '1등 조건으로 이 종목의 과거 전체를 재현하는 중이에요…'
+              : '창을 열면 격자부터 돌아요.'}{' '}당일 종가 체결 규약이라 체결
+            가능성은 담보하지 않아요.
           </Text>
         ) : (
           <>

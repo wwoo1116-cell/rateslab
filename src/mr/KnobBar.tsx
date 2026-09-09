@@ -19,90 +19,33 @@ import { Box, HStack, VStack } from '@coinbase/cds-web/layout';
 import { Text } from '@coinbase/cds-web/typography';
 import { PeriodSelector } from '@coinbase/cds-web/visualizations/chart';
 
-import { Field, NumField, Segmented } from '@/ui/ControlCard';
+import { Field, NumField } from '@/ui/ControlCard';
 import { CONTROL_H } from '@/ui/controlHeight';
 
 import {
   MR_COST_PRESETS,
-  MR_ENTRY_MODES,
   MR_SPAN_TABS,
-  MR_STRATEGY_LOOKBACKS,
-  MR_STRATEGY_PRESETS,
-  fmtSigma,
   type MrSpan,
   type MrStrategyParams,
 } from './api';
+import { condWord } from './parts';
 
 /* σ 칸의 공통 폭 상수(`SIGMA_W`)는 은퇴했다 [OWNER 2026-09-02 — "칸안에서 빈
  * 부분 축약"]. 셋의 자연폭이 127.4·116.3·118.8 로 달라 공통 폭은 필연적으로
  * 죽은 폭을 낳았다 — 이제 칸마다 제 폭이고 그 수는 호출부에 실측과 함께 있다. */
 
-/* 배타 선택이던 손 알약 `Choice` 는 없다 [OWNER 2026-09-02 — "디자인 구성을
- * Main·Backtest 와 통일"]. 앱의 배타 선택 정본은 `ui/ControlCard` 의
- * `Segmented`(CDS SegmentedTabs + CONTROL_H + .sr-ctlfont)이고, Backtest 방향
- * 칸이 그것을 쓴다(`backtest/BacktestWindow.tsx` 방향 세그먼트). 진입 규칙과
- * 진입 규칙 **한 칸**이 그리로 갔다(실전 규칙 다섯 칸도 세그먼트였으나
- * 2026-09-02 에 화면에서 내렸다 — 아래 그 자리 주석). 값이 숫자·불리언인 칸은
- * Backtest 방향 칸의 판례대로 `String()` 으로 오간다.
+/* 이 줄의 컨트롤은 **넷**이다 — 종목(읽기) · 구간 · 비용 · Delta.
  *
- * `SigmaPick` 은 남는다: σ 전용(숫자 포맷 · **폭은 호출부가 실측으로 준다** —
- * `SIGMA_W` 공통 폭은 2026-09-02 에 은퇴했다)이고, **프리셋 밖의
- * 값이면 무선택**으로 서야 한다는 자기 근거가 있다(아래 주석). 룩백·비용의
- * 알약 줄도 남는다 — 자유 입력 칸과 한 줄에 서는 «프리셋 + 자유값» 이지
- * 배타 선택이 아니다(값이 프리셋 밖이면 아무 알약도 안 눌린다). */
-
-/** σ 문턱 하나 — 근거 있는 셋 중 고른다(`MR_STRATEGY_PRESETS`).
+ * 배타 선택이던 손 알약 `Choice`(진입 규칙)와 σ 전용 알약 `SigmaPick` 은 여기
+ * 있었고 2026-09-09 에 같이 내려갔다 [OWNER — "진입 규칙이나 룩백, 진입 청산
+ * 손절 시그마는 그냥 최초 전략 실험 화면에서 사라지게 하고"]. 그 다섯은 이제
+ * **격자가 답한다**(근사 최적화 162칸의 1등) — 자리와 근거는 아래 「조건」 칸의
+ * 주석에 있다. 앱의 배타 선택 정본은 그대로 `ui/ControlCard` 의 `Segmented`
+ * 이고(Backtest 방향 칸이 쓴다), 프리셋 목록도 그대로 계약(`api.ts`)에 산다 —
+ * 격자가 그 목록 위에서 돈다.
  *
- * 자유 입력을 안 두는 이유는 보드와 같다: 근거 없는 조합을 화면이 권하는 셈이
- * 되고, 재현 도구가 원본에 없던 조합을 그럴듯하게 만들어 준다. 프리셋 밖의
- * 값이 들어오면(딥링크 등) **아무 알약도 안 눌린 상태**로 선다 — 원본 PMS 의
- * `SegmentedButtons` 가 하던 그 처리다. */
-function SigmaPick({
-  label,
-  help,
-  value,
-  options,
-  onPick,
-  width,
-}: {
-  label: string;
-  help: string;
-  value: number;
-  options: readonly number[];
-  onPick: (v: number) => void;
-  /** 이 칸의 폭 — **알약 셋의 실측 잉크**다(호출부가 준다). */
-  width: number;
-}) {
-  /* 종전에는 셋이 `SIGMA_W` 하나를 공유했다. 「같은 성격 칸은 같은 폭」이라는
-     규율이었는데, 알약 라벨의 자릿수가 「1.5」와 「0」으로 달라 자연폭이
-     127.4·116.3·118.8 로 갈리고 그 차가 그대로 **죽은 폭**(11.7·9.2)이 됐다.
-     [OWNER 2026-09-02 — "칸안에서 빈 부분 축약해서 깔끔하게"]로 칸마다 제
-     내용 폭을 준다 — 상자를 두르는 것 자체는 형제 화면의 규약 그대로다
-     (`<Box width={N}><Field>` — 백테스트·시뮬). */
-  return (
-    <Box width={width}>
-      <Field label={label} help={help}>
-      <HStack gap={0.5} alignItems="center" height={CONTROL_H}>
-        {options.map((o) => (
-          <button
-            key={o}
-            type="button"
-            className="sr-pillbtn"
-            data-on={value === o || undefined}
-            aria-pressed={value === o}
-            aria-label={`${label} ${fmtSigma(o)}`}
-            onClick={() => onPick(o)}
-          >
-            {/* σ 는 **라벨이 진다** — 알약마다 붙이면 넷이 한 줄에 안 서고
-                「실행」이 혼자 다음 줄로 밀린다(실측). 접근성 이름에는 남는다. */}
-            {Number(o.toFixed(1))}
-          </button>
-        ))}
-      </HStack>
-      </Field>
-    </Box>
-  );
-}
+ * 남는 둘(비용·Delta)은 «프리셋 + 자유값» 줄이지 배타 선택이 아니다(값이 프리셋
+ * 밖이면 아무 알약도 안 눌린다). */
 
 /* 숫자 칸이던 `NumInput` 은 공용 `NumField`(`ui/ControlCard`)가 됐다
  * [OWNER 2026-09-02 — "공용 부품은 한 벌로 승격"] — 같은 blur/Enter 커밋
@@ -248,90 +191,39 @@ export function MrKnobBar({
             </HStack>
           </Field>
         </Box>
-        {/* 208 = 알약 **셋**(20·60·120) + 간격 + 자유 입력 64 = 실측 잉크 207 에
-            한 칸 여유. ⚠ 종전 주석은 「알약 **넷**(20·60·120·252)」이라고 적었는데
-            이 줄이 그리는 프리셋은 `MR_STRATEGY_LOOKBACKS` **셋**이다 — 넷짜리
-            목록은 보드의 `MR_WINDOWS` 다(2026-09-02 감사가 잡았다: 폭은 맞고
-            근거 문장만 틀렸었다). */}
-        <Box width={208}>
-          <Field label="룩백 (일)">
-            <HStack gap={0.5} alignItems="center">
-              {MR_STRATEGY_LOOKBACKS.map((w) => (
-                <button
-                  key={w}
-                  type="button"
-                  className="sr-pillbtn"
-                  data-on={knobs.lookback === w || undefined}
-                  aria-pressed={knobs.lookback === w}
-                  onClick={() => set({ lookback: w })}
-                >
-                  {w}
-                </button>
-              ))}
-              {/* 64 — 비용 칸과 같은 성격이라 같은 폭이다. 최장 값은 보드의
-                  정식 룩백 「252」 23.03px(실측)이라 종전 56(글자 자리 22px)에서
-                  잘렸다. */}
-              <Box width={64}>
-                <NumField label="룩백(일)" value={knobs.lookback} min={0}
-                  onCommit={(v) => set({ lookback: Math.max(2, Math.round(v)) })} />
-              </Box>
+        {/* ── 조건은 **읽는 칸**이다 [OWNER 2026-09-09 — "진입 규칙이나 룩백,
+            진입 청산 손절 시그마는 그냥 최초 전략 실험 화면에서 사라지게 하고,
+            전략 실험을 누름과 동시에 그냥 바로 최적화 값을 보여주는 것이
+            합당해 보임"] ─────────────────────────────────────────────────────
+            여기 있던 다섯(룩백 · 진입 규칙 · 진입/청산/손절 σ)이 내려갔다.
+            **엔진·계약·프리셋은 그대로**이고(`MR_STRATEGY_PRESETS` 는 격자가
+            읽는다), 손으로 고르는 자리만 없앤 것이다 — 실전 규칙 다섯을 내릴
+            때의 그 판례와 같은 처리이고, 되살리려면 이 자리에 줄을 다시
+            세우면 된다(git 이력: 이 줄을 지운 커밋 하나).
+
+            **왜 내렸나.** 이 다섯은 사람이 고를 값이 아니라 격자가 답하는
+            값이다 — 창을 열면 근사 최적화 162칸이 돌고 그 1등이 곧 조건이다.
+            사람이 고르는 것은 **비용과 Delta** 뿐이다(그 둘은 그날 호가폭과
+            이 데스크의 포지션 크기라 격자가 흔들 수 없다).
+
+            대신 **무엇으로 돌린 수인지**는 화면에 남아야 한다 — 그 문장이 이
+            칸이고, 조건을 바꾸는 길은 최적화 절의 「채택」 하나다.
+
+            폭 232 = 최장 문장 「120일 · 2.5/1/3.5σ · 밴드 복귀」의 실측 잉크
+            (Pretendard 13px/500, 브라우저 실측 2026-09-09: 228.4px)에 여유 4.
+            값이 바뀌어도 뒤 칸이 안 밀리게 최장값으로 잡는다(말줄임 금지). */}
+        <Box width={232}>
+          <Field
+            label="조건"
+            help="근사 최적화 격자 162칸의 1등이에요. 룩백 · 진입/청산/손절 σ · 진입 규칙 순서예요. 바꾸려면 아래 최적화 절의 TOP 5 에서 채택하세요."
+          >
+            <HStack height={CONTROL_H} alignItems="center">
+              <Text font="label2" as="span" noWrap>
+                {condWord(knobs)}
+              </Text>
             </HStack>
           </Field>
         </Box>
-        {/* 진입 규칙 — σ 문턱 **앞**에 선다. 문턱은 「얼마나 벌어지면」이고
-            이것은 「그때 바로 들어가는가, 돌아올 때까지 기다리는가」라서,
-            읽는 순서가 곧 규칙의 순서다. `관찰 σ` 와 달리 **엔진에 들어가고**
-            거래 목록을 바꾼다 — 그래서 설정 줄에 있고 stale 을 세운다.
-            172 = Segmented 자연폭 168 + 여유 4. 탭 하나 = 라벨 + 좌우 패딩
-            16+16(SegmentedTab paddingX={2} = space['2'] 16px)이고, 라벨 「이탈
-            즉시」=「밴드 복귀」= 52(Pretendard 14px/600 어드밴스 합 실측
-            2026-09-02) → (52+32)×2 = 168. 손 알약이던 시절의 156 은 알약 패딩
-            (12+12) 기준이라 세그먼트에는 모자란다 — 말줄임 금지 §3.
-            상자는 실측 잉크 167.5 에 한 칸 여유를 더한 169 다(종전 172 는 4.5px
-            이 죽어 있었다 — 2026-09-02 얼라인 7 감사). */}
-        <Box width={169}>
-          <Field
-            label="진입 규칙"
-            help="이탈 즉시는 밴드를 뚫는 봉에, 밴드 복귀는 밖에 있다가 돌아오는 봉에 들어가요. 방향은 둘 다 나갔던 쪽이 정해요."
-          >
-            <Segmented
-                fill
-              label="진입 규칙"
-              value={knobs.entryMode}
-              options={MR_ENTRY_MODES.map((m) => ({ value: m.v, label: m.label, title: m.help }))}
-              onChange={(v) => set({ entryMode: v })}
-            />
-          </Field>
-        </Box>
-        {/* 폭은 알약 셋의 실측 잉크 + 1 (Pretendard 14px/600 · `.sr-pillbtn`
-            좌우 패딩 12+12 · 알약 사이 4px, 실측 2026-09-02):
-              진입 σ  1.5·2·2.5 → 127.4 → 128
-              청산 σ  0·0.5·1   → 116.3 → 117
-              손절 σ  3·3.5·4   → 118.8 → 120  */}
-        <SigmaPick
-          width={128}
-          label="진입 σ"
-          help="볼린저 밴드의 통상 배수예요 — 2σ가 기본, 1.5σ는 민감하게, 2.5σ는 보수적으로 잡아요."
-          value={knobs.entryZ}
-          options={MR_STRATEGY_PRESETS.entryZ}
-          onPick={(v) => set({ entryZ: v })}
-        />
-        <SigmaPick
-          width={117}
-          label="청산 σ"
-          help="0은 중심선까지 완전히 되돌아올 때 청산이고, 0.5σ가 첫 PMS 기본이에요."
-          value={knobs.exitZ}
-          options={MR_STRATEGY_PRESETS.exitZ}
-          onPick={(v) => set({ exitZ: v })}
-        />
-        <SigmaPick
-          width={120}
-          label="손절 σ"
-          help="z가 더 벌어지면 접는 발산 손절이에요. 진입의 1.5~2배가 통상이고 3.5σ가 첫 PMS 기본이에요."
-          value={knobs.stopZ}
-          options={MR_STRATEGY_PRESETS.stopZ}
-          onPick={(v) => set({ stopZ: v })}
-        />
         {/* ── 비용·Delta·실행은 **한 상자에 담는다** [2026-08-28 실측] ─────
             묶음을 만들려는 게 아니라 **감쌈(wrap)을 제어**하는 장치다: 형제로
             늘어놓으면 줄이 넘칠 때 감쌈이 아무 데서나 잘라 비용만 첫 줄에 남고
@@ -435,7 +327,11 @@ export function MrKnobBar({
           disabled={running}
           onClick={onRun}
         >
-          {running ? '계산 중…' : '실행'}
+          {/* 창을 열면 저절로 도는 흐름이라 이 버튼은 «처음 실행» 이 아니라
+              **다시 돌리기**다 [OWNER 2026-09-09]. 비용·Delta 를 바꾸면 화면이
+              스스로 돌므로, 이 버튼이 필요한 자리는 실패한 뒤의 재시도와
+              «같은 조건으로 한 번 더» 뿐이다. */}
+          {running ? '돌리는 중…' : '다시 돌리기'}
         </button>
         </HStack>
       </HStack>

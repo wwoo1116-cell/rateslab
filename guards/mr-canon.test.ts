@@ -202,12 +202,15 @@ describe('칸 폭은 실측이고 죽은 폭이 없다', () => {
     /* CDS Tabs 기본은 fit-content 라 상자와 컨트롤 사이에 죽은 폭이 남는다.
        `fill`(→ equalWidth)이 그것을 0 으로 만든다 — 얼라인 7 이 Select 에
        DROPDOWN_STYLES 로 막아 둔 그 실패의 세그먼트 판(실측 2026-09-02:
-       5.1~27.8px → 0). Backtest 방향 칸은 고정폭 상자가 아니라 켜지 않는다. */
+       5.1~27.8px → 0). 부품 쪽 계약은 그대로 산다. */
     const cc = src('src/ui/ControlCard.tsx');
     expect(cc).toContain('equalWidth={fill}');
-    /* MR 에 남은 세그먼트는 **진입 규칙 하나**다 — 실전 규칙 다섯은
-       2026-09-02 에 화면에서 내렸다(아래 시험). 남은 것은 채운다. */
-    expect((knob.match(/<Segmented\s+fill/g) || []).length).toBe(1);
+    /* ⚠ **MR 노브 줄에는 세그먼트가 없다**(2026-09-09). 마지막 하나였던 「진입
+       규칙」이 나머지 넷과 함께 내려갔다 [OWNER — 위 그 지시] — 격자가 답하는
+       값이라서다. MR 에 남은 배타 선택은 최적화 절의 「순위 기준」과 통합 창의
+       탭이고, 둘 다 `Segmented` 를 제 파일에서 쓴다. */
+    expect(knob).not.toContain('<Segmented');
+    expect((src('src/mr/OptimizePane.tsx').match(/<Segmented/g) || []).length).toBe(1);
     /* Backtest 방향 칸은 자기 줄에 살아서 켜면 줄 전체로 늘어난다 — 안 켠다. */
     expect(src('src/backtest/BacktestWindow.tsx')).not.toMatch(/<Segmented\s+fill/);
   });
@@ -259,14 +262,22 @@ describe('칸 폭은 실측이고 죽은 폭이 없다', () => {
     expect(apiRaw).toMatch(/자유 입력에 적으면 된다/);
   });
 
-  it('σ 칸은 **각자 제 내용 폭**이다 — 공통 폭 상수는 은퇴했다', () => {
-    /* [OWNER 2026-09-02 — "칸안에서 빈 부분 축약해서 깔끔하게"]. 종전에는 셋이
-       `SIGMA_W` 하나를 공유해 죽은 폭 11.7·9.2px 를 남겼다(알약 라벨의 자릿수가
-       「1.5」와 「0」으로 달라서다). 실측 잉크 127.4·116.3·118.8 → 128·117·120. */
+  it('σ 칸은 아예 없다 — 조건은 격자가 답하고 화면은 그것을 **읽는다**', () => {
+    /* [OWNER 2026-09-09 — "전략 실험을 누름과 동시에 그냥 바로 최적화 값을
+       보여주는 것이 합당해 보임"]. 종전에는 σ 셋이 각자 제 내용 폭(128·117·120)
+       으로 서 있었다 — 그 칸들이 통째로 내려가고 그 자리에 **읽기 칸 하나**가
+       섰다(「조건」). 공통 폭 상수 `SIGMA_W` 는 2026-09-02 에 이미 은퇴했다. */
     expect(knob).not.toContain('SIGMA_W');
-    for (const w of ['128', '117', '120']) {
-      expect(knob, `σ width ${w}`).toContain(`width={${w}}`);
-    }
+    expect(knob).not.toContain('SigmaPick');
+    expect(knob).not.toContain('label="진입 σ"');
+    expect(knob).not.toContain('label="룩백 (일)"');
+    /* 대신 조건 문장이 선다 — 그 문장은 앱에 한 벌이다(`parts.condWord`). */
+    expect(knob).toContain('condWord(knobs)');
+    expect(knob).toContain('<Box width={232}>');
+    /* 「무엇으로 돌린 수인가」가 화면에서 사라지면 안 된다 — 노브를 내린 대가로
+       이 칸이 생겼고, 라벨의 도움말이 바꾸는 길(채택)까지 말한다. */
+    expect(knob).toMatch(/label="조건"/);
+    expect(knob).toMatch(/TOP 5 에서 채택/);
   });
 
   it('폭 선언 **하나하나**에 근거가 붙어 있다 — 말줄임 금지 §3', () => {

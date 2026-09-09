@@ -38,16 +38,16 @@ import { Segmented } from '@/ui/ControlCard';
 import { Stat, StatColumn } from '@/ui/Stat';
 
 import {
-  MR_ENTRY_MODES,
   MR_RANK_KEYS,
   MR_SPAN_LABEL,
   type MrOptimizeRun,
   type MrOptimizeCell,
   type MrRankKey,
   type MrSpan,
+  type MrStrategyParams,
   rankCells,
 } from './api';
-import { NumCell, Panel, fmtRatio, headFont } from './parts';
+import { NumCell, Panel, condWord, fmtRatio, headFont, sameCond } from './parts';
 
 /** 표의 열 — 조건 하나 + 지표들. 「채택」은 열 목록 밖이다(버튼이라 정렬도
  *  단위도 없다). */
@@ -65,29 +65,22 @@ const OPT_COLS: { k: string; label: string; num?: boolean }[] = [
   { k: 'n', label: '거래', num: true },
 ];
 
-const entryWord = (mode: string): string =>
-  MR_ENTRY_MODES.find((m) => m.v === mode)?.label ?? mode;
-
-/** 한 칸의 조건을 한 줄로 — 표의 「조건」 칸과 1등 카드가 같은 문장을 쓴다.
- *
- *  순서는 화면의 노브 순서다(룩백 → 진입 → 청산 → 손절 → 진입 규칙).
- *
- *  σ 는 **라벨이 진다**(맨 숫자 셋을 빗금으로 잇는다) — 칸 안에 「진입 2σ ·
- *  청산 0.5σ · 손절 3.5σ」처럼 적으면 그 글자가 조건보다 넓어지고, 조건 칸은
- *  이 표에서 이미 가장 넓은 열이라 표가 상자를 더 넘는다(미결 4-4). 열 머리가
- *  「룩백/진입/청산/손절」을 말하고 있으므로 자릿수만 남긴다.
- *  ⚠ 2026-09-07 에 공유 부품으로 옮기면서 한 번 풀어 썼다가 되돌렸다. */
-const cellWord = (c: MrOptimizeCell): string =>
-  `${c.lookback}일 · ${Number(c.entryZ.toFixed(1))}/${Number(c.exitZ.toFixed(1))}/${Number(c.stopZ.toFixed(1))}σ · ${entryWord(c.entryMode)}`;
+/** 한 칸의 조건을 한 줄로 — 표의 「조건」 칸·1등 카드·**설정 줄의 조건 칸**이
+ *  같은 문장을 쓴다. 정의는 `parts.condWord` 한 곳이다(2026-09-09 에 노브 줄의
+ *  읽기 칸이 생기면서 세 자리가 됐다 — 셋이 다른 문장이면 화면이 스스로를
+ *  반박한다). 순서·표기의 근거는 그 함수 머리에. */
+const cellWord = (c: MrOptimizeCell): string => condWord(c);
 
 /** TOP 5 **+ 지금 칸**. 지금 칸이 다섯 안이면 다섯 줄, 밖이면 여섯 줄이다.
  *
  *  다섯만 적으면 「내 칸이 몇 등인가」를 표에서 못 찾는다 — 카드에 등수는
  *  적히지만 그 등수의 수가 안 보이면 «얼마나 뒤인가» 를 말할 수 없다. 붙이는
  *  줄은 자기 실제 등수를 달고 선다(6등이라고 적지 않는다). */
-function optRows(ranked: MrOptimizeCell[]): { c: MrOptimizeCell; n: number }[] {
+function optRows(
+  ranked: MrOptimizeCell[], isNow: (c: MrOptimizeCell) => boolean,
+): { c: MrOptimizeCell; n: number }[] {
   const rows = ranked.slice(0, 5).map((c, i) => ({ c, n: i + 1 }));
-  const at = ranked.findIndex((c) => c.current);
+  const at = ranked.findIndex(isNow);
   if (at >= 5) rows.push({ c: ranked[at]!, n: at + 1 });
   return rows;
 }
@@ -104,8 +97,17 @@ export type OptimizePaneProps = {
   /** 머리 카드가 **실가격**인가 — 격자는 늘 엔진 근사라, 참이면 각주가 「같은
    *  조건이라도 수가 달라요」를 더 적는다. */
   headReal: boolean;
+  /** 다시 돌리기 — 격자가 실패했을 때의 재시도다. 창을 열면 저절로 도는
+   *  흐름이라(2026-09-09) 「처음 실행」 버튼은 없다. */
   onRun: () => void;
   onAdopt: (c: MrOptimizeCell) => void;
+  /** **지금 실행된 조건** — 「지금 칸」을 이 위에서 판정한다.
+   *
+   *  서버의 `cell.current` 는 **질의에 실린 노브** 기준이라, 「격자를 돌린 뒤
+   *  1등을 채택해 다시 실행」하는 지금 흐름에서는 «직전 조건» 을 가리킨다
+   *  (`parts.sameCond` 머리에 그 사정). 없으면 서버 플래그로 떨어진다 —
+   *  구 호출부가 있으면 종전대로 선다. */
+  currentParams?: MrStrategyParams;
   /** 안 돌렸을 때의 안내 — 칸 수와 «안 흔드는 것» 을 창이 정한다. */
   intro: string;
   /** 창별 경고 한 문장 — 없으면 공통 각주만 선다. */
@@ -163,14 +165,20 @@ function useCovering(): [React.RefObject<HTMLDivElement | null>, boolean] {
 
 export function OptimizePane({
   opt, error, running, rankKey, onRankKey, span, headReal,
-  onRun, onAdopt, intro, extraNote,
+  onRun, onAdopt, currentParams, intro, extraNote,
 }: OptimizePaneProps) {
   const ranked = useMemo(
     () => (opt ? rankCells(opt.cells, rankKey) : []),
     [opt, rankKey],
   );
   const best = ranked[0];
-  const curRank = ranked.findIndex((c) => c.current);
+  /* 「지금 칸」은 **실행된 조건** 위에서 판정한다 — 서버 플래그는 질의 시점의
+     노브를 가리킨다(prop 주석의 그 사정). 구 호출부(prop 없음)는 종전대로. */
+  const isNow = useCallback(
+    (c: MrOptimizeCell) => (currentParams ? sameCond(c, currentParams) : c.current),
+    [currentParams],
+  );
+  const curRank = ranked.findIndex(isNow);
   const [gridRef, covering] = useCovering();
   const rank = MR_RANK_KEYS.find((k) => k.v === rankKey)!;
 
@@ -194,15 +202,26 @@ export function OptimizePane({
               />
             </Box>
           ) : null}
-          <button
-            type="button"
-            className="sr-pillbtn"
-            data-fill
-            disabled={running}
-            onClick={onRun}
-          >
-            {running ? '격자 도는 중…' : opt ? '다시 돌리기' : '최적화 실행'}
-          </button>
+          {/* 버튼은 **재시도**뿐이다 [OWNER 2026-09-09] — 창을 열면 격자가 저절로
+              돌고(그 흐름은 창이 진다) 비용·Delta 를 바꾸면 다시 돈다. 「최적화
+              실행」을 남겨 두면 이미 돌아 있는 것을 또 누르라고 권하는 셈이다.
+              실패했을 때만 서는 이유: 성공한 판에서 이 자리는 노브 줄의 「다시
+              돌리기」와 같은 일을 하는 둘째 버튼이 된다. */}
+          {error ? (
+            <button
+              type="button"
+              className="sr-pillbtn"
+              data-fill
+              disabled={running}
+              onClick={onRun}
+            >
+              {running ? '격자 도는 중…' : '다시 시도'}
+            </button>
+          ) : running ? (
+            <Text font="legal" as="span" color="fgMuted" noWrap>
+              격자 도는 중…
+            </Text>
+          ) : null}
         </HStack>
       }
     >
@@ -222,7 +241,8 @@ export function OptimizePane({
               «바꿀 값이 있나» 가 한 줄로 읽힌다. */}
           <HStack className="sr-stats" width="100%" flexWrap="wrap">
             <StatColumn title={`최적 세트 · ${rank.label} 1등`}>
-              <Stat label="조건" value={cellWord(best)} note={best.current ? '지금 노브예요' : undefined} />
+              <Stat label="조건" value={cellWord(best)}
+                note={isNow(best) ? '지금 이 조건으로 돌고 있어요' : '아직 안 돌린 조건이에요'} />
               <Stat
                 label={rank.label}
                 value={rankKey === 'totalPnl' ? fmtKrw(best.totalPnl) : fmtRatio(best[rankKey])}
@@ -282,14 +302,14 @@ export function OptimizePane({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {optRows(ranked).map(({ c, n }) => (
+                {optRows(ranked, isNow).map(({ c, n }) => (
                   <TableRow key={`${c.lookback}-${c.entryZ}-${c.exitZ}-${c.stopZ}-${c.entryMode}`}>
                     <TableCell className="sr-num" justifyContent="flex-end">
                       <Text font="label1" as="span" tabularNumbers noWrap>{n}</Text>
                     </TableCell>
                     <TableCell>
                       <Text font="label1" as="span" noWrap>
-                        {c.current ? `${cellWord(c)} · 지금` : cellWord(c)}
+                        {isNow(c) ? `${cellWord(c)} · 지금` : cellWord(c)}
                       </Text>
                     </TableCell>
                     <NumCell v={c.calmar} />
@@ -323,7 +343,7 @@ export function OptimizePane({
                       <button
                         type="button"
                         className="sr-pillbtn"
-                        disabled={c.current}
+                        disabled={isNow(c)}
                         onClick={() => onAdopt(c)}
                       >
                         {/* 「채택」 두 글자다 [실측 2026-09-04]. 「노브에 넣기」로
@@ -333,7 +353,7 @@ export function OptimizePane({
                             ⚠ 그래도 넘친다 — 열 폭이 내용에서 오므로(돈 문자열이
                             넓어지면 표도 넓어진다) 데이터에 달렸고, 실측 47.7px
                             (FSW-3Y). 여는 결정은 오너 몫으로 남아 있다. */}
-                        {c.current ? '적용됨' : '채택'}
+                        {isNow(c) ? '적용됨' : '채택'}
                       </button>
                     </TableCell>
                   </TableRow>

@@ -136,6 +136,9 @@ describe('근사 최적화 — 프리셋 격자 · TOP 5 매트릭스 · 채택'
   /* 부품이 아니라 **부르는 쪽**이 지는 사실이 있다 — 안내 문장·채택 처리·
      격자 버리기는 창마다 다르므로 창에서 잰다. */
   const strat = src('src/mr/StrategyWindow.tsx');
+  /* 통합 장부 창도 **같은 흐름**이다 [OWNER 2026-09-09 — "둘 다 같은 흐름으로"]
+     — 자동 실행·채택·격자 버리기를 두 창에서 같이 잰다. */
+  const book = src('src/mr/BookWindow.tsx');
   const api = src('src/mr/api.ts');
   const main = raw('backend/app/main.py');
 
@@ -157,8 +160,11 @@ describe('근사 최적화 — 프리셋 격자 · TOP 5 매트릭스 · 채택'
     expect(grid).toMatch(/cost_bp=base\["costBp"\]/);
     expect(grid).toMatch(/notional=base\["notional"\]/);
     expect(grid).not.toMatch(/for cb in/);
-    /* 안내 문장은 창이 준다(`intro`) — 창마다 칸 수가 다를 수 있다. */
-    expect(strat).toMatch(/비용·Delta 와 실전 규칙은 안 흔들어요/);
+    /* 안내 문장은 창이 준다(`intro`) — 창마다 칸 수가 다를 수 있다. 2026-09-09
+       에 그 문장이 「누르면 …」에서 「격자를 아직 못 돌렸어요 …」로 바뀌었다:
+       격자는 이제 창을 열면 저절로 돌고, 이 문장은 **못 돌린 판**의 것이다. */
+    expect(strat).toMatch(/비용·Delta 와 실전 규칙은 안 /);
+    expect(strat).toMatch(/격자를 아직 못 돌렸어요/);
   });
 
   it('정렬은 화면이 한다 — 서버는 칸마다 지표를 다 실어 보낸다', () => {
@@ -184,11 +190,50 @@ describe('근사 최적화 — 프리셋 격자 · TOP 5 매트릭스 · 채택'
     expect(win).toContain('label="지금 칸"');
   });
 
-  it('채택은 노브에만 꽂고 실행하지 않는다 — 두 회계가 갈리는 순서를 지킨다', () => {
-    const fn = strat.slice(strat.indexOf('const adopt = useCallback'), strat.indexOf('const stale = useMemo'));
-    expect(fn).toMatch(/setKnobs/);
-    expect(fn).not.toMatch(/exec\(\)/);
-    expect(fn).not.toMatch(/fetchMrStrategy/);
+  it('채택은 **곧 실행이다** — 조건을 바꾸는 유일한 길이라서', () => {
+    /* ⚠ 명제가 2026-09-09 에 뒤집혔다 [OWNER — "진입 규칙이나 룩백, 진입 청산
+       손절 시그마는 … 사라지게 하고 … 바로 최적화 값을 보여주는 것"].
+
+       종전에는 채택이 노브만 바꾸고 사람이 「실행」을 눌렀다 — 격자는 엔진
+       근사고 머리 카드는 실가격일 수 있어서, 그 차이가 화면에 서는 순서를
+       사람이 넘기게 한 것이었다. 그런데 노브 다섯이 화면에서 내려가면서 그
+       「실행」 버튼이 **조건을 못 바꾸는 버튼**이 됐다. 채택이 실행까지 하지
+       않으면 TOP 5 의 그 칸은 아무 일도 안 하는 버튼이 된다.
+
+       두 회계의 차이는 사라지지 않았다 — 그 사실은 각주가 계속 말한다
+       (「격자는 엔진 근사예요 — 머리 카드는 실가격이라 …」). */
+    for (const [f, code] of [['StrategyWindow', strat], ['BookWindow', book]] as const) {
+      const fn = code.slice(code.indexOf('const adopt = useCallback'),
+                            code.indexOf('const adopt = useCallback') + 400);
+      expect(fn, `${f} 의 채택`).toMatch(/adoptAndRun\(c, \+\+seq\.current\)/);
+    }
+    /* 실행까지 가는 길이 한 함수다 — 채택·격자 1등·순위 기준 변경이 같은 자리를
+       지나야 세 길이 다른 조건으로 갈리지 않는다. */
+    expect(strat).toMatch(/const adoptAndRun = useCallback/);
+    expect(book).toMatch(/const adoptAndRun = useCallback/);
+  });
+
+  it('창을 열면 격자부터 돈다 — 두 창이 같은 흐름이다', () => {
+    /* [OWNER 2026-09-09 — "전략 실험을 누름과 동시에 그냥 바로 최적화 값을",
+       그리고 통합 장부도 "둘 다 같은 흐름으로"]. */
+    for (const [f, code] of [['StrategyWindow', strat], ['BookWindow', book]] as const) {
+      expect(code, `${f} 에 자동 흐름이 없다`).toMatch(/const runAuto = useCallback/);
+      /* 격자 → 1등 → 실행. 1등을 고르는 자리가 화면이라는 사실도 여기 선다. */
+      expect(code).toMatch(/rankCells\(o\.cells, rankKeyRef\.current\)\[0\]/);
+      /* 실패해도 창이 비지 않는다 — 원본 규칙으로 실행하고 사유를 적는다. */
+      expect(code).toMatch(/adoptAndRun\(knobsRef\.current, my\)/);
+      /* 경합은 순번으로 버린다 — 비용을 빨리 두 번 바꾸면 늦은 응답이 이긴다. */
+      expect(code).toMatch(/const seq = useRef\(0\)/);
+    }
+  });
+
+  it('격자가 다시 도는 자리는 **비용·Delta·구간**이다 [OWNER 「자동으로 다시 돌리기」]', () => {
+    /* 비용은 칸마다 다르게 물어서 순위를 바꾼다. Delta 는 비율 지표에 불변이라
+       순위를 안 바꾸지만 총손익 축의 표와 「지금 칸」이 갈리지 않게 같이 돈다. */
+    expect(strat).toMatch(/\}, \[id, span, knobs\.costBp, knobs\.notional\]\);/);
+    expect(book).toMatch(/\}, \[span, knobs\.costBp, knobs\.notional\]\);/);
+    /* 순위 기준은 **격자를 다시 안 돈다** — 칸마다 지표가 다 와 있다. */
+    for (const code of [strat, book]) expect(code).toMatch(/\}, \[rankKey\]\);/);
   });
 
   it('격자가 엔진 근사임을 화면이 적는다', () => {
@@ -197,11 +242,14 @@ describe('근사 최적화 — 프리셋 격자 · TOP 5 매트릭스 · 채택'
     expect(win).toMatch(/격자는 엔진 근사예요/);
   });
 
-  it('실행·종목·구간이 바뀌면 격자를 버린다 — 딴 조건의 순위를 들고 있지 않는다', () => {
-    /* 세 자리 전부에서 비운다. 하나라도 빠지면 표가 옛 조건의 순위를 이
-       실행의 것처럼 적는다. */
-    expect((strat.match(/setOpt\(undefined\)/g) ?? []).length).toBeGreaterThanOrEqual(3);
-    expect(strat).toMatch(/\}, \[span\]\);/);
+  it('새로 돌 때 옛 격자를 버린다 — 딴 조건의 순위를 들고 있지 않는다', () => {
+    /* 자동 흐름에서는 «버리는 자리» 가 하나로 모였다(`runAuto` 의 첫 줄) —
+       종목·구간·비용·Delta 가 전부 그 함수를 지난다. 종전처럼 세 자리에
+       흩어 두면 하나가 빠져도 화면이 조용히 옛 순위를 이 실행의 것처럼 적는다. */
+    for (const code of [strat, book]) {
+      const fn = code.slice(code.indexOf('const runAuto = useCallback'));
+      expect(fn.slice(0, 300)).toMatch(/setOpt\(undefined\)/);
+    }
   });
 
   it('부품은 캐논이다 — Stat 스트립 · CDS Table · 공용 Segmented · 알약', () => {

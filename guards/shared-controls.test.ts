@@ -25,8 +25,10 @@ import { stripComments } from './_source';
  * ③ **MR 의 배타 선택은 캐논 `Segmented` 다.** KnobBar 의 손 알약 `Choice`
  *    (`data-on`)가 배타 선택 여섯 자리(진입 규칙 + 실전 규칙 다섯)를 지고
  *    있었다 — 앱의 정본은 `ui/ControlCard.tsx::Segmented`(Backtest 방향 칸의
- *    그 부품)다. 남는 손 알약은 배타 선택이 아닌 것들이다: `SigmaPick`(프리셋
- *    밖 값이면 무선택이라는 자기 근거)과 «프리셋 + 자유값» 줄(룩백·비용).
+ *    그 부품)다. **2026-09-09 에 자리가 옮겨 갔다**: 노브 다섯이 화면에서
+ *    내려가면서(격자가 답한다) KnobBar 의 마지막 세그먼트도 같이 내려갔고,
+ *    MR 에 남은 배타 선택은 최적화 절의 「순위 기준」 하나다. KnobBar 에 남는
+ *    손 알약은 «프리셋 + 자유값» 줄(비용) 하나뿐이다.
  */
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -136,19 +138,24 @@ describe('③ MR 의 배타 선택은 캐논 `Segmented` 다', () => {
     expect(definers(/function Choice\b/)).toEqual([]);
   });
 
-  it('KnobBar 는 `Segmented` 를 임포트하고 남은 한 자리(진입 규칙)에 세운다', () => {
-    /* **하나** = 진입 규칙. 실전 규칙 다섯은 2026-09-02 에 화면에서 내렸다
-       (`mr-canon` 의 그 시험이 부재를 잰다). 수가 **늘면** 내린 칸이 돌아온
-       것이고, **0 이 되면** 진입 규칙이 손 알약으로 되돌아간 것이다 — 종전
-       주석은 승격 당일(여섯) 상태에 멈춰 있어 실패 원인을 거꾸로 읽혔다. */
-    expect(knob).toMatch(/import \{[^}]*\bSegmented\b[^}]*\} from '@\/ui\/ControlCard'/);
-    expect(knob.match(/<Segmented\b/g)?.length).toBe(1);
+  it('MR 의 배타 선택은 최적화 절의 「순위 기준」 하나다', () => {
+    /* 2026-09-09 에 KnobBar 의 마지막 세그먼트(진입 규칙)가 내려갔다 [OWNER —
+       "진입 규칙이나 룩백, 진입 청산 손절 시그마는 그냥 최초 전략 실험 화면에서
+       사라지게 하고"]. 그 다섯은 이제 격자가 답한다.
+
+       그래서 명제가 자리를 옮긴다: MR 에서 세그먼트를 **세우는 곳**은
+       `OptimizePane` 의 순위 기준 하나이고, KnobBar 에는 없다. 수가 늘면 내린
+       칸이 돌아온 것이고, KnobBar 에 다시 서면 노브가 돌아온 것이다. */
+    expect(knob).not.toMatch(/<Segmented\b/);
+    const pane = bodyOf.get('src/mr/OptimizePane.tsx')!;
+    expect(pane).toMatch(/import \{[^}]*\bSegmented\b[^}]*\} from '@\/ui\/ControlCard'/);
+    expect(pane.match(/<Segmented\b/g)?.length).toBe(1);
   });
 
   it('배타 선택 자리에 `data-on` 알약이 되살아나지 않았다', () => {
-    /* KnobBar 에 남은 `data-on` 은 배타 선택이 아닌 두 종류뿐이다 —
-       `SigmaPick`(1) 과 «프리셋 + 자유값» 줄(룩백·비용, 2). 그 셋을 넘으면
-       배타 선택이 손 알약으로 돌아온 것이다. */
-    expect((knob.match(/data-on=/g) ?? []).length).toBeLessThanOrEqual(3);
+    /* KnobBar 에 남은 `data-on` 은 배타 선택이 아니라 «프리셋 + 자유값» 줄
+       하나뿐이다(비용). 룩백 줄과 `SigmaPick` 은 2026-09-09 에 같이 내려갔다 —
+       하나를 넘으면 내린 줄이 돌아왔거나 배타 선택이 손 알약이 된 것이다. */
+    expect((knob.match(/data-on=/g) ?? []).length).toBeLessThanOrEqual(1);
   });
 });

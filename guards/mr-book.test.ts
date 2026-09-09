@@ -214,22 +214,29 @@ describe('노브는 한 벌이다', () => {
     }
   });
 
-  it('σ 알약은 `KnobBar` 에만 있고, 값 고르개·숫자 칸 손 구현은 없다', () => {
-    /* 2026-09-02 승격의 명제 갱신: 종전에는 `NumInput`·`Choice` 도 KnobBar 의
-       로컬이었는데, 숫자 칸은 공용 `NumField`(ui/ControlCard), 배타 선택은 캐논
-       `Segmented`(같은 파일)가 됐다 — 손 구현이 mr 어디에도 되살아나면 안 된다.
-       `SigmaPick` 만 남는다(프리셋 밖 값이면 무선택이라는 자기 근거가 그 파일
-       주석에 있다). 공용 쪽의 단일성은 `guards/shared-controls.test.ts` 가 진다. */
+  it('σ 알약과 손 구현은 화면에서 사라졌고, 되살아나지도 않는다', () => {
+    /* 2026-09-09 에 노브 다섯(룩백 · 진입 규칙 · 진입/청산/손절 σ)이 설정 줄에서
+       내려갔다 [OWNER — "진입 규칙이나 룩백, 진입 청산 손절 시그마는 그냥 최초
+       전략 실험 화면에서 사라지게 하고"] — 그 값들은 이제 격자가 답한다. `SigmaPick`
+       은 그 자리와 함께 지워졌고, 손 구현(`NumInput`·`Choice`)은 2026-09-02
+       승격으로 이미 없다. 셋 다 **어느 mr 파일에도** 되살아나면 안 된다:
+       살아나면 화면이 「고르는 자리」를 둘로 말하게 된다.
+
+       숫자 칸은 여전히 공용 `NumField` 하나다(비용·Delta 가 그것을 쓴다). */
     const mrFiles = ['src/mr/KnobBar.tsx', 'src/mr/StrategyWindow.tsx', 'src/mr/BookWindow.tsx', 'src/mr/MrPage.tsx'];
-    const sigmaHomes = mrFiles.filter((f) => src(f).includes('function SigmaPick'));
-    expect(sigmaHomes).toEqual(['src/mr/KnobBar.tsx']);
-    for (const name of ['function NumInput', 'function Choice']) {
+    for (const name of ['function SigmaPick', 'function NumInput', 'function Choice']) {
       const homes = mrFiles.filter((f) => src(f).includes(name));
-      expect(homes, `${name} 손 구현은 승격으로 사라졌다`).toEqual([]);
+      expect(homes, `${name} 은 화면에 없다`).toEqual([]);
     }
     expect(src('src/mr/KnobBar.tsx')).toMatch(
-      /import \{ Field, NumField, Segmented \} from '@\/ui\/ControlCard'/,
+      /import \{ Field, NumField \} from '@\/ui\/ControlCard'/,
     );
+    /* 프리셋 목록은 **계약에 그대로 산다** — 격자가 그 위에서 돈다. 화면에서
+       내린 것과 계약에서 지운 것은 다른 일이다(실전 규칙 다섯의 그 판례). */
+    const api = src('src/mr/api.ts');
+    for (const k of ['MR_STRATEGY_PRESETS', 'MR_STRATEGY_LOOKBACKS', 'MR_ENTRY_MODES']) {
+      expect(api, k).toContain(k);
+    }
   });
 
   it('청산 사유의 우리말은 앱에 한 벌이다 — 두 표가 같은 사건을 같게 부른다', () => {

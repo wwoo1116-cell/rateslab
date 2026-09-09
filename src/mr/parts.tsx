@@ -16,7 +16,8 @@ import { Text } from '@coinbase/cds-web/typography';
 import { fmtKrw } from '@/lib/krw';
 import { Stat, StatColumn } from '@/ui/Stat';
 
-import type { MrPerf, MrSplit, MrStrategyTrade } from './api';
+import { MR_ENTRY_MODES, type MrPerf, type MrSplit, type MrStrategyParams,
+  type MrStrategyTrade } from './api';
 
 /** 청산 사유의 우리말 — 서버의 어휘를 화면에서 **한 번만** 옮긴다.
  *  우선순위가 곧 이름이다: 손절 > 청산 > 역신호 > 타임스탑. `미청산` 은 판정이
@@ -213,4 +214,46 @@ export function SplitColumn({ split }: { split?: MrSplit }) {
       />
     </StatColumn>
   );
+}
+
+/** 진입 규칙의 이름 — 목록이 어휘의 주인이라 여기서 다시 짓지 않는다. */
+const entryWord = (mode: string): string =>
+  MR_ENTRY_MODES.find((m) => m.v === mode)?.label ?? mode;
+
+/** 조건 한 줄 — 「60일 · 2/0.5/3.5σ · 이탈 즉시」.
+ *
+ *  ## 왜 한 벌인가
+ *
+ *  이 문장이 서는 자리가 셋이 됐다 [2026-09-09]: 최적화 표의 「조건」 칸, 1등
+ *  카드, 그리고 **설정 줄의 「조건」 읽기 칸**(노브 다섯이 내려간 자리). 셋이
+ *  같은 실행을 다른 문장으로 말하면 화면이 스스로를 반박한다 — 캐논 얼라인 8.
+ *
+ *  ## 왜 이 순서·이 표기인가
+ *
+ *  순서는 규칙이 도는 순서다(룩백 → 진입 → 청산 → 손절 → 진입 규칙). σ 는
+ *  **라벨이 진다** — 칸 안에 「진입 2σ · 청산 0.5σ · 손절 3.5σ」처럼 적으면 그
+ *  글자가 조건보다 넓어지고, 조건 칸은 최적화 표에서 이미 가장 넓은 열이다.
+ *  자릿수만 남기고 빗금으로 잇는다(2026-09-07 에 한 번 풀어 썼다가 되돌렸다). */
+export function condWord(p: {
+  lookback: number; entryZ: number; exitZ: number; stopZ: number; entryMode: string;
+}): string {
+  const n = (v: number) => Number(v.toFixed(1));
+  return `${p.lookback}일 · ${n(p.entryZ)}/${n(p.exitZ)}/${n(p.stopZ)}σ · ${entryWord(p.entryMode)}`;
+}
+
+/** 두 조건이 **같은 칸**인가 — 격자의 한 칸과 지금 실행을 견준다.
+ *
+ *  서버도 `current` 플래그를 실어 보내지만 그것은 **질의에 실린 노브** 기준이다.
+ *  2026-09-09 부터 창은 「격자를 돌린 뒤 1등을 채택해서 다시 실행」하므로, 질의
+ *  시점의 노브와 지금 실행이 갈린다 — 그때 서버 플래그는 «직전 조건» 을 가리키고
+ *  화면은 「지금 칸」을 틀린 줄에 세운다. 그래서 판정을 실행 결과(`run.params`)
+ *  위에서 다시 한다. 이건 계산이 아니라 **다섯 값의 동일성**이라 §16 의 「브라우저는
+ *  계산하지 않는다」에 걸리지 않는다. */
+export function sameCond(
+  a: { lookback: number; entryZ: number; exitZ: number; stopZ: number; entryMode: string },
+  b: MrStrategyParams | undefined,
+): boolean {
+  if (!b) return false;
+  return (a.lookback === b.lookback && a.entryZ === b.entryZ && a.exitZ === b.exitZ
+    && a.stopZ === b.stopZ && a.entryMode === b.entryMode);
 }

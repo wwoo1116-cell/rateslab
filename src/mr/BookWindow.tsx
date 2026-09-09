@@ -42,7 +42,7 @@
  * 민평이다.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Box, HStack, VStack } from '@coinbase/cds-web/layout';
 import { Table, TableBody, TableCell, TableHeader, TableRow } from '@coinbase/cds-web/tables';
@@ -61,6 +61,7 @@ import {
   MR_STRATEGY_DEFAULTS,
   fetchMrBook,
   fetchMrBookOptimize,
+  rankCells,
   type MrBookOptimizeRun,
   type MrBookSpan,
   type MrBookSpanLeg,
@@ -319,56 +320,101 @@ export function BookWindow({
   const [optError, setOptError] = useState<string>();
   const [rankKey, setRankKey] = useState<MrRankKey>('calmar');
 
-  const exec = useCallback(() => {
+  /* ── 창을 열면 **격자부터 돈다** [OWNER 2026-09-09 — "둘 다 같은 흐름으로"] ──
+     낱개 창과 **같은 흐름**이다(그 창의 `runAuto` 머리에 산술과 근거): 격자
+     → 순위 기준 1등 채택 → 그 조건으로 실행. 사람이 고르는 것은 비용·Delta
+     뿐이고, 그 둘이 바뀌면 격자부터 다시 돈다.
+
+     ⚠ **여기서는 그 값이 비싸다.** 통합 격자는 162칸마다 만기 아홉을 다시
+     도므로 낱개의 아홉 배다(실측 수십 초). 그래도 두 창을 같은 흐름으로 두는
+     것이 오너 결정이다 — 한 데스크가 두 창에서 다른 방식으로 일하면 「낱개로는
+     벌고 통합으로는 잃는다」가 규칙 탓인지 조작 탓인지 구분이 안 된다. 대신
+     화면이 **기다림을 말한다**(노브 줄의 「돌리는 중…」과 최적화 절의 그 줄). */
+  const seq = useRef(0);
+  const knobsRef = useRef(knobs);
+  knobsRef.current = knobs;
+  const rankKeyRef = useRef(rankKey);
+  rankKeyRef.current = rankKey;
+
+  /** 조건을 꽂고 **그 조건으로 실행**한다 — 채택이 곧 실행이다(노브 줄에서
+   *  다섯이 내려가 「실행」 버튼이 조건을 못 바꾼다). */
+  const adoptAndRun = useCallback((c: {
+    lookback: number; entryZ: number; exitZ: number; stopZ: number;
+    entryMode: MrStrategyParams['entryMode'];
+  }, my: number) => {
+    const next: MrStrategyParams = { ...knobsRef.current, ...c };
+    setKnobs(next);
     setError(undefined);
     setRunning(true);
-    setOpt(undefined);
-    fetchMrBook(knobs)
-      .then(setRun)
+    fetchMrBook(next)
+      .then((r) => {
+        if (seq.current === my) setRun(r);
+      })
       .catch((e: unknown) => {
+        if (seq.current !== my) return;
         if (e instanceof BacktestUnavailable) setError('실행 중인 백엔드(:8200)가 필요해요.');
         else setError(e instanceof Error ? e.message : String(e));
       })
-      .finally(() => setRunning(false));
-  }, [knobs]);
-
-  /* 창을 열면 한 번 돌린다 — 낱개 창과 **다른 판단**이다. 저기는 종목을 고른
-     뒤 여는 창이라 「무엇을 재현할지」가 이미 정해져 있고, 여기는 종목이 없어
-     첫 화면이 빈 채로 서면 이 창이 무엇인지 자체가 안 보인다. 그 뒤로는 노브를
-     바꿔도 **사람이 실행을 눌러야** 숫자가 바뀐다(원본의 pinned 규율 그대로). */
-  useEffect(() => {
-    exec();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      .finally(() => {
+        if (seq.current === my) setRunning(false);
+      });
   }, []);
 
-  /* 격자는 **실행·구간이 바뀌면 버린다** — 딴 조건의 순위를 들고 있으면 표가
-     거짓말을 한다(낱개 창의 그 규율). 순위 기준만은 남긴다(서버에 안 묻는다). */
-  const runOptimize = useCallback(() => {
-    if (!run) return;
+  /** 격자 → 1등 채택 → 실행. 격자가 실패해도 창이 비지 않는다(원본 규칙으로
+   *  실행하고 왜 격자가 없는지를 최적화 절이 적는다). */
+  const runAuto = useCallback(() => {
+    const my = ++seq.current;
+    setOpt(undefined);
     setOptError(undefined);
     setOptRunning(true);
-    fetchMrBookOptimize(run.params, span)
-      .then(setOpt)
+    fetchMrBookOptimize(knobsRef.current, span)
+      .then((o) => {
+        if (seq.current !== my) return;
+        setOpt(o);
+        const best = rankCells(o.cells, rankKeyRef.current)[0];
+        adoptAndRun(best ?? knobsRef.current, my);
+      })
       .catch((e: unknown) => {
+        if (seq.current !== my) return;
         if (e instanceof BacktestUnavailable) setOptError('실행 중인 백엔드(:8200)가 필요해요.');
         else setOptError(e instanceof Error ? e.message : String(e));
+        adoptAndRun(knobsRef.current, my);
       })
-      .finally(() => setOptRunning(false));
-  }, [run, span]);
+      .finally(() => {
+        if (seq.current === my) setOptRunning(false);
+      });
+  }, [span, adoptAndRun]);
 
-  /* 「채택」 — 격자의 한 칸을 노브에 꽂는다. **실행까지 하지는 않는다**:
-     격자는 엔진 근사고 머리 카드는 실가격일 수 있어서, 사람이 「실행」을
-     눌러야 그 차이가 화면에 서는 순서가 지켜진다. */
+  /* 다시 도는 자리는 셋뿐이다: 구간 · 비용 · Delta(창은 종목이 없다). */
+  useEffect(() => {
+    runAuto();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [span, knobs.costBp, knobs.notional]);
+
+  /* 순위 기준이 바뀌면 격자는 그대로, 1등만 다시 고르고 다시 실행한다. */
+  const firstRank = useRef(true);
+  useEffect(() => {
+    if (firstRank.current) {
+      firstRank.current = false;
+      return;
+    }
+    if (!opt) return;
+    const best = rankCells(opt.cells, rankKey)[0];
+    if (best) adoptAndRun(best, ++seq.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rankKey]);
+
+  /** 「채택」 — 조건을 바꾸는 유일한 길이고, 곧 실행이다. */
   const adopt = useCallback((c: MrOptimizeCell) => {
-    setKnobs((k) => ({
-      ...k, lookback: c.lookback, entryZ: c.entryZ,
-      exitZ: c.exitZ, stopZ: c.stopZ, entryMode: c.entryMode,
-    }));
-  }, []);
+    adoptAndRun(c, ++seq.current);
+  }, [adoptAndRun]);
 
-  useEffect(() => { setOpt(undefined); }, [span]);
-
-  const stale = useMemo(() => (run ? mrKnobsStale(run.params, knobs) : false), [run, knobs]);
+  /* 도는 중에는 stale 을 안 세운다 — 낱개 창의 그 판단과 같다(자동 흐름에서는
+     조건을 꽂는 순간과 응답 사이가 늘 «다름» 이라 배너가 깜빡인다). */
+  const stale = useMemo(
+    () => (run && !running && !optRunning ? mrKnobsStale(run.params, knobs) : false),
+    [run, knobs, running, optRunning],
+  );
   const dates = useMemo(() => run?.points.map((p) => p.t) ?? [], [run]);
   const stack = useStackedScales();
 
@@ -442,8 +488,8 @@ export function BookWindow({
           leadLabel="장부"
           knobs={knobs}
           onChange={(patch) => setKnobs((k) => ({ ...k, ...patch }))}
-          onRun={exec}
-          running={running}
+          onRun={runAuto}
+          running={running || optRunning}
           span={span}
           onSpanChange={setSpan}
           /* 서버가 실제로 채점한 구간을 적는다 — 화면이 달력을 다시 세지
@@ -455,7 +501,7 @@ export function BookWindow({
             `body` + `.sr-up`(앱 공통 오류 문법). 낱개 창도 같다. */}
         {stale ? (
           <Text font="body" as="p" color="fgMuted">
-            설정이 실행과 달라요 — 실행을 눌러야 아래 숫자에 반영돼요.
+            설정이 실행과 달라요 — 「다시 돌리기」를 눌러야 아래 숫자에 반영돼요.
           </Text>
         ) : null}
         {error ? (
@@ -473,7 +519,12 @@ export function BookWindow({
 
         {!run ? (
           <Text font="body" as="p" color="fgMuted">
-            {running ? '아홉 만기를 돌리는 중이에요…' : '실행을 누르면 아홉 만기를 같은 규칙으로 동시에 재현해요.'}
+            {/* 자동 흐름이라 «누르면» 이 아니다 — 창을 열면 격자부터 돈다
+                [OWNER 2026-09-09]. 통합은 격자가 만기 아홉을 다시 도므로 이
+                기다림이 수십 초다: 무엇을 기다리는지 화면이 말해야 한다. */}
+            {optRunning ? '격자를 도는 중이에요 — 162칸마다 만기 아홉을 다시 재요(수십 초).'
+              : running ? '아홉 만기를 돌리는 중이에요…'
+              : '창을 열면 최적화 격자부터 돌아요.'}
           </Text>
         ) : (
           <>
@@ -878,9 +929,10 @@ export function BookWindow({
               onRankKey={setRankKey}
               span={span}
               headReal={opt?.headReal ?? false}
-              onRun={runOptimize}
+              onRun={runAuto}
               onAdopt={adopt}
-              intro={'누르면 룩백 3 × 진입 3 × 청산 3 × 손절 3 × 진입 규칙 2 = 162칸을 '
+              currentParams={run.params}
+              intro={'격자를 아직 못 돌렸어요 — 룩백 3 × 진입 3 × 청산 3 × 손절 3 × 진입 규칙 2 = 162칸을 '
                 + `만기 ${run.legs.length}개에 동시에 걸어 이 구간에서 채점해요 — 칸마다 `
                 + '아홉을 더한 장부를 재요 — 다리별 값의 평균이 아니에요(Calmar·'
                 + '낙폭은 비선형이라 더한 뒤에 재야 「묶어서 나아졌나」가 답이 돼요). '
