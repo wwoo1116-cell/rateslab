@@ -1090,6 +1090,9 @@ def _mr_optimize(dates: list[str], vals: list[float], base: dict,
                                 "gpr", "omega", "profitFactor", "ulcer",
                                 "martin", "recoveryDays", "recovered",
                                 "winRate", "numTrades", "breakevenCostBp",
+                                # **화면의 자동 채택 기준** [OWNER 2026-09-09] —
+                                # 칸마다 있어야 순위가 선다(`mrmetrics` 의 그 산술).
+                                "cdarRatio",
                                 "breakevenCostMult")},
                         })
     return {
@@ -1208,6 +1211,9 @@ def _mr_book_optimize(legs: list[dict], base: dict, *, span: str,
                                 "gpr", "omega", "profitFactor", "ulcer",
                                 "martin", "recoveryDays", "recovered",
                                 "winRate", "numTrades", "breakevenCostBp",
+                                # **화면의 자동 채택 기준** [OWNER 2026-09-09] —
+                                # 칸마다 있어야 순위가 선다(`mrmetrics` 의 그 산술).
+                                "cdarRatio",
                                 "breakevenCostMult")},
                         })
     return {

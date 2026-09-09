@@ -725,7 +725,10 @@ export function StrategyWindow({
   const [opt, setOpt] = useState<MrOptimizeRun>();
   const [optRunning, setOptRunning] = useState(false);
   const [optError, setOptError] = useState<string>();
-  const [rankKey, setRankKey] = useState<MrRankKey>('calmar');
+  /* 기본 기준은 **CDaR 비**다 [OWNER 2026-09-09] — Calmar 에서 옮겨 왔다.
+     근거와 실측(순위상관 0.84 · 1등이 계열에 따라 갈림)은 `api.ts::MR_RANK_KEYS`
+     머리와 `docs/EVAL_LANE_STATE.md` §8 에. */
+  const [rankKey, setRankKey] = useState<MrRankKey>('cdarRatio');
   /* 서랍 펼침을 창이 쥔다 — 거래 줄을 누르면 그 자리에서 대사가 펴져야 한다
      (안 쥐면 「눌렀는데 아무 일도 안 일어난」 화면이 된다). 접는 손잡이는
      여전히 서랍 탭이다. */

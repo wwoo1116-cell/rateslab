@@ -239,6 +239,19 @@ def score(dates: list[str], points: list[dict], trades: list[dict],
     # 순간 이 칸이 다시 두 단위를 오간다.
     ulcer_pct = (math.sqrt(sum((d / capital) ** 2 for d in dd_path) / n)
                  if (n and capital and capital > 0) else None)
+    # ── 변동성 정규화 CDaR 비 [OWNER 2026-09-09 — 「CDaR 비로 옮긴다」] ────────
+    #
+    # 화면의 자동 채택 기준이 Calmar 에서 이것으로 옮겨 왔다. 근거는 평가층 사양의
+    # 그 문장이다: **MaxDD 는 단일관측 추정량**이라(이 표본에서 MaxDD 의 50% 를
+    # 넘는 낙폭 사건이 셋뿐이고 1등은 코로나 창이다) Calmar 의 표준오차가 넓다.
+    # CDaR 은 최악 5% 낙폭 **여럿**의 평균이라 같은 MaxDD 에서도 사건이 잦으면
+    # 나빠진다(`tests/test_evaluation.py` 가 그 성질을 잰다).
+    #
+    # ★**자본 기준이 필요 없다.** 분자·분모가 같은 배로 커지고 변동성 정규화가 그
+    # 위에 한 번 더 걸려 **스케일 불변**이다(`docs/EVAL_LANE_STATE.md` §7-4) —
+    # 그래서 원(₩) 손익을 그대로 넣어도 같은 수가 나오고, 액면을 못 세운 계열
+    # (통합 장부·커브·플라이)에서도 이 칸이 선다.
+    cdar_ratio = _cdar_ratio_of(daily)
 
     since = wdates[0] if wdates else None
     wt = [t for t in trades if since is not None and t["exitDate"] >= since]
@@ -274,6 +287,9 @@ def score(dates: list[str], points: list[dict], trades: list[dict],
         "ulcer": round(ulcer, 2),
         # 무단위 Ulcer(비율) — 화면과 평가층이 읽는 값. 위 주석의 그 정의다.
         "ulcerPct": _r(ulcer_pct, 6),
+        # 화면의 **자동 채택 기준**이자 평가층의 순위 지표. 낙폭이 없으면 None 이다
+        # (0 이나 큰 수로 채우면 「낙폭이 없어서 못 잰 칸」이 1등으로 올라온다).
+        "cdarRatio": _r(cdar_ratio, 4),
         # **연환산 수익률**(비율) — 액면 대비. Ulcer% 와 짝이라 Martin 을 무단위로
         # 다시 세울 수 있고, 평가층의 «정규화 안 한 수익률 금지» 규율이 여기서 산다.
         "annReturnPct": _r(ann / capital, 6) if (capital and capital > 0) else None,
@@ -295,6 +311,28 @@ def score(dates: list[str], points: list[dict], trades: list[dict],
 
 def _r(v: float | None, nd: int) -> float | None:
     return None if v is None else round(v, nd)
+
+
+def _cdar_ratio_of(daily: list[float]) -> float | None:
+    """일별 손익 → **변동성 정규화 CDaR 비**. 산술은 평가층 한 곳이 진다.
+
+    `evaluation.metrics` 를 부르는 이유는 정의를 두 벌 두지 않기 위해서다 — 화면이
+    고르는 기준과 평가층이 순위 매기는 기준이 갈리면, 화면이 고른 칸을 평가층이
+    다른 자로 다시 재게 된다.
+
+    평가층이 없는 환경(그 패키지를 안 깐 자리)에서는 **None** 이다 — 없는 값을
+    0 으로 채우면 그 칸이 순위의 바닥으로 서고, 그건 「못 쟀다」와 다른 말이다.
+    """
+    if len(daily) < 2:
+        return None
+    try:
+        import pandas as pd
+
+        from evaluation import metrics as ev
+    except ImportError:                                   # pragma: no cover
+        return None
+    scaled, _name = ev.vol_normalize(pd.Series(daily, dtype=float))
+    return ev.cdar_ratio(scaled)["cdar_ratio"]
 
 
 def dv_net(dv: float, cost: float, direction: int, notional: float) -> float | None:

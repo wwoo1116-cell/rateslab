@@ -213,14 +213,22 @@ def vol_normalize(returns: pd.Series, target_vol: float = 0.05,
     그 창은 «어제까지» 다(`shift(1)`): 오늘의 크기 조절에 오늘의 변동성을 쓰면
     오늘을 알고 어제 걸었다는 뜻이 된다.
 
-    관측이 `min_obs` 에 못 미치는 앞머리는 **크기를 안 건드린다**(배수 1) — 초기
-    몇 봉의 표준편차로 스무 배를 걸면 그 구간이 계열을 통째로 지배한다.
+    관측이 `min_obs` 에 못 미치는 앞머리는 **NaN 으로 버린다**(지표들이 `dropna`
+    한다). 배수 1 로 두는 길도 있었고 처음에 그렇게 썼는데, 그건 **스케일 불변을
+    깬다**: 원(₩) 계열을 넣으면 뒤쪽 배수가 5e-8 인데 앞 60봉만 배수 1 로 남아
+    그 구간이 계열을 통째로 지배한다(실측 2026-09-09 — 같은 칸이 비율 계열에서
+    CDaR 비 **+7.27**, 원 계열에서 **−0.15** 로 부호까지 갈렸다). 초기 몇 봉의
+    표준편차로 스무 배를 걸지 않으려던 원래 뜻은 그대로이고, 그 구간을 «안 건드림»
+    이 아니라 «못 잼» 으로 적는 것이 맞다.
+
+    그래서 이 함수는 **스케일 불변**이다 — `r → c·r` 이면 `vol → c·vol` 이라
+    배수가 `1/c` 배가 되어 결과가 같다. 그 성질 위에서 CDaR 비가 자본 기준 없이
+    서고(`docs/EVAL_LANE_STATE.md` §7-4), `tests/test_evaluation.py` 가 그것을 잰다.
     """
     ann = ANN.get(freq, 252)
     r = returns.astype(float)
     vol = r.expanding(min_periods=min_obs).std(ddof=1).shift(1) * math.sqrt(ann)
     scale = (target_vol / vol).where(vol > 0)
-    scale = scale.fillna(1.0)
     return r * scale, f"확장창(min {min_obs}, shift 1) · 목표 {target_vol:.1%}"
 
 

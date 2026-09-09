@@ -384,3 +384,52 @@ describe('TOP 5 의 「채택」은 오른쪽에 **고정**된다', () => {
     expect(pane).toMatch(/window\.removeEventListener\('resize', measure\)/);
   });
 });
+
+describe('자동 채택 기준은 **CDaR 비**다 [OWNER 2026-09-09]', () => {
+  /* Calmar 에서 옮겨 왔다. 근거는 평가층 사양의 그 문장 — **MaxDD 는 단일관측
+     추정량**이라(이 표본에서 MaxDD 의 50% 를 넘는 낙폭 사건이 셋뿐이고 1등은
+     코로나 창이다) Calmar 의 표준오차가 넓다. 재 보고 옮겼다: 162칸에서 두
+     기준의 순위상관 0.84 · 1등은 계열에 따라 갈리되 서로의 상위 5 안
+     (`docs/EVAL_LANE_STATE.md` §8). */
+
+  const win = src('src/mr/OptimizePane.tsx');
+  const api2 = src('src/mr/api.ts');
+  const stratW = src('src/mr/StrategyWindow.tsx');
+  const bookW = src('src/mr/BookWindow.tsx');
+  const mainPy = raw('backend/app/main.py');
+
+  it('두 창의 기본 기준이 CDaR 비다', () => {
+    for (const [f, code] of [['StrategyWindow', stratW], ['BookWindow', bookW]] as const) {
+      expect(code, `${f} 의 기본 기준`).toMatch(/useState<MrRankKey>\('cdarRatio'\)/);
+    }
+  });
+
+  it('기준 목록의 **첫 칸**이자 표의 첫 지표 열이다', () => {
+    /* 순위를 매긴 자가 맨 앞에 서야 「왜 이 줄이 1등인가」가 눈으로 읽힌다. */
+    const first = api2.slice(api2.indexOf('MR_RANK_KEYS = ['), api2.indexOf("{ v: 'calmar'"));
+    expect(first).toMatch(/v: 'cdarRatio'/);
+    const cols = win.slice(win.indexOf('OPT_COLS'), win.indexOf("{ k: 'sortino'"));
+    expect(cols.indexOf("k: 'cdarRatio'")).toBeGreaterThan(0);
+    expect(cols.indexOf("k: 'cdarRatio'")).toBeLessThan(cols.indexOf("k: 'calmar'"));
+  });
+
+  it('Calmar 는 **안 지운다** — 둘이 갈리는 자리를 보려면 나란히 있어야 한다', () => {
+    expect(api2).toMatch(/v: 'calmar'/);
+    expect(win).toMatch(/k: 'calmar'/);
+  });
+
+  it('서버가 칸마다 그 값을 싣는다 — 화면이 다시 계산하지 않는다', () => {
+    expect(mainPy).toMatch(/"cdarRatio",/);
+    const met = raw('backend/app/mrmetrics.py');
+    expect(met).toMatch(/"cdarRatio": _r\(cdar_ratio, 4\)/);
+    /* 산술은 **평가층 한 곳**이 진다 — 화면이 고르는 기준과 평가층이 순위 매기는
+       기준이 갈리면 화면이 고른 칸을 평가층이 다른 자로 다시 잰다. */
+    expect(met).toMatch(/from evaluation import metrics as ev/);
+  });
+
+  it('못 잰 칸은 **뒤로** 간다 — 구 백엔드의 `undefined` 도 그렇다', () => {
+    /* 0 으로 채워 정렬하면 안 잰 칸이 한복판에 끼어들어 순위가 거짓이 된다. */
+    expect(api2).toMatch(/const x = a\[key\] \?\? null;/);
+    expect(win).toMatch(/best\[rankKey\] \?\? null/);
+  });
+});

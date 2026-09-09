@@ -416,6 +416,11 @@ export interface MrPerf {
   annReturnPct?: number | null;
   /** 연환산 손익 / Ulcer. */
   martin: number | null;
+  /** **변동성 정규화 CDaR 비** [2026-09-09] — 화면의 자동 채택 기준이자 평가층의
+   *  순위 지표. 변동성을 목표(5%)에 맞춘 뒤 «연환산 수익 / 최악 5% 낙폭 평균».
+   *  **스케일 불변**이라 자본 기준이 없어도 선다(`docs/EVAL_LANE_STATE.md` §7-4).
+   *  낙폭이 없으면 `null` 이다 — 0 이나 큰 수로 채우면 「못 잰 칸」이 1등이 된다. */
+  cdarRatio?: number | null;
   /** 최대 낙폭의 **골에서** 전고점까지 걸린 영업일. 낙폭이 없으면 null. */
   recoveryDays: number | null;
   /** 구간 안에서 되찾았는가 — 일수만 보면 아직 물속인 구간이 회복한 구간처럼
@@ -1144,8 +1149,20 @@ export interface MrOptimizeRun {
  *  1등이 늘 거래 0 건이 된다), 필드를 두는 이유는 그 사실이 목록에 적혀
  *  있어야 다음 사람이 낙폭을 넣을 때 부호를 안 뒤집기 때문이다. */
 export const MR_RANK_KEYS = [
+  /* ★**기본은 CDaR 비다** [OWNER 2026-09-09 — 「CDaR 비로 옮긴다」].
+   *
+   *  Calmar 를 대신한 근거는 평가층 사양의 그 문장이다: **MaxDD 는 단일관측
+   *  추정량**이라(이 표본에서 MaxDD 의 50% 를 넘는 낙폭 사건이 셋뿐이고 1등은
+   *  코로나 창이다) 표준오차가 넓다. CDaR 은 최악 5% 낙폭 **여럿**의 평균이라
+   *  같은 MaxDD 에서도 사건이 잦으면 나빠진다.
+   *
+   *  바꿔도 화면이 크게 안 흔들린다는 것은 재 봤다(162칸 · 순위상관 0.84 ·
+   *  BSS-10Y 는 1등이 같고 BSS-2Y 는 갈리되 서로의 상위 5 안) —
+   *  `docs/EVAL_LANE_STATE.md` §8. */
+  { v: 'cdarRatio', label: 'CDaR 비', higher: true,
+    help: '변동성을 5%로 맞춘 뒤 연환산 수익을 최악 5% 낙폭의 평균으로 나눈 값이에요. 최대낙폭은 관측 하나라 표준오차가 넓어서, 낙폭 여럿의 평균으로 대신해요.' },
   { v: 'calmar', label: 'Calmar', higher: true,
-    help: '연환산 손익을 최대 낙폭으로 나눈 값이에요. 절대수익형의 표준 기준이에요.' },
+    help: '연환산 손익을 최대 낙폭으로 나눈 값이에요. 절대수익형의 표준이었고 2026-09-09 에 CDaR 비에 자리를 넘겼어요 — 최대낙폭이 관측 하나여서예요.' },
   { v: 'sortino', label: 'Sortino', higher: true,
     help: '손실 쪽 변동만 벌해요. 상승 변동성을 안 깎는 샤프예요.' },
   { v: 'martin', label: 'Martin', higher: true,
@@ -1184,8 +1201,11 @@ export function rankCells(cells: MrOptimizeCell[], key: MrRankKey): MrOptimizeCe
   const spec = MR_RANK_KEYS.find((k) => k.v === key)!;
   const sign = spec.higher ? -1 : 1;
   return [...cells].sort((a, b) => {
-    const x = a[key];
-    const y = b[key];
+    /* `undefined` 도 «못 잤다» 로 센다 — 구 백엔드가 새 기준(CDaR 비)을 안 실어
+       보내면 그 칸들이 전부 뒤로 가고, 화면은 「1등이 없다」를 그대로 말한다.
+       0 으로 채워 정렬하면 안 잰 칸이 한복판에 끼어들어 순위가 거짓이 된다. */
+    const x = a[key] ?? null;
+    const y = b[key] ?? null;
     if (x === null && y === null) return 0;
     if (x === null) return 1;
     if (y === null) return -1;

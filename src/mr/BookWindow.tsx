@@ -322,7 +322,10 @@ export function BookWindow({
   const [opt, setOpt] = useState<MrBookOptimizeRun>();
   const [optRunning, setOptRunning] = useState(false);
   const [optError, setOptError] = useState<string>();
-  const [rankKey, setRankKey] = useState<MrRankKey>('calmar');
+  /* 기본 기준은 **CDaR 비**다 [OWNER 2026-09-09] — Calmar 에서 옮겨 왔다.
+     근거와 실측(순위상관 0.84 · 1등이 계열에 따라 갈림)은 `api.ts::MR_RANK_KEYS`
+     머리와 `docs/EVAL_LANE_STATE.md` §8 에. */
+  const [rankKey, setRankKey] = useState<MrRankKey>('cdarRatio');
 
   /* ── 창을 열면 **격자부터 돈다** [OWNER 2026-09-09 — "둘 다 같은 흐름으로"] ──
      낱개 창과 **같은 흐름**이다(그 창의 `runAuto` 머리에 산술과 근거): 격자

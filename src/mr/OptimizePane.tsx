@@ -54,6 +54,11 @@ import { NumCell, Panel, condWord, fmtRatio, headFont, sameCond } from './parts'
 const OPT_COLS: { k: string; label: string; num?: boolean }[] = [
   { k: 'rank', label: '순위', num: true },
   { k: 'cond', label: '조건' },
+  /* **기본 기준이 첫 지표 열이다** [OWNER 2026-09-09] — 순위를 매긴 자가 표의
+     맨 앞에 서야 「왜 이 줄이 1등인가」가 눈으로 읽힌다. Calmar 는 남는다:
+     자리를 넘겼을 뿐 못 쓰는 값이 된 게 아니고, 둘의 순위가 갈리는 자리를
+     보려면 나란히 있어야 한다(실측 순위상관 0.84). */
+  { k: 'cdarRatio', label: 'CDaR 비', num: true },
   { k: 'calmar', label: 'Calmar', num: true },
   { k: 'sortino', label: 'Sortino', num: true },
   { k: 'martin', label: 'Martin', num: true },
@@ -245,7 +250,9 @@ export function OptimizePane({
                 note={isNow(best) ? '지금 이 조건으로 돌고 있어요' : '아직 안 돌린 조건이에요'} />
               <Stat
                 label={rank.label}
-                value={rankKey === 'totalPnl' ? fmtKrw(best.totalPnl) : fmtRatio(best[rankKey])}
+                /* 구 백엔드는 새 기준(CDaR 비)을 안 실어 보낸다 — `fmtRatio` 가
+                   `undefined` 를 «—» 로 적으므로 화면이 「못 잤다」를 말한다. */
+                value={rankKey === 'totalPnl' ? fmtKrw(best.totalPnl) : fmtRatio(best[rankKey] ?? null)}
               />
               <Stat
                 label="총손익"
@@ -312,6 +319,7 @@ export function OptimizePane({
                         {isNow(c) ? `${cellWord(c)} · 지금` : cellWord(c)}
                       </Text>
                     </TableCell>
+                    <NumCell v={c.cdarRatio ?? null} />
                     <NumCell v={c.calmar} />
                     <NumCell v={c.sortino} />
                     <NumCell v={c.martin} />

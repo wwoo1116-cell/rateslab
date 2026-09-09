@@ -165,7 +165,10 @@ def test_vol_normalization_never_looks_ahead():
     스케일된 값이 원래보다 작아진다. 확장창 + `shift(1)` 이면 그 봉은 **어제까지의**
     변동성으로 걸리므로 그대로 커진다.
     """
-    r = pd.Series([0.001] * 400 + [0.25])
+    rng = np.random.default_rng(17)
+    #: ⚠ **상수 계열은 못 쓴다** — 변동성이 0 이면 목표로 키울 배수가 없어 전부
+    #: NaN 이다(그게 맞는 처리다). 잔잔한 잡음 위에 마지막 봉만 폭발시킨다.
+    r = pd.Series(list(rng.normal(0.0, 0.001, 400)) + [0.25])
     scaled, _ = ev.vol_normalize(r, target_vol=0.05)
     assert abs(scaled.iloc[-1]) > abs(scaled.iloc[-2]) * 50
 
@@ -223,3 +226,38 @@ def test_profit_factor_and_omega_are_not_in_the_layer():
     blob = repr(out).lower()
     assert "profit_factor" not in blob and "profitfactor" not in blob
     assert "omega" not in blob
+
+
+def test_vol_normalization_is_scale_invariant():
+    """**원(₩)으로 넣든 비율로 넣든 같은 수가 나온다.**
+
+    ⚠ 이 시험은 실측으로 잡은 결함 위에 서 있다(2026-09-09). 워밍업 구간을
+    `fillna(1.0)`(배수 1)으로 두었더니 스케일 불변이 깨졌다 — 원 계열에서는 뒤쪽
+    배수가 5e-8 인데 앞 60봉만 배수 1 로 남아 그 구간이 계열을 통째로 지배했고,
+    같은 칸의 CDaR 비가 비율 계열 **+7.27** 대 원 계열 **−0.15** 로 **부호까지**
+    갈렸다. 지금은 워밍업을 NaN 으로 버린다.
+
+    이 성질이 필요한 이유: 화면의 자동 채택 기준이 이 비율이고(격자는 원 손익을
+    넣는다) 평가층은 비율 계열을 넣는다. 둘이 같은 자여야 화면이 고른 칸을
+    평가층이 다시 재도 같은 답이 나온다.
+    """
+    rng = np.random.default_rng(21)
+    base = pd.Series(rng.normal(0.0003, 0.01, 900))
+    got = []
+    for c in (1.0, 1e6, 1e-3):
+        scaled, _ = ev.vol_normalize(base * c)
+        got.append(ev.cdar_ratio(scaled)["cdar_ratio"])
+    assert got[0] == pytest.approx(got[1], rel=1e-9)
+    assert got[0] == pytest.approx(got[2], rel=1e-9)
+
+
+def test_vol_normalization_drops_the_warmup_instead_of_leaving_it_raw():
+    """워밍업은 **못 잰 구간**이지 «안 건드린 구간» 이 아니다 — NaN 으로 나간다."""
+    rng = np.random.default_rng(23)
+    r = pd.Series(rng.normal(0.0005, 0.01, 100))
+    scaled, _ = ev.vol_normalize(r, min_obs=60)
+    assert scaled.iloc[:60].isna().all()
+    assert scaled.iloc[60:].notna().all()
+    #: 변동성이 **0 인 구간**도 NaN 이다 — 0 에서 목표로 키울 배수가 없다.
+    flat, _ = ev.vol_normalize(pd.Series([0.001] * 100), min_obs=60)
+    assert flat.isna().all()
