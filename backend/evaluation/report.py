@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,15 @@ def render(out: dict[str, Any]) -> str:
         "|---|---|",
         f"| 변동성 정규화 CDaR 비 | {_num(r['cdar_ratio'])} (기준선 {r['reference']}) |",
         f"| CDaR (최악 5% 낙폭 평균) | {_num(r['cdar'])} |",
+        # ★**꼬리 점의 수는 표본이 아니다.** 같은 물속 구간에서 나온 관측들은
+        # 독립이 아니라 **사건 하나**에 가깝다. Calmar → CDaR 로 옮긴 이유가
+        # 「MaxDD 는 단일관측 추정량」이었으므로, CDaR 이 실제로 몇 개의 사건 위에
+        # 서 있는지를 안 적으면 같은 결함을 이름만 바꿔 들고 있는 셈이 된다
+        # (Van Hemert 외 2020 의 「낙폭 통계는 관측을 낭비한다」가 이 자리다).
+        (f"| ★그 꼬리가 나온 **낙폭 사건 수** | "
+         f"{_num(r.get('tail_episodes'), 0)} / 전체 "
+         f"{_num(r.get('total_episodes'), 0)} "
+         f"(꼬리 관측 {_num(r.get('tail_points'), 0)}점) |"),
         f"| 연환산 수익(정규화 후) | {_num(r['ann_return_normalized'])} |",
         "",
         "## 동반 진단 — **순위에 안 쓴다**",
@@ -100,6 +110,13 @@ def render(out: dict[str, Any]) -> str:
         # 얼마나 부풀렸나」이고, 그 부풀림이 레인마다 비대칭이라(MR +0.21 대
         # 모멘텀 −0.15) 나란히 안 놓으면 같은 자로 견줬다고 말할 수 없다.
         f"| 연환산 SR — AR(1) 보정(Lo 2002) | {_num(d.get('sr_annualized_lo'), 3)} |",
+        # 문헌의 환율이 **월별** 자기상관 위에 있다 — Man/Harvey 외(2020): 「월별
+        # 자기상관 0.1 이 기대 최대낙폭에 주는 충격 ≈ Sharpe 0.5 → 0.4」. 일별
+        # AR(1) 을 그 문장에 그대로 대면 단위가 어긋나서 21봉 묶음을 같이 낸다.
+        (f"| AR(1) — 21봉 묶음(≈월) | {_num(d.get('ar1_21bar'), 3)}"
+         + (f" (묶음 {d['ar1_21bar_blocks']}개 · 표준오차 ≈ "
+            f"{_num(1.0 / math.sqrt(d['ar1_21bar_blocks']), 2)})"
+            if d.get("ar1_21bar_blocks") else "") + " |"),
         f"| SR0(뽑기로 나오는 최고) | {_num(d.get('sr0_period'), 5)} |",
         f"| PBO 열화 기울기 | {_num(d.get('pbo_degradation'), 3)} |",
         f"| PBO 시험 손실확률 | {_num(d.get('pbo_prob_oos_loss'), 3)} |",

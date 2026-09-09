@@ -244,6 +244,83 @@ def _drawdowns(returns: pd.Series) -> np.ndarray:
     return np.maximum(peak - eq, 0.0)
 
 
+def drawdown_episodes(returns: pd.Series, alpha: float = 0.05) -> dict[str, Any]:
+    """CDaR 의 꼬리가 **몇 개의 «사건»** 에서 왔나 — 이 층의 자기 감사.
+
+    ## 왜 이걸 재나 — 외부 비판이 우리 자리를 겨눈다
+
+    Van Hemert·Ganz·Harvey·Rattray 외(2020, JPM 46(8) 「Drawdowns」)가 낙폭
+    통계를 이렇게 적는다: 총수익은 평균을 재는 **효율적 통계량**인데
+    「**낙폭 통계는 경로 의존이라 과거 관측을 더 낭비한다**」(*more wasteful in
+    its use of historical return observations*). 학계가 최대낙폭을 잘 안 쓰는
+    이유로도 「경로 의존이고 **불확실성이 더 크게** 추정된다」를 든다.
+
+    이 레인은 그 비판을 이미 한 번 맞았다 — Calmar 를 버리고 CDaR 로 옮긴 이유가
+    「MaxDD 는 **단일관측 추정량**」이었다(§4). 그런데 CDaR 이 실제로 몇 개의
+    사건 위에 서 있는지는 **안 재고 있었다.** 재 보면 이렇다(2026-09-09):
+
+        MR BSS-2Y        꼬리 80점이  **사건 2개**에서   (전체 물속 구간 25)
+        Momentum 50/50   꼬리 116점이 **사건 2개**에서   (전체 48)
+        CRS 증거금 상한판 꼬리 80점이  **사건 5개**에서   (전체 61)
+
+    **꼬리 점의 수는 표본이 아니다.** 같은 물속 구간에서 나온 80개의 일별 낙폭
+    관측은 독립 관측 80개가 아니라 **사건 하나**에 가깝다. 사건이 둘이면 CDaR 은
+    MaxDD 보다 조금 나을 뿐이고, 그 사실은 순위를 읽는 사람이 알아야 한다.
+
+    ⚠ 이 수는 **순위를 안 바꾼다** — 적기만 한다(오너 규율 「실패 유형만 적는다」와
+    같은 자리). 사건이 몇 개여야 믿을 만한지는 사양이 정할 일이고 그건 오너 결정이다.
+
+    「사건」의 정의: 낙폭이 0 을 벗어나 다시 0 으로 돌아오기까지가 한 구간이다
+    (전고점 회복 = 수면 위). 꼬리 점이 어느 구간에 속하는지로 센다.
+    """
+    r = returns.dropna().astype(float)
+    if r.empty:
+        return {"tail_points": 0, "tail_episodes": 0, "total_episodes": 0,
+                "points_per_episode": None}
+    dd = _drawdowns(r)
+    k = max(1, int(math.ceil(len(dd) * alpha)))
+    worst = np.argsort(dd)[-k:]
+    #: 물속 구간에 번호를 매긴다 — 0 은 수면 위(전고점)라 구간이 끊긴다.
+    label = np.zeros(len(dd), dtype=int)
+    cur, under_prev = 0, False
+    for i, d in enumerate(dd):
+        under = d > 0
+        if under and not under_prev:
+            cur += 1
+        label[i] = cur if under else 0
+        under_prev = under
+    eps = {int(label[i]) for i in worst if label[i] > 0}
+    return {"tail_points": int(k), "tail_episodes": len(eps),
+            "total_episodes": int(cur),
+            "points_per_episode": (k / len(eps)) if eps else None}
+
+
+def ar1_blocked(returns: pd.Series,
+                block: int = 21) -> tuple[float | None, int]:
+    """**묶은 봉**의 AR(1) — 21봉(≈한 달) 비중복 합 위에서 잰다.
+
+    문헌의 환율이 **월별** 자기상관 위에 있어서 필요하다. Man/Harvey 외(2020)의
+    측정: 「월별 수익의 자기상관 0.1 이 기대 최대낙폭에 주는 충격은 **Sharpe 를
+    0.5 에서 0.4 로 낮추는 것과 맞먹는다**」. 일별 AR(1) 을 그 문장에 그대로
+    대면 단위가 어긋난다 — 일별 +0.21 은 월별 +0.21 이 아니다.
+
+    ⚠ **묶으면 표본이 그만큼 줄어든다.** 1,646봉이면 21봉 묶음은 78개뿐이고
+    자기상관 추정의 표준오차가 대략 `1/√78 ≈ 0.11` 이다 — 그래서 이 자리의
+    −0.060 같은 수는 **0 과 구별되지 않는다.** 묶음 수를 같이 돌려주는 이유가
+    그것이고, 보고서는 표준오차를 옆에 적는다. 수 하나만 적으면 없는 정밀도를
+    주장하게 된다.
+    """
+    r = np.asarray(returns.dropna(), dtype=float)
+    n = (r.size // block) * block
+    if n < block * 3:
+        return None, 0
+    m = r[:n].reshape(-1, block).sum(axis=1)
+    if m.size < 3 or np.std(m) == 0:
+        return None, int(m.size)
+    v = float(pd.Series(m).autocorr(lag=1))
+    return (v if np.isfinite(v) else None), int(m.size)
+
+
 def cdar_ratio(returns: pd.Series, alpha: float = 0.05,
                freq: str = "D") -> dict[str, Any]:
     """CDaR 과 그 비율 — **최악 α 꼬리 낙폭의 평균**으로 연환산 수익을 나눈다.
@@ -265,6 +342,9 @@ def cdar_ratio(returns: pd.Series, alpha: float = 0.05,
         "cdar": cdar,
         "ann_return": ann,
         "cdar_ratio": (ann / cdar) if cdar > 0 else None,
+        #: **이 비율이 몇 개의 사건 위에 서 있나** — 꼬리 점의 수는 표본이 아니다.
+        #: 순위를 안 바꾸고 적기만 한다(`drawdown_episodes` 의 그 감사).
+        **drawdown_episodes(returns, alpha),
         "why": None if cdar > 0 else "낙폭이 없어 비율이 안 서요",
     }
 
@@ -426,6 +506,11 @@ def diagnostics(returns: pd.Series, freq: str = "D") -> dict[str, Any]:
         #: AR(1) 을 보정한 연 SR — 위의 `ar1` 옆에 둔다. 둘을 나란히 봐야 「√252
         #: 곱셈이 이 계열에서 얼마나 부풀렸나」가 한눈에 읽힌다.
         "sr_annualized_lo": sharpe_lo(r, freq),
+        #: 문헌의 환율이 **월별** 위에 있다 — 일별 AR(1) 을 그 문장에 대면 안 된다.
+        #: 묶음 수를 같이 낸다: 표준오차가 대략 `1/√묶음` 이라 그것 없이는 이 수의
+        #: 정밀도를 알 수 없다(1,646봉 → 78묶음 → SE ≈ 0.11).
+        "ar1_21bar": ar1_blocked(r)[0],
+        "ar1_21bar_blocks": ar1_blocked(r)[1],
     }
 
 
@@ -516,6 +601,12 @@ def evaluate(returns: pd.Series,
             "cdar_ratio": c["cdar_ratio"] if overall else None,
             "cdar": c["cdar"],
             "ann_return_normalized": c["ann_return"],
+            # **이 비율이 몇 개의 «사건» 위에 서 있나** — 게이트를 통과했든 아니든
+            # 낸다. 순위값이 사건 둘 위에 서 있으면 그것을 읽는 사람이 알아야 한다
+            # (Van Hemert 외 2020 의 「낙폭 통계는 관측을 낭비한다」가 이 자리다).
+            "tail_episodes": c["tail_episodes"],
+            "total_episodes": c["total_episodes"],
+            "tail_points": c["tail_points"],
             "reason_if_null": None if overall else reason,
             "reference": CDAR_REFERENCE,
         },

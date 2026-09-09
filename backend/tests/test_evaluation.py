@@ -193,8 +193,12 @@ def test_contract_shape_is_the_agreed_one():
                         "diagnostics", "inputs", "assumptions"}
     assert set(out["gate"]) == {"dsr", "dsr_pass", "min_trl_years",
                                 "actual_years", "pbo", "pbo_pass", "overall_pass"}
+    # 순위 블록에 **자기 근거의 두께**가 더해졌다(2026-09-09) — 그 비율이 몇 개의
+    # 낙폭 «사건» 위에 서 있는지. Calmar → CDaR 로 옮긴 이유가 「MaxDD 는 단일관측」
+    # 이었으므로, CDaR 이 실제로 사건 둘 위에 서 있으면 그것도 적혀야 한다.
     assert set(out["ranking"]) == {"cdar_ratio", "cdar", "ann_return_normalized",
-                                   "reason_if_null", "reference"}
+                                   "tail_episodes", "total_episodes",
+                                   "tail_points", "reason_if_null", "reference"}
     #: 비용 가정은 **계산에 안 쓰지만 적혀 나간다** — 전략마다 다른 가정을 쓰지
     #: 않으려면 무엇을 가정했는지가 보고서에 있어야 한다(오너 규율).
     assert out["inputs"]["cost_bp"] == 1.0
@@ -417,3 +421,100 @@ def test_failure_shape_never_touches_the_verdict():
     assert "failure_shape" in out
     assert out["gate"]["overall_pass"] == (out["gate"]["dsr_pass"]
                                            and out["gate"]["pbo_pass"])
+
+
+# ── 낙폭 «사건» 수 — 이 층의 자기 감사 ────────────────────────────────────
+
+def _path(segments):
+    """구간마다 (봉수, 일별수익)을 주면 계열을 만든다 — 낙폭 사건을 손으로 짓는다."""
+    out = []
+    for n, v in segments:
+        out += [v] * n
+    return pd.Series(out, dtype=float)
+
+
+def test_tail_from_one_episode_is_not_a_sample_of_many():
+    """**꼬리 점의 수는 표본이 아니다.**
+
+    깊은 낙폭 하나 + 얕은 것 하나를 지어 놓으면, 최악 5% 꼬리는 깊은 **한 사건**
+    에서만 나온다. 그 사실이 안 적히면 CDaR 이 MaxDD 와 뭐가 다른지 말할 수 없다
+    (Calmar → CDaR 로 옮긴 이유가 「MaxDD 는 단일관측」이었다).
+    """
+    from evaluation.metrics import drawdown_episodes
+
+    #: ⚠ 회복은 **전고점을 넘겨야** 사건이 끝난다. 처음 판은 회복 폭이 모자라
+    #: 계열이 끝까지 물속이었고, 그래서 「사건 하나」가 나왔다 — 시험이 아니라
+    #: 내가 지은 경로가 틀렸던 자리다.
+    r = _path([(50, 0.001), (40, -0.01), (250, 0.002),  # 깊은 낙폭 → 전고점 회복
+               (10, -0.001), (40, 0.001)])              # 얕은 낙폭 → 회복
+    got = drawdown_episodes(r, alpha=0.05)
+    assert got["tail_episodes"] == 1
+    assert got["total_episodes"] >= 2
+    assert got["tail_points"] > got["tail_episodes"], "점 수와 사건 수는 다른 물건이다"
+
+
+def test_two_equally_deep_episodes_are_counted_as_two():
+    """같은 깊이의 낙폭이 둘이면 꼬리도 둘에서 온다 — 세는 방식이 맞다는 증거."""
+    from evaluation.metrics import drawdown_episodes
+
+    leg = [(30, -0.01), (60, 0.006)]                    # 내려갔다 회복
+    r = _path([(20, 0.001)] + leg + leg)
+    got = drawdown_episodes(r, alpha=0.20)
+    assert got["tail_episodes"] == 2
+
+
+def test_cdar_ratio_carries_the_episode_count():
+    """순위 지표가 **자기 근거의 두께**를 같이 낸다 — 보고서가 그걸 적는다."""
+    from evaluation.metrics import cdar_ratio
+
+    r = _path([(50, 0.001), (40, -0.01), (100, 0.002)])
+    got = cdar_ratio(r)
+    assert got["tail_episodes"] >= 1
+    assert got["total_episodes"] >= got["tail_episodes"]
+    assert got["points_per_episode"] is not None
+
+
+# ── 묶은 봉의 AR(1) — 문헌의 환율이 «월별» 위에 있다 ──────────────────────
+
+def test_daily_ar1_dies_by_monthly_aggregation():
+    """일별 AR(1) 0.2 짜리는 **21봉 묶음에서 사실상 0** 이다.
+
+    이 데스크의 실측이 그것이다 — MR 상한판은 일별 +0.213 인데 21봉에서 −0.060.
+    그래서 Man/Harvey 외(2020)의 「**월별** 자기상관 0.1 ≈ Sharpe 0.5→0.4」 환율을
+    **일별 AR(1) 에 그대로 대면 안 된다.** 두 수를 나란히 내는 이유다.
+    """
+    import numpy as np
+    from evaluation.metrics import ar1_blocked
+
+    rng = np.random.default_rng(42)
+    e = rng.normal(0, 0.01, 8000)
+    x = np.zeros(8000)
+    for i in range(1, 8000):
+        x[i] = 0.2 * x[i - 1] + e[i]
+    r = pd.Series(x)
+    #: ⚠ 묶으면 표본이 줄어든다 — 8,000봉이 380묶음이 되고 표준오차가 1/√380 ≈
+    #: 0.05 다. 이론값은 φ/(m(1−φ²)) ≈ 0.01 인데 실측은 그 표준오차 안에서 흔들린다.
+    #: 「0 이다」가 아니라 「0 과 구별되지 않는다」가 이 시험이 재는 것이다.
+    v, blocks = ar1_blocked(r, block=21)
+    assert r.autocorr(1) > 0.15
+    assert abs(v) < 3.0 / math.sqrt(blocks), (v, blocks)
+
+
+def test_blocked_ar1_survives_when_the_memory_is_long():
+    """반대쪽도 잰다 — 기억이 길면 묶어도 **안 죽는다**(안 그러면 항상 0 이 나온다)."""
+    import numpy as np
+    from evaluation.metrics import ar1_blocked
+
+    rng = np.random.default_rng(9)
+    e = rng.normal(0, 0.01, 8000)
+    x = np.zeros(8000)
+    for i in range(1, 8000):
+        x[i] = 0.97 * x[i - 1] + e[i]
+    assert ar1_blocked(pd.Series(x), block=21)[0] > 0.3
+
+
+def test_blocked_ar1_needs_enough_blocks():
+    """묶음이 셋도 안 되면 **못 잰다고 말한다** — 0 을 내지 않는다."""
+    from evaluation.metrics import ar1_blocked
+
+    assert ar1_blocked(pd.Series([0.01] * 40), block=21)[0] is None
