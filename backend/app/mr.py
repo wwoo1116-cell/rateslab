@@ -6,11 +6,15 @@
 그 결론 위에 선다: 각 테너가 평소 밴드(SMA20 ± 2σ) 대비 어디에 있는지를 재서
 늘어난 순서로 세울 뿐, 진입·청산·추천을 말하지 않는다.
 
-**유니버스는 본드스왑 스프레드(국고 − IRS)뿐이다** [OWNER 2026-08-25 — "일단
-본드스왑만"]. 첫 판은 검증 레인의 비교군 12계열(선물·IRS 포함)을 그대로 실었는데
-그건 범위를 잘못 읽은 것이었다 — 비교군은 검증을 위한 것이었고 화면은 오너가
-지정한 유니버스만 싣는다. 선물·IRS 행은 여기서 내려갔다. 대신 BSS 는 일부
-테너가 아니라 **전 테너**(6M~10Y, credit_matrix × mkt_irs_close 가 주는 아홉)다.
+**유니버스는 세 번 넓어졌다.** 2026-08-25 에는 본드스왑(국고 − IRS) 전 테너
+아홉뿐이었고 [OWNER — "일단 본드스왑만"], 같은 날 국채선물 내재금리·퓨처스왑 넷이
+들어왔으며 [OWNER — "선물 들어왔는데 … 반영하기"], 2026-09-09 에 **IRS 커브·
+플라이 열둘**이 붙었다 [OWNER — "스프레드(버터플라이나 커브와 같은 것도
+연결해주기)" · 축은 IRS]. 지금 25행이다.
+
+커브·플라이의 **조합 목록은 이 리포의 주요 세트**(`derive.KEY_SPREADS`·
+`KEY_FLIES`)를 그대로 읽는다 — 모니터·백테스트·시뮬이 쓰는 그 큐레이션이고,
+두 화면이 서로 다른 「주요 3s10s」를 가지면 그 순간 비교가 불가능해진다.
 
 숫자는 전부 여기서 끝난다(§16): 밴드·z·%B·상태 판정·정렬·순위까지. 브라우저는
 포맷만 한다. 데이터는 `universe_series`(호출 시 SQL, 두 다리 inner join)라
@@ -92,6 +96,36 @@ STRATEGY_KNOB_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
+#: IRS 커브·플라이의 조합 [OWNER 2026-09-09 — "스프레드(버터플라이나 커브와 같은
+#: 것도 연결해주기)" · 축은 「IRS 커브·플라이」]. **목록은 이 리포의 주요 세트를
+#: 그대로 읽는다**(`derive.KEY_SPREADS`·`KEY_FLIES`) — 모니터·백테스트·시뮬이
+#: 이미 쓰는 큐레이션이고, 두 화면이 서로 다른 「주요 3s10s」를 가지면 그 순간
+#: 비교가 불가능해진다(`instruments.py` 머리의 그 문장).
+#:
+#: 열둘이 늘어 보드가 13행 → 25행이 된다. 랭킹 표는 스크롤이고 정렬 축이 |z| 라
+#: 늘어난 순서는 그대로 읽힌다 — 목록을 줄이는 것이 아니라 이미 있는 큐레이션을
+#: 쓰는 것이 이 리포의 답이었다(`instruments.catalog` 의 그 판단).
+def _irs_combos() -> list[tuple[str, str, str]]:
+    from .derive import KEY_FLIES, KEY_SPREADS
+    from . import mrseries as _mrs
+
+    have = set(_mrs.COMBO_TENORS)
+    out: list[tuple[str, str, str]] = []
+    # 차례는 **짧은 만기부터** — 주요 세트는 집합이라 차례가 없고, 화면의 계열
+    # 열은 사람이 읽는 순서여야 한다. 정렬 열쇠는 다리들의 만기(년)다.
+    def _yrs(t: str) -> float:
+        return float(t[:-1]) / 12.0 if t.endswith("M") else float(t[:-1])
+    for sid in sorted(KEY_SPREADS, key=lambda x: [_yrs(t) for t in x.split("-")]):
+        legs = sid.split("-")
+        if all(t in have for t in legs):
+            out.append((f"IRC-{sid}", f"IRS {sid}", "irc"))
+    for sid in sorted(KEY_FLIES, key=lambda x: [_yrs(t) for t in x.split("-")]):
+        legs = sid.split("-")
+        if all(t in have for t in legs):
+            out.append((f"IRF-{sid}", f"IRS {sid}", "irf"))
+    return out
+
+
 SERIES: list[tuple[str, str, str]] = [
     ("BSS-6M", "BSS 6M", "bss"),
     ("BSS-9M", "BSS 9M", "bss"),
@@ -106,7 +140,7 @@ SERIES: list[tuple[str, str, str]] = [
     ("FUT-KTB10", "KTB10 내재금리", "fut"),
     ("FSW-3Y", "퓨처스왑 3Y", "fsw"),
     ("FSW-10Y", "퓨처스왑 10Y", "fsw"),
-]
+] + _irs_combos()
 
 # 행의 정의 문장 — 화면 서브라인이 그대로 읽는다(혼합 유니버스에서 숫자 옆에
 # 무엇인지가 없으면 두 단위를 같은 자로 읽게 된다 — rv 랭킹 표의 그 판단).
@@ -116,6 +150,11 @@ KIND_DEFN = {
     # KTB3 는 역사 구간에서 5% 합성 역산과 중앙 58bp 어긋난다(위 주석).
     "fut": "선물 내재수익률 (벤더 직독)",
     "fsw": "선물내재 − IRS",
+    # 커브·플라이의 정의는 **호가 규약 그대로**다(`derive` 의 그 식) — 가중은
+    # 손익 산술의 몫이고 값에 안 섞는다. 안 그러면 이 화면의 「레벨」이 데스크가
+    # 부르는 3s10s 와 다른 수가 된다.
+    "irc": "IRS 커브 (긴 − 짧은)",
+    "irf": "IRS 플라이 (2×벨리 − 윙)",
 }
 
 # 퓨처스왑의 IRS 다리 — 선물 상장 만기와 같은 테너.
@@ -134,6 +173,12 @@ FSW_IRS_COL = {"FSW-3Y": ("3Y", "irs_3y"), "FSW-10Y": ("10Y", "irs_10y")}
 #   FUT = 선물 내재금리 → +1 은 금리 상승 = 선물 매도 (백테스트 북의 방향 라벨은
 #                        **가격** 계열이라 부호가 반대다 — 여기는 금리다)
 #   FSW = 선물내재 − IRS → 백테스트 북 `directionLabel` 의 퓨처스왑과 같은 문장
+#   IRC = 긴 − 짧은      → +1 은 스티프닝에 거는 쪽 = 긴 쪽 페이 · 짧은 쪽 리시브
+#   IRF = 2×벨리 − 윙    → +1 은 벨리가 상대적으로 비싸지는 쪽(금리 ↑) =
+#                           벨리 페이 · 윙 리시브. DV01 중립이라 벨리가 윙 둘의
+#                           합만큼 선다(`dv01.dv01_payload` 의 그 가중).
+#   ⚠ 다리 이름에 **만기를 못 적는다** — 이 사전은 계열 종류마다 하나인데 커브는
+#   조합마다 만기가 다르다. 만기는 행의 이름(`IRS 3Y-10Y`)이 이미 말한다.
 DIR_LEGS = {
     "bss": {"plus": {"short": "국고 매도", "legs": "국고 매도 · IRS 리시브"},
             "minus": {"short": "국고 매수", "legs": "국고 매수 · IRS 페이"}},
@@ -141,6 +186,10 @@ DIR_LEGS = {
             "minus": {"short": "선물 매수", "legs": "선물 매수"}},
     "fsw": {"plus": {"short": "선물 매도", "legs": "선물 매도 · IRS 리시브"},
             "minus": {"short": "선물 매수", "legs": "선물 매수 · IRS 페이"}},
+    "irc": {"plus": {"short": "스티프너", "legs": "긴 쪽 페이 · 짧은 쪽 리시브"},
+            "minus": {"short": "플래트너", "legs": "긴 쪽 리시브 · 짧은 쪽 페이"}},
+    "irf": {"plus": {"short": "벨리 페이", "legs": "벨리 페이 · 윙 리시브"},
+            "minus": {"short": "벨리 리시브", "legs": "벨리 리시브 · 윙 페이"}},
 }
 
 # 실행할 수 있는 방향 [OWNER 2026-08-25 — "BSS에서 숏은 없는거야,, 현물대차매도는
@@ -152,7 +201,10 @@ DIR_LEGS = {
 # 못 하는 거래를 재현해 두면 성과가 «할 수 있었던 것» 이 아니라 그 절반이
 # 상상인 숫자가 된다 — 대차료를 0 으로 둔 공매도 백테스트가 늘 이기는 것과
 # 같은 결함이다.
-TRADABLE_DIRS = {"bss": (-1,), "fut": (-1, 1), "fsw": (-1, 1)}
+# 커브·플라이는 **스왑뿐**이라 대차가 없다 — 양방향 그대로다(BSS 를 한 방향으로
+# 묶은 것은 현물 국고를 빌려 파는 다리 때문이고, 여기엔 그 다리가 없다).
+TRADABLE_DIRS = {"bss": (-1,), "fut": (-1, 1), "fsw": (-1, 1),
+                 "irc": (-1, 1), "irf": (-1, 1)}
 
 # 막힌 방향을 화면이 뭐라 말하는가 — 사유는 서버 것이다(rv exclusions 문법).
 BLOCKED_WHY = "현물 대차매도를 안 해서 반대 방향(국고 매도)은 재현하지 않아요."
@@ -430,6 +482,10 @@ def series_points(sid: str, *, fut_bundle: dict | None = None) -> dict[str, Any]
     kind = kinds.get(sid)
     if kind is None:
         raise KeyError(sid)
+    if kind in ("irc", "irf"):
+        # 커브·플라이도 **같은 긴 표본**(`mrseries` 번들의 IRS 커브)에서 온다 —
+        # BSS 와 같은 창구라 표본 길이·결측 규율이 한 벌이다.
+        return mrs.combo_points(sid)
     if kind == "bss":
         # 긴 표본 출처 [OWNER 2026-08-28 — "옮기고"]. 종전에는
         # `universe_series`(= `credit_matrix`, 2020-01~)였고 그래서 BSS 가
@@ -444,7 +500,8 @@ def series_points(sid: str, *, fut_bundle: dict | None = None) -> dict[str, Any]
 
 def build_mr(dataset=None, *, window: int = WINDOW, k: float = K,
              fetch_uni: Callable[[str], dict] | None = None,
-             fetch_fut: Callable[[], dict] | None = None) -> dict[str, Any]:
+             fetch_fut: Callable[[], dict] | None = None,
+             fetch_combo: Callable[[str], dict] | None = None) -> dict[str, Any]:
     """보드 + 히스토리 전부. 라우트는 이 페이로드를 썰어서만 답한다.
 
     `dataset` 은 이제 안 읽는다 — 모든 다리가 호출 시 SQL 이라 기동 스냅샷
@@ -457,18 +514,30 @@ def build_mr(dataset=None, *, window: int = WINDOW, k: float = K,
     계열은 조용히 빼지 않고 `excluded` 에 사유와 함께 선다(rv exclusions 문법).
     """
     fetch_uni = fetch_uni or mrs.points
+    # 커브·플라이도 **주입 자리**를 갖는다 — 셋째 가족이 SQL 을 직접 부르면 이
+    # 함수의 시험이 그 가족에서만 SQL 을 타게 된다(그 순간 시험이 느려지고,
+    # 느린 시험은 안 돈다).
+    fetch_combo = fetch_combo or mrs.combo_points
 
     rows: list[dict] = []
     histories: dict[str, dict] = {}
     excluded: list[dict] = []
     # 소스별 as-of — BSS(민평×IRS)와 선물(선물표×IRS)이 갈라질 수 있고, 갈라진
     # 날은 화면이 그렇다고 말해야 한다(rv 의 B-2).
-    asof: dict[str, str | None] = {"bss": None, "fut": None}
+    # 소스별 as-of — 셋이다: 민평×IRS(BSS) · 선물표×IRS · **IRS 커브만**(커브·
+    # 플라이). 셋째를 BSS 에 섞으면 안 된다: 커브 계열은 민평을 안 타므로 민평이
+    # 하루 늦은 날 「민평·IRS 09-08」이라고 적히면서 실제 BSS 행은 09-05 일 수
+    # 있다(rv 의 B-2 — 소스가 갈리면 화면이 그렇게 말한다).
+    asof: dict[str, str | None] = {"bss": None, "fut": None, "irs": None}
     fut: dict | None = None
     for sid, label, kind in SERIES:
         try:
             if kind == "bss":
                 body = fetch_uni(sid)
+            elif kind in ("irc", "irf"):
+                # 커브·플라이는 IRS 커브 하나에서 온다 — 주입 자리(`fetch_uni`)는
+                # BSS 전용이라 여기서 같은 모듈의 조합 창구를 부른다.
+                body = fetch_combo(sid)
             else:
                 if fut is None:
                     fut = (fetch_fut or _fut_bundle)()
@@ -483,7 +552,7 @@ def build_mr(dataset=None, *, window: int = WINDOW, k: float = K,
             continue
         rows.append(row)
         histories[sid] = history
-        fam = "bss" if kind == "bss" else "fut"
+        fam = "bss" if kind == "bss" else ("irs" if kind in ("irc", "irf") else "fut")
         if asof[fam] is None or row["asof"] > asof[fam]:
             asof[fam] = row["asof"]
 

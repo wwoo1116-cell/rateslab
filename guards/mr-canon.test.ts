@@ -814,3 +814,39 @@ describe('누적 분해와 순Δ는 서버가 끝낸다', () => {
     expect(src('src/mr/parts.tsx')).toMatch(/v == null \? '—' : fmtKrw\(v\)/);
   });
 });
+
+describe('IRS 커브·플라이가 들어와도 각주가 거짓말을 안 한다', () => {
+  /* [OWNER 2026-09-09 — "스프레드(버터플라이나 커브와 같은 것도 연결해주기)"].
+     계열이 늘면 **계열마다 없는 다리**가 생긴다 — 커브에는 국고가 없고 조달도
+     없다. 종전 각주는 그 둘을 늘 적었고(선물 넷에서도 이미 거짓이었다), 화면이
+     계열 종류를 몰라서 못 가렸다. */
+
+  it('「국고 다리는 민평 기준」은 국고 다리가 있는 계열에만 선다', () => {
+    const code = src('src/mr/StrategyWindow.tsx');
+    expect(code).toMatch(/run\.kind == null \|\| run\.kind === 'bss'/);
+  });
+
+  it('조달 문장은 조달이 **있을 때만** 선다', () => {
+    /* 커브·플라이는 스왑끼리라 원금을 주고받지 않는다 — 서버가 `funding` 을
+       아예 안 보내고, 화면은 그때 그 절을 뺀다. */
+    expect(src('src/mr/StrategyWindow.tsx')).toMatch(/run\.carry\.funding \?/);
+    const main = fs.readFileSync(path.join(root, 'backend/app/main.py'), 'utf8');
+    expect(main).toMatch(/\{\} if leg\["kind"\] in \("irc", "irf"\) else \{"funding": spec\.label\}/);
+  });
+
+  it('액면이 한 숫자가 아닌 계열은 **사유**를 적는다 — 「환산 실패」가 아니다', () => {
+    const code = src('src/mr/StrategyWindow.tsx');
+    expect(code).toMatch(/run\.principalNote \? '다리마다 달라요/);
+    expect(code).toMatch(/run\.principalNote \? ` \$\{run\.principalNote\}` : ''/);
+  });
+
+  it('계열 종류의 목록이 서버와 화면에서 같다', () => {
+    const api = src('src/mr/api.ts');
+    expect(api).toMatch(/kind: 'bss' \| 'fut' \| 'fsw' \| 'irc' \| 'irf'/);
+    const mr = fs.readFileSync(path.join(root, 'backend/app/mr.py'), 'utf8');
+    for (const k of ['irc', 'irf']) {
+      expect(mr, `${k} 가 방향 사전에 없다`).toMatch(new RegExp(`"${k}": \{"plus"`));
+      expect(mr, `${k} 가 정의 문장에 없다`).toMatch(new RegExp(`"${k}": "IRS`));
+    }
+  });
+});

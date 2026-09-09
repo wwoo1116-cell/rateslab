@@ -152,3 +152,83 @@ def points(sid: str) -> dict[str, Any]:
         "points": [{"t": d, "v": round((govt[i] - swap[i]) * 100.0, 4)}
                    for i, d in enumerate(dates)],
     }
+
+
+# ── IRS 커브·플라이 [OWNER 2026-09-09 — "스프레드(버터플라이나 커브와 같은 것도
+#    연결해주기)" · 축은 「IRS 커브·플라이」] ──────────────────────────────────
+#
+# ## 조합의 정본은 이 리포에 이미 있다
+#
+# 어느 조합을 실을지를 여기서 새로 고르지 않는다 — `app/derive.py` 의 **주요
+# 세트**(`KEY_SPREADS` 여덟 · `KEY_FLIES` 넷)가 이 앱의 모니터·백테스트·시뮬이
+# 같이 쓰는 목록이고 [OWNER 2026-07-31], 두 화면이 서로 다른 「주요 스프레드」를
+# 가지면 그 순간 비교가 불가능해진다(`instruments.py` 머리의 그 문장).
+#
+# ## 값의 규약도 그 파일의 것이다
+#
+#     스프레드 a-b   = (r_b − r_a) × 100      (긴 쪽 − 짧은 쪽, bp)
+#     플라이  a-b-c  = (2·r_b − r_a − r_c) × 100
+#
+# `derive.spread_series`·`fly_series` 와 **같은 식**이다. 저쪽은 `Dataset`(엑셀
+# 스냅샷)을 먹고 이쪽은 긴 표본 번들(`bundle`)을 먹어서 함수를 그대로는 못 부르지만,
+# 수는 같은 수여야 한다 — `tests/test_mrseries_combo.py` 가 두 길을 대조한다.
+#
+# ## 다리는 **커브 그대로** 실린다
+#
+# DV01 중립 가중은 손익 산술의 몫이고(`main._mr_leg` 의 pv01 환산), 값 계열은
+# 호가 규약 그대로다. 가중을 값에 섞으면 그 계열의 「레벨」이 데스크가 부르는
+# 3s10s 와 달라진다.
+
+#: 커브·플라이의 노드 — `IRS_ITEM` 에 있는 만기만. 주요 세트 열둘은 전부 여기 든다
+#: (6M·9M·1Y·1.5Y·2Y·3Y·5Y·10Y). 4Y·6Y 같은 노드는 이 표에 없어서 조합도 없다.
+COMBO_TENORS: tuple[str, ...] = tuple(IRS_ITEM.keys())
+
+
+def combo_tenors(sid: str) -> list[str]:
+    """`IRC-3Y-10Y` → `['3Y','10Y']` · `IRF-2Y-5Y-10Y` → `['2Y','5Y','10Y']`.
+
+    앞의 접두(`IRC`/`IRF`)만 떼고 나머지를 `-` 로 가른다 — 만기 라벨에는 `-` 가
+    없다(`1.5Y` 처럼 점은 있다).
+    """
+    return sid.split("-")[1:]
+
+
+def combo_points(sid: str) -> dict[str, Any]:
+    """`mr.series_points` 가 먹는 모양 — 값은 **bp**.
+
+    다리 레벨(`legs`)은 **커브 스프레드에만** 싣는다. 대사표의 다리 줄
+    (`main._attach_leg_recon`)이 「다리0 − 다리1」을 전제로 부호를 매기므로
+    (`sign = -1 if j == 0 else 1`) 두 다리짜리에서만 그 전제가 참이다. 플라이는
+    `2·벨리 − 윙` 이라 그 부호 규약이 안 맞고, 안 맞는 분해를 실으면 대사표가
+    **그럴듯하게 틀린 수**를 세운다 — 그래서 아예 안 싣고, 그때 화면은 종합
+    한 줄짜리 대사표를 그린다(`mrcarry.LEG_NAMES` 에 `irf` 가 없는 것과 한 몸).
+
+    다리의 차례는 `[긴 쪽, 짧은 쪽]` 이다 — 값이 `긴 − 짧은` 이므로 그 차례라야
+    「다리0 − 다리1 = 값」이 대사표에서 닫힌다.
+    """
+    ts = combo_tenors(sid)
+    b = bundle()
+    series = []
+    for t in ts:
+        s = b["irs"].get(t)
+        if not s:
+            raise KeyError(f"{sid}: 긴 표본에 없는 만기다 ({t})")
+        series.append(s)
+    days = set(series[0])
+    for s in series[1:]:
+        days &= set(s)
+    dates = sorted(days)
+    if not dates:
+        raise ValueError(f"{sid}: 다리들이 같이 찍힌 날이 없다")
+
+    pts = []
+    for d in dates:
+        vals = [s[d] for s in series]
+        if len(vals) == 2:
+            a, bb = vals                                  # 짧은, 긴
+            pt = {"t": d, "v": round((bb - a) * 100.0, 4), "legs": [bb, a]}
+        else:
+            a, mid, c = vals                              # 짧은 윙, 벨리, 긴 윙
+            pt = {"t": d, "v": round((2 * mid - a - c) * 100.0, 4)}
+        pts.append(pt)
+    return {"id": sid, "unit": "bp", "points": pts}

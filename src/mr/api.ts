@@ -33,8 +33,11 @@ export interface MrState {
 export interface MrRow {
   id: string;
   label: string;
-  /** 계열 종류 — bss(국고−IRS) · fut(선물 내재금리) · fsw(퓨처스왑). */
-  kind: 'bss' | 'fut' | 'fsw';
+  /** 계열 종류 — bss(국고−IRS) · fut(선물 내재금리) · fsw(퓨처스왑) ·
+   *  **irc(IRS 커브) · irf(IRS 플라이)** [OWNER 2026-09-09 — "스프레드(버터플라이나
+   *  커브와 같은 것도 연결해주기)"]. 커브·플라이의 조합은 이 리포의 주요 세트를
+   *  그대로 읽는다(`backend/app/derive.py` — 모니터·백테스트·시뮬이 쓰는 그 목록). */
+  kind: 'bss' | 'fut' | 'fsw' | 'irc' | 'irf';
   /** 정의 문장 — 서브라인이 그대로 읽는다(혼합 유니버스의 «무엇인지»). */
   defn: string;
   /** 순위 — |z| 내림차순, 서버가 매긴다(§16). */
@@ -132,7 +135,11 @@ export interface MrWatch {
 export interface MrBoard {
   /** 소스별 as-of — BSS(민평×IRS)와 선물(선물표×IRS)이 갈라질 수 있고,
    * 갈라진 날은 화면이 그렇다고 말한다(rv 의 B-2). */
-  asof: { bss: string | null; fut: string | null };
+  /** 소스별 as-of — **셋**이다: 민평×IRS(BSS) · 선물표×IRS · IRS 커브만(커브·
+   *  플라이). 셋째는 2026-09-09 에 생겼다 — 커브 계열은 민평을 안 타므로 BSS 와
+   *  같은 칸에 넣으면 민평이 하루 늦은 날 화면이 거짓을 말한다. 구 백엔드는
+   *  `irs` 가 `undefined` 다. */
+  asof: { bss: string | null; fut: string | null; irs?: string | null };
   params: { window: number; k: number; recentN: number };
   rows: MrRow[];
   /** BSS 통합 줄. BSS 행이 하나도 안 서면 null 이다. */
@@ -639,6 +646,10 @@ export interface MrStrategyRun {
    *  그 구간의 종가·마킹이 빠졌을 때다. 두 회계가 한 화면에 설 수 있으므로
    *  화면이 그 사실을 말한다. */
   real: boolean;
+  /** 계열 종류 — 각주가 「이 계열에 있는 다리」만 말하게 하는 값이다
+   *  [2026-09-09]. 종전에는 창이 계열 종류를 몰라서 「국고 다리는 민평 기준」을
+   *  **모든 계열에** 적었다(선물 넷·커브 열둘에서 거짓). 구 백엔드는 `undefined`. */
+  kind?: MrRow['kind'];
   unit: string;
   asof: string | null;
   params: MrStrategyParams;
@@ -653,11 +664,19 @@ export interface MrStrategyRun {
    *  나눈다 — 그래서 그쪽 `pv01` 은 null 이다(스왑의 항등이 안 서는 자리라
    *  공란). 아예 못 세우면 필드 전체가 null 이다. */
   principal: { krw: number; pv01: number | null } | null;
+  /** 액면이 **한 숫자가 아닌** 계열의 사유 [2026-09-09]. 커브·플라이는 다리가
+   *  둘·셋이고 DV01 중립이라 원금이 다리마다 다르다(짧은 쪽이 pv01 비만큼 크고,
+   *  플라이의 벨리는 윙 둘의 합만큼이다). 한 숫자를 적으면 화면이 기준 다리의
+   *  액면을 「이 거래의 액면」으로 말하게 된다 — 그래서 `principal` 은 null 이고
+   *  이 문장이 다리별 액면을 적는다(사유는 서버 것이다 — rv exclusions 문법). */
+  principalNote?: string | null;
   /** 미청산이 없으면 null. */
   open: MrStrategyOpen | null;
   neighbors: MrNeighborRow[];
   /** 캐리 — 두 다리의 중간 현금흐름 [OWNER 2026-08-27]. 끄면 `{on:false}` 이고
    *  그때의 수는 원본 PMS 산술 그대로다(`backend/app/mrcarry.py` 머리에 근거). */
+  /** 캐리 — `funding` 은 **조달이 있는 계열에만** 온다(커브·플라이는 스왑끼리라
+   *  원금을 주고받지 않아 그 항이 없다). */
   carry: { on: boolean; defn?: string | null; funding?: string };
   /** 실제로 문 비용 — 고정이면 한 숫자, 동적이면 범위와 중앙값이다. */
   cost:

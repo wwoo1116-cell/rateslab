@@ -274,11 +274,13 @@ describe('서버도 한 자리다', () => {
          v14 = fut defn 정정(「5% 합성」 오라벨 — 2026-09-02 적대 대사)
          v15 = 보드 밴드의 σ 를 표본 → **모집단**으로(2026-09-02 오너 결정)
          v16 = 행에 `triggers`·`triggerBlocked`(2026-09-09 오너 「트리거 레벨까지」)
+         v17 = IRS 커브·플라이 열둘 + `asof.irs`(2026-09-09 오너 「커브·버터플라이도」)
        — 같은 SQL 이 다른 모양·다른 z 를 만든다. v16 도 실제로 한 번 밟았다:
        라우트를 고치고 백엔드를 재기동했는데 응답에 `triggers` 가 없었다(디스크
        캐시가 v15 페이로드를 그대로 내줬다). */
     const cache = fs.readFileSync(path.join(root, 'backend/app/cache.py'), 'utf8');
-    expect(cache).toMatch(/SCHEMA_VERSION = 16/);
+    expect(cache).toMatch(/SCHEMA_VERSION = 17/);
+    expect(cache).toMatch(/v17 \(2026-09-09\)/);
     expect(cache).toMatch(/v16 \(2026-09-09\)/);
     /* 옛 판의 사유 줄도 남아 있어야 한다 — 승급 이력이 곧 이 파일의 근거다. */
     expect(cache).toMatch(/v15 \(2026-09-02\)/);

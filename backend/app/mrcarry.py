@@ -57,7 +57,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Any
+from typing import Any, Callable
 
 from . import funding as fnd
 from .universe import _fetch_curves, _fetch_irs  # noqa: PLC2701 — 같은 데이터 창구
@@ -92,14 +92,51 @@ from .mr import FSW_IRS_COL
 
 
 def _tenor_of(sid: str) -> str:
-    """계열 id 에서 만기 라벨. `BSS-3Y` → `3Y`, `FSW-10Y` → `10Y`."""
+    """계열 id 의 **기준 만기**. `BSS-3Y` → `3Y`, `FSW-10Y` → `10Y`.
+
+    커브·플라이는 다리가 둘·셋이라 「그 계열의 만기」가 하나가 아니다. 기준은
+    **가중이 100 으로 정규화되는 다리**다(`dv01.dv01_payload` 의 그 규약):
+    스프레드는 **긴 쪽**, 플라이는 **벨리**. 명목(₩/bp)의 원금 환산이 이 만기의
+    pv01 로 서고, 나머지 다리는 pv01 비로 따라온다(`combo_weights`).
+    """
     if sid.startswith("FSW-"):
         return FSW_IRS_COL[sid][0]
+    if sid.startswith("IRC-"):
+        return sid.split("-")[-1]                      # 긴 쪽
+    if sid.startswith("IRF-"):
+        return sid.split("-")[2]                       # 벨리
     return sid.split("-", 1)[1]
 
 
+def combo_weights(sid: str, pv01_of: "Callable[[str], float]") -> list[float]:
+    """다리마다의 **가중** — 기준 다리의 원금을 1 로 둔 배수.
+
+    DV01 중립이 이 거래의 정의다(`dv01.py` 머리: 아무도 커브를 같은 명목으로
+    치지 않는다). 기준 다리의 DV01 을 `D` 라 하면
+
+        스프레드   긴 D · 짧은 D              → 원금 비 = pv01(긴)/pv01(짧은)
+        플라이     벨리 2D · 윙 각 D          → 벨리 2 · 윙 pv01(벨리)/pv01(윙)
+
+    벨리가 2 인 것은 값의 규약(`2·벨리 − 윙`) 때문이다: 그 값이 1bp 움직일 때의
+    손익이 `D/2` 가 되도록 벨리에 윙 둘의 합만큼을 건다 — `dv01.dv01_payload`
+    가 벨리를 100 으로 두고 윙을 각각 절반씩 맞추는 그 가중과 같은 것이다.
+
+    차례는 `LEG_NAMES` 의 차례이고, **첫 다리가 리시브 쪽**이다(`position = -1`
+    기준 — 값이 내리는 데 거는 쪽). 그 약속이 아래 산술의 부호를 정한다.
+    """
+    ts = sid.split("-")[1:]
+    if sid.startswith("IRC-"):
+        short, long = ts
+        return [1.0, pv01_of(long) / pv01_of(short)]
+    if sid.startswith("IRF-"):
+        s_w, belly, l_w = ts
+        return [2.0, pv01_of(belly) / pv01_of(s_w), pv01_of(belly) / pv01_of(l_w)]
+    raise KeyError(f"{sid}: 커브·플라이가 아니다")
+
+
 def carry_rates(sid: str, kind: str, dates: list[str],
-                spec: fnd.FundingSpec) -> tuple[list[float | None], str]:
+                spec: fnd.FundingSpec,
+                *, weights: list[float] | None = None) -> tuple[list[float | None], str]:
     """`position = -1` 을 하루 들고 있을 때의 **연 캐리(%)** — 봉마다 하나.
 
     돌려주는 둘째 값은 화면이 읽을 정의 문장이다(숫자 옆에 무엇인지가 없으면
@@ -110,7 +147,7 @@ def carry_rates(sid: str, kind: str, dates: list[str],
     코드가 그 둘을 더한 값만 내보내고 있었다. 대사표가 다리마다 캐리를 세우려면
     안 접힌 것이 필요하다 [OWNER 2026-09-03]. 합의 값은 한 자도 안 바뀐다.
     """
-    legs = carry_rates_by_leg(sid, kind, dates, spec)
+    legs = carry_rates_by_leg(sid, kind, dates, spec, weights=weights)
     defn = CARRY_DEFN[kind]
     out: list[float | None] = []
     for i in range(len(dates)):
@@ -125,6 +162,16 @@ LEG_NAMES: dict[str, tuple[str, ...]] = {
     "bss": ("국고", "IRS"),
     "fsw": ("선물", "IRS"),
     "fut": ("선물",),
+    # 커브·플라이는 **만기를 이름에 못 넣는다** — 이 사전은 종류마다 하나인데
+    # 조합마다 만기가 다르다(만기는 행 이름 「IRS 3Y-10Y」가 말한다). 차례는
+    # 값의 차례다: 커브는 `긴 − 짧은`, 플라이는 `2×벨리 − 윙`.
+    "irc": ("긴 다리", "짧은 다리"),
+    # ⚠ 플라이의 이름이 여기 있는 것은 **캐리 때문**이고, 대사표의 다리 줄은
+    # 안 선다 — `mrseries.combo_points` 가 플라이에는 다리 레벨을 안 싣고
+    # (`sign = -1 if j == 0 else 1` 규약이 `2×벨리 − 윙` 에서 거짓이라),
+    # `main._attach_leg_recon` 이 레벨을 못 찾아 통째로 접는다. 그 자리에는
+    # 종합 한 줄짜리 대사표가 선다.
+    "irf": ("벨리", "짧은 윙", "긴 윙"),
 }
 
 #: 캐리 정의 문장 — 종전에 `carry_rates` 가 자리마다 돌려주던 그 문자열이다.
@@ -132,11 +179,17 @@ CARRY_DEFN: dict[str, str] = {
     "bss": "(국고 − 조달) + (CD 91일 − IRS)",
     "fsw": "CD 91일 − IRS  (선물 다리는 조달이 없어요)",
     "fut": "선물은 조달 현금흐름이 없어요 (캐리 0)",
+    # 커브·플라이는 **스왑끼리**라 조달이 없다 — 원금을 주고받지 않는다.
+    # 남는 것은 다리마다의 (고정 − CD) 액크루얼이고, 다리 크기가 DV01 중립
+    # 가중이라 그 비(pv01 비)가 캐리에 그대로 들어간다.
+    "irc": "(긴 IRS − CD 91일) 리시브 + (CD 91일 − 짧은 IRS) 페이 · DV01 중립 가중",
+    "irf": "(벨리 IRS − CD 91일) 리시브 ×2 + (CD 91일 − 윙 IRS) 페이 · DV01 중립 가중",
 }
 
 
 def carry_rates_by_leg(
     sid: str, kind: str, dates: list[str], spec: fnd.FundingSpec,
+    *, weights: list[float] | None = None,
 ) -> list[tuple[str, list[float | None]]]:
     """다리마다의 **연 캐리(%)** — `(이름, 봉마다 하나)` 의 목록.
 
@@ -147,6 +200,10 @@ def carry_rates_by_leg(
     """
     if kind == "fut":
         rates = [[0.0] * len(dates)]
+    elif kind in ("irc", "irf"):
+        if weights is None:
+            raise ValueError(f"{sid}: 커브·플라이는 가중이 있어야 캐리가 선다")
+        rates = _irs_combo_rates_by_leg(sid, dates, weights)
     elif kind == "bss":
         # 값 계열이 긴 출처로 옮겨갔으므로(`mrseries`) **캐리도 같은 출처**에서
         # 읽는다 [OWNER 2026-08-28 — "옮기고"]. 안 그러면 2014~2020 구간에서
@@ -167,6 +224,50 @@ def carry_rates_by_leg(
     if len(rates) != len(names):
         raise ValueError(f"{kind}: 다리 수({len(rates)})가 이름 수({len(names)})와 달라요")
     return list(zip(names, rates))
+
+
+def _irs_combo_rates_by_leg(
+    sid: str, dates: list[str], weights: list[float],
+) -> list[list[float | None]]:
+    """커브·플라이의 다리별 연 캐리(%) — **기준 다리 원금 위에서** 잰다.
+
+    `position = -1`(값이 내리는 데 거는 쪽)의 다리는 첫 칸이 **리시브**, 나머지가
+    **페이**다(`combo_weights` 의 그 약속):
+
+        커브 −1 = 플래트너 = 긴 쪽 리시브 · 짧은 쪽 페이
+        플라이 −1 = 벨리 리시브 · 윙 페이
+
+    그래서 리시브 다리는 `+(고정 − CD)`, 페이 다리는 `+(CD − 고정)` 이고, 각각에
+    가중이 곱해진다. 조달 항이 **없다** — 스왑끼리라 원금을 주고받지 않는다
+    (BSS 의 `(국고 − 조달)` 이 여기 없는 이유이고, 그래서 이 계열의 캐리는
+    커브의 기울기와 CD 의 자리만으로 정해진다).
+
+    ⚠ 가중은 **지금 커브의 pv01 비**다(`main._mr_leg` 가 재서 넘긴다) — 표본
+    전체에 그 하나를 쓰는 것은 캐리의 원금 환산이 이미 지고 있는 근사와 같은
+    것이다(이 모듈 머리 「명목 환산」의 [알려진 근사]).
+    """
+    ts = mrs.combo_tenors(sid)
+    if len(ts) != len(weights):
+        raise ValueError(f"{sid}: 다리 수({len(ts)})와 가중 수({len(weights)})가 다르다")
+    # 차례를 **다리 차례로** 맞춘다 — `combo_tenors` 는 id 의 차례(짧은 → 긴)이고
+    # 캐리·이름의 차례는 「리시브 다리부터」다.
+    order = [ts[-1], ts[0]] if len(ts) == 2 else [ts[1], ts[0], ts[2]]
+
+    b = bundle_irs = mrs.bundle()
+    cd91 = dict(b["cd"])
+    curves = {t: bundle_irs["irs"].get(t, {}) for t in order}
+
+    out: list[list[float | None]] = []
+    for j, t in enumerate(order):
+        w = weights[j]
+        sign = 1.0 if j == 0 else -1.0                 # 첫 다리가 리시브
+        col: list[float | None] = []
+        for d in dates:
+            r = curves[t].get(d)
+            c = cd91.get(d)
+            col.append(None if (r is None or c is None) else w * sign * (r - c))
+        out.append(col)
+    return out
 
 
 def _fsw_rates_by_leg(sid: str, dates: list[str]) -> list[list[float | None]]:

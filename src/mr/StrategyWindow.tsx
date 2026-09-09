@@ -1647,8 +1647,13 @@ export function StrategyWindow({
                      ⚠ 종전에는 null 에 「선물은 액면 환산이 없어요」를 적었다.
                      2026-09-04 부터 **선물도 액면으로 환산한다**(선물 DV01 —
                      `futures.face_for_dv01`), 그래서 그 문장은 거짓이 됐다. */
+                  /* ⚠ null 의 뜻이 **둘**이다 [2026-09-09]: 못 세운 것과, 한
+                     숫자로는 못 적는 것(커브·플라이는 다리마다 액면이 다르다).
+                     둘을 같은 문장으로 적으면 화면이 「환산 실패」라고 거짓말을
+                     한다 — 사유가 오면 그 사유가 이긴다(서버 문장 그대로). */
                   note={run.principal
                     ? `액면 약 ${fmtEok(run.principal.krw)} (지금 커브)`
+                    : run.principalNote ? '다리마다 달라요 (아래 각주)'
                     : run.principal === null ? '액면 환산을 못 세웠어요' : undefined}
                 />
                 <Stat label="종가" value={run.asof ?? '—'} />
@@ -2053,8 +2058,11 @@ export function StrategyWindow({
                   없으면 읽는 사람이 자기 방향으로 읽는다. 원본 PMS 산술에는 이
                   항이 없었다는 사실도 같이 적는다(재현 도구의 명구 의무). */}
               {run.carry.on && run.carry.defn
-                ? ` 캐리는 ${run.carry.defn}이고 조달은 ${run.carry.funding} 이에요 — 원본 PMS 산술에는 없던 항이에요.`
+                ? ` 캐리는 ${run.carry.defn}${run.carry.funding ? `이고 조달은 ${run.carry.funding} 이에요` : ' 이에요'} — 원본 PMS 산술에는 없던 항이에요.`
                 : ''}
+              {/* 액면이 한 숫자가 아닌 계열(커브·플라이)은 **왜 없는지**를 적는다 —
+                  빈칸으로 두면 화면이 「이 거래엔 액면이 없다」고 말한다. */}
+              {run.principalNote ? ` ${run.principalNote}` : ''}
               {run.principal
                 ? ` 액면은 거래마다 진입일 커브로 환산해요 — 그래야 「Delta ${run.params.notional.toLocaleString()}원/bp」가 모든 거래에서 같은 뜻이에요. 머리의 ${fmtEok(run.principal.krw)}은 「지금 세우면」이고, 거래마다의 액면은 그 거래의 대사표가 적어요(표본 안에서 ${run.real ? '5~16%' : ''} 움직여요).`
                 : ''}
@@ -2063,7 +2071,13 @@ export function StrategyWindow({
               {hasLegLevels
                 ? ' 다리 레벨(국고 커브·IRS 파·CD 91일)은 캐리와 같은 출처예요 — (국고 − IRS) × 100 = 레벨(bp)이 줄마다 그대로 닫혀요.'
                 : ''}
-              {' '}국고 다리는 민평(평가사 고시) 기준이에요 — 체결가로 재면 성과가 낮아질 수 있어요.
+              {/* 이 각주는 **국고 다리가 있는 계열**의 것이다 — 종전에는 창이
+                  계열 종류를 몰라서 선물·커브에도 그대로 섰다(거짓). 구
+                  백엔드(`kind` 없음)에서는 종전대로 적는다: 그때 유니버스는
+                  BSS·선물뿐이고, 안 적는 쪽이 더 나쁜 거짓이다. */}
+              {run.kind == null || run.kind === 'bss'
+                ? ' 국고 다리는 민평(평가사 고시) 기준이에요 — 체결가로 재면 성과가 낮아질 수 있어요.'
+                : ''}
             </Text>
           </>
         )}

@@ -16,6 +16,7 @@ import random
 import numpy as np
 import pytest
 
+from app import derive
 from app import mr
 
 
@@ -154,19 +155,30 @@ def test_build_mr_universe_shape_rank_and_exclusion():
             return _synthetic("bp", n=mr.WINDOW)   # 창 미달 → excluded
         return _synthetic("bp", seed=abs(hash(sid)) % 1000)
 
-    p = mr.build_mr(None, fetch_uni=fake_uni, fetch_fut=_fake_fut)
+    def fake_combo(sid):
+        return _synthetic("bp", seed=abs(hash(sid)) % 1000)
+
+    p = mr.build_mr(None, fetch_uni=fake_uni, fetch_fut=_fake_fut,
+                    fetch_combo=fake_combo)
     # `watch` = BSS 통합 한 줄 [OWNER 2026-09-01] — 랭킹 아래에 따로 선다.
     assert set(p.keys()) == {"asof", "params", "rows", "watch", "excluded", "history"}
     assert p["params"] == {"window": mr.WINDOW, "k": mr.K, "recentN": mr.RECENT_N}
     # 파라미터가 페이로드를 관통한다 — 다른 창은 다른 밴드·다른 파라미터 응답.
-    p60 = mr.build_mr(None, window=60, k=1.5, fetch_uni=fake_uni, fetch_fut=_fake_fut)
+    p60 = mr.build_mr(None, window=60, k=1.5, fetch_uni=fake_uni,
+                      fetch_fut=_fake_fut, fetch_combo=fake_combo)
     assert p60["params"]["window"] == 60 and p60["params"]["k"] == 1.5
     assert all(r["z"] is None or isinstance(r["z"], float) for r in p60["rows"])
     # 유니버스 = BSS 아홉 + 선물 내재 둘 + 퓨처스왑 둘 [OWNER 2026-08-25 —
-    # "선물 들어왔는데 국채선물 롱숏이랑 퓨처스왑 롱숏도 반영하기"].
-    assert len(mr.SERIES) == 13
+    # "선물 들어왔는데 국채선물 롱숏이랑 퓨처스왑 롱숏도 반영하기"] + **IRS
+    # 커브 여덟 · 플라이 넷** [OWNER 2026-09-09 — "스프레드(버터플라이나 커브와
+    # 같은 것도 연결해주기)"]. 커브·플라이의 목록은 이 리포의 주요 세트를 그대로
+    # 읽으므로(`derive`) 숫자를 여기 박지 않고 그쪽에서 센다 — 주요 세트가
+    # 늘면 이 화면도 같이 는다.
+    assert len(mr.SERIES) == 25
     kinds = [kd for _, _, kd in mr.SERIES]
     assert kinds.count("bss") == 9 and kinds.count("fut") == 2 and kinds.count("fsw") == 2
+    assert kinds.count("irc") == len(derive.KEY_SPREADS)
+    assert kinds.count("irf") == len(derive.KEY_FLIES)
     assert len(p["rows"]) == len(mr.SERIES) - 1 == len(p["history"])
     assert p["excluded"] == [{"id": short, "label": "BSS 9M",
                               "reason": f"{short}: 창({mr.WINDOW})보다 짧은 이력({mr.WINDOW})"}]
@@ -177,8 +189,10 @@ def test_build_mr_universe_shape_rank_and_exclusion():
     zs = [abs(r["z"]) for r in p["rows"] if r["z"] is not None]
     assert zs == sorted(zs, reverse=True)
     assert [r["rank"] for r in p["rows"]] == list(range(1, len(p["rows"]) + 1))
-    # 소스별 as-of 두 가족이 다 찬다(rv B-2 의 그 분리).
+    # 소스별 as-of **세 가족**이 다 찬다(rv B-2 의 그 분리) — 셋째는 IRS 커브만
+    # 쓰는 계열의 종가다(민평을 안 타므로 BSS 와 갈릴 수 있다).
     assert p["asof"]["bss"] is not None and p["asof"]["fut"] is not None
+    assert p["asof"]["irs"] is not None
     assert {r["id"] for r in p["rows"]} == set(p["history"].keys())
 
 

@@ -1545,6 +1545,37 @@ def _mr_scale_rows(rows: list[dict], scale: float) -> list[dict]:
     return out
 
 
+def mr_combo_faces(sid: str, notional: float) -> list[tuple[str, float]]:
+    """커브·플라이의 **다리별 액면**(₩) — `[(만기, 액면)]`, 리시브 다리부터.
+
+    ## 액면이 한 숫자가 아닌 이유
+
+    다리가 둘·셋이고 **DV01 중립**이라 원금이 다리마다 다르다: 짧은 쪽이 pv01
+    비만큼 크고, 플라이의 벨리는 윙 둘의 합만큼이다(`mrcarry.combo_weights`).
+    한 숫자를 「이 거래의 액면」이라 적으면 그건 기준 다리의 것일 뿐이다.
+
+    ## 산술 — 나누는 것은 **기준 다리의 pv01** 이다
+
+        기준원금 = 명목 / (pv01_기준 × 1e-4)
+        원금_j  = 가중_j × 기준원금
+
+    가중이 이미 `pv01_기준 / pv01_j` 를 지고 있으므로 각 다리의 pv01 로 **또**
+    나누면 두 번 나누는 것이고, 그 액면은 DV01 중립이 아니다 — 첫 판에서 실제로
+    그렇게 적었고 윙의 DV01 이 1.5배로 나왔다(화면에는 그럴듯한 억 단위 수가
+    섰다). `tests/test_mr_combo.py` 가 다리마다 `액면 × pv01 × 1e-4` 를 되곱아
+    명목과 같은지 잰다 — 벨리만 두 배다(값 규약 `2×벨리`).
+
+    ⚠ **지금 커브**의 pv01 하나를 쓴다 — 액면·캐리가 이미 지고 있는 그 근사다
+    (`docs/MR_LANE_STATE.md` §6 ⑤).
+    """
+    pv = lambda t: pv01(_curves["now"], TENOR_T[t])          # noqa: E731
+    ws = mrc.combo_weights(sid, pv)
+    ts = mrs.combo_tenors(sid)
+    order = [ts[-1], ts[0]] if len(ts) == 2 else [ts[1], ts[0], ts[2]]
+    base = notional / (pv(mrc._tenor_of(sid)) * 1e-4)
+    return [(t, base * w) for t, w in zip(order, ws)]
+
+
 def _mr_real_accounting(r: dict, *, sid: str, kind: str, tenor: str,
                         notional: float, cost_bp: float, spec) -> bool:
     """`simulate()` 의 **언제** 위에 백테스트·시뮬의 **얼마** 를 얹는다
@@ -1834,8 +1865,16 @@ def _mr_leg(id: str, *, lookback: int, entryZ: float, exitZ: float, stopZ: float
     #: 엔진의 `c = -position * carry[i]` 가 선형이라 이 합이 총 캐리와 항등이다.
     carry_legs: list[tuple[str, list[float]]] = []
     if carry:
-        rates, carry_defn = mrc.carry_rates(id, kinds[id], dates, spec)
-        leg_rates = mrc.carry_rates_by_leg(id, kinds[id], dates, spec)
+        # 커브·플라이는 다리가 둘·셋이라 **가중**이 있어야 캐리가 선다 —
+        # DV01 중립이 그 거래의 정의이고, 가중은 지금 커브의 pv01 비다
+        # [OWNER 2026-09-09 — 「스프레드(버터플라이나 커브)도 연결」].
+        # 여기서 재서 넘기는 이유: pv01 은 커브를 아는 자리에서만 나오고
+        # (`_curves["now"]`), `mrcarry` 를 커브에 묶으면 그 모듈이 SQL 을 또
+        # 알게 된다.
+        w = (mrc.combo_weights(id, lambda t: pv01(_curves["now"], TENOR_T[t]))
+             if kinds[id] in ("irc", "irf") else None)
+        rates, carry_defn = mrc.carry_rates(id, kinds[id], dates, spec, weights=w)
+        leg_rates = mrc.carry_rates_by_leg(id, kinds[id], dates, spec, weights=w)
         if kinds[id] == "fut":
             # 선물은 캐리가 0 이다(증거금·일일정산 — `mrcarry` 머리). 원금 환산이
             # 없으므로 pv01 도 필요 없다. 종전에는 그걸 먼저 읽으려 해서
@@ -2088,7 +2127,18 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
     # (위 «pv01 근사» 주석·`docs/MR_LANE_STATE.md` §6 ⑤) 화면이 「근사」를 같이
     # 적는다. 선물은 원금이 없다(증거금·일일정산) — 지어내지 않고 null 로 보낸다.
     principal = None
-    if leg["kind"] in ("fut", "fsw"):
+    #: 액면을 한 숫자로 못 적는 사유 — 화면이 빈칸에 이유를 쓴다(서버 문장 그대로).
+    principal_note = None
+    if leg["kind"] in ("irc", "irf"):
+        # 커브·플라이는 **액면이 한 숫자가 아니다** — 사유와 산술은
+        # `mr_combo_faces` 머리에. 지어내지 않고 다리별 액면을 문장으로 적는다.
+        principal_note = (
+            "다리마다 액면이 달라요(DV01 중립) — 지금 커브로 "
+            + " · ".join(f"{t} {round(v) / 1e8:.1f}억"
+                         for t, v in mr_combo_faces(id, notional))
+            + " 예요."
+        )
+    elif leg["kind"] in ("fut", "fsw"):
         # 선물 계열의 액면은 **선물 DV01** 로 환산한다 [2026-09-04] — 스왑 pv01 이
         # 아니다. FSW 는 두 다리가 진입일 DV01 중립이라 스프레드 1bp 의 값이 곧
         # 선물 다리의 DV01 이고, 회계도 그 액면 위에서 돈다(`_mr_fut_recon`).
@@ -2236,6 +2286,10 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
     s = r["summary"]
     return {
         "id": id, "label": labels[id], "unit": leg["unit"],
+        # 계열 종류 — 화면이 «이 계열에 있는 다리» 를 알아야 각주가 거짓말을
+        # 안 한다(국고 다리가 없는 계열에 「국고 다리는 민평 기준」을 적던
+        # 자리다 — 선물 넷과 커브·플라이 열둘에서 거짓이었다).
+        "kind": leg["kind"],
         "asof": dates[-1] if dates else None,
         "params": {"lookback": lookback, "entryZ": entryZ,
                    "exitZ": exitZ, "stopZ": stopZ, "costBp": costBp,
@@ -2249,6 +2303,8 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
         # 말해야 한다. 선물 계열은 자산스왑이 아니라 늘 근사다.
         "real": leg["real"],
         "principal": principal,
+        # 액면이 한 숫자가 아닌 계열(커브·플라이)의 사유 — 없으면 null.
+        "principalNote": principal_note,
         # 비용이 봉마다 다르면 「편도 몇 bp」가 한 숫자로 안 나온다 — 실제로 쓴
         # 범위와 중앙값을 화면이 적을 수 있게 낸다.
         "cost": ({"model": "flat", "bp": costBp} if cost_series is None else {
@@ -2276,7 +2332,13 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
         },
         # 캐리가 무엇인지 화면이 읽을 문장 — 부호 기준이 −1 이라 정의가 없으면
         # 읽는 사람이 자기 방향으로 읽는다(`mr.KIND_DEFN` 과 같은 규율).
-        "carry": {"on": carry, "defn": carry_defn, "funding": spec.label} if carry else {"on": False},
+        # 조달은 **있는 계열에만** 적는다 — 커브·플라이는 스왑끼리라 원금을
+        # 주고받지 않아서 조달 항이 아예 없다(`mrcarry.CARRY_DEFN` 의 그 문장).
+        # 화면이 「조달은 기준금리 +10bp 예요」를 그 계열에서 적으면 없는 항을
+        # 있다고 말하는 것이다.
+        "carry": ({"on": carry, "defn": carry_defn,
+                   **({} if leg["kind"] in ("irc", "irf") else {"funding": spec.label})}
+                  if carry else {"on": False}),
         "points": points,
         "trades": trades,
         # 방향의 이름과 «못 들어간 신호» — 조용히 빠진 진입은 «신호가 없었다»
