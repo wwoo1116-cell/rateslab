@@ -283,6 +283,7 @@ describe('서버도 한 자리다', () => {
          v16 = 행에 `triggers`·`triggerBlocked`(2026-09-09 오너 「트리거 레벨까지」)
          v17 = IRS 커브·플라이 열둘 + `asof.irs`(2026-09-09 오너 「커브·버터플라이도」)
          v18 = 장부 봉에 `cost`(2026-09-09 — 화면이 아니라 **다른 레인이** 읽는 칸)
+         v19 = 모멘텀 보드에 `headline`(2026-09-09 오너 「Hero 하나 올려서 바로 판단」)
        — 같은 SQL 이 다른 모양·다른 z 를 만든다. v16 도 실제로 한 번 밟았다:
        라우트를 고치고 백엔드를 재기동했는데 응답에 `triggers` 가 없었다(디스크
        캐시가 v15 페이로드를 그대로 내줬다).
@@ -291,7 +292,7 @@ describe('서버도 한 자리다', () => {
        올렸을 때 눈에 보이는데(줄이 사라진다), 이 칸은 그쪽 스크립트가 조용히
        못 재는 상태로 남을 뿐이다. 그래서 이 시험이 더 필요하다. */
     const cache = fs.readFileSync(path.join(root, 'backend/app/cache.py'), 'utf8');
-    expect(cache).toMatch(/SCHEMA_VERSION = 18/);
+    expect(cache).toMatch(/SCHEMA_VERSION = 19/);
     expect(cache).toMatch(/v17 \(2026-09-09\)/);
     expect(cache).toMatch(/v16 \(2026-09-09\)/);
     /* 옛 판의 사유 줄도 남아 있어야 한다 — 승급 이력이 곧 이 파일의 근거다. */

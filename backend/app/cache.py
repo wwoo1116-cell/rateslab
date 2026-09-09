@@ -102,7 +102,10 @@ DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
 # 있다」로 막혀 있었다(`HANDOFF-momentum` §11-2). 안 올리면 v17 캐시가 그 칸 없는
 # 장부를 계속 내주고, 그쪽 스크립트는 **KeyError 도 아니고 그냥 못 재는** 상태로
 # 남는다.
-SCHEMA_VERSION = 18
+# v19 (2026-09-09): 모멘텀 보드에 **`headline`** 이 붙었다 [OWNER — 「Hero 하나
+# 올려서 트레이더가 바로 판단할 수 있게」]. 안 올리면 v18 캐시가 그 칸 없는 보드를
+# 계속 내주고 **히어로가 통째로 안 그려진다** — v13·v16 에서 이미 두 번 밟은 그 함정.
+SCHEMA_VERSION = 19
 
 
 def data_hash(path: Path, asof: "object | None" = None) -> str:

@@ -63,6 +63,14 @@ import {
   type MomentumHistory,
 } from './api';
 
+/** 금리 방향 한 낱말. **세 곳이 쓴다** — 히어로·상세 스트립·매크로 스트립.
+ *  처음 판은 같은 삼항식이 두 곳에 인라인이었고 히어로가 셋째가 될 참이었다
+ *  (캐논 규칙 8 — 같은 것은 한 번만 만든다). 0 은 「중립」이지 「모른다」가
+ *  아니다: 서버가 못 잰 값은 `null` 로 오고 그건 부르는 쪽이 가른다. */
+function rateWord(rate: number): string {
+  return rate > 0 ? '금리 상승' : rate < 0 ? '금리 하락' : '중립';
+}
+
 /** 강도는 소수 두 자리. 부호는 글리프가 지므로 숫자는 **무부호**다(캐논). */
 function fmtStrength(v: number | null | undefined): string {
   if (v == null) return '—';
@@ -163,6 +171,57 @@ export function MomentumPage() {
           오른쪽이 느려요.
         </Text>
       </VStack>
+
+      {/* ── 히어로: 「지금 무엇을 볼까」의 답을 표 앞에 세운다 ────────────────
+          [OWNER 2026-09-09 — 「Momentum도 RV나 MR과 같이 위에 Hero 하나 올려서
+          트레이더가 바로 판단할 수 있게」].
+
+          문법은 **RV·MR 의 그 블록을 이식**한 것이다: 작은 라벨 한 줄 + 이름이
+          display3 로 선 버튼 + 뮤트 메타 한 줄. 부품도 그쪽 것이다 —
+          `.sr-rv-linkbtn` 은 이름만 rv 이고 `theme/type.css` 의 앱 공용 리셋이다
+          (캐논 규칙 2: 「클래스 이름은 소유권이 아니다」).
+
+          **고르는 것은 서버다**(§16 · `momentum._headline`). 화면이 `sort` 를 들면
+          「무엇이 1순위인가」가 두 곳에 살게 된다.
+
+          메타가 판단 재료 넷을 진다 — 방향·강도·속도합의·유지일. 여기에 **매크로가
+          같은 방향인가**를 붙인다: 두 다리를 나란히 세운 화면에서 트레이더가 제일
+          먼저 묻는 것이 그것이고, 「모른다」(둘 중 하나가 중립이거나 매크로가 아직
+          안 옴)를 「반대」와 **안 섞는다**.
+
+          ⚠ 크기·진입·손절은 여기서도 말하지 않는다 — 이 화면의 명구 의무다. */}
+      {board.headline ? (
+        <VStack flexShrink={0} gap={0} width="100%">
+          <Text font="label1" as="span" color="fgMuted" noWrap>
+            지금 가장 또렷한 다리예요
+          </Text>
+          <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
+            <button
+              type="button"
+              className="sr-rv-linkbtn"
+              aria-label={`KTB ${board.headline.tenor} 골라서 이력 보기`}
+              onClick={() => setSelParam(board.headline!.tenor)}
+            >
+              <Text font="display3" as="span" noWrap>
+                KTB {board.headline.tenor}
+              </Text>
+            </button>
+            <Text font="body" as="span" color="fgMuted" tabularNumbers>
+              <span className={directionClass(board.headline.rate)}>
+                {directionGlyph(board.headline.rate)} {rateWord(board.headline.rate)}
+              </span>
+              {' · '}강도 {fmtStrength(board.headline.strength)}
+              {' · '}속도합의 {board.headline.speedAgree} / {board.headline.speedOf}
+              {' · '}{board.headline.holdDays}일째
+              {board.headline.macroAgrees === true
+                ? ' · 매크로도 같은 방향이에요'
+                : board.headline.macroAgrees === false
+                  ? ' · 매크로는 반대예요'
+                  : ' · 매크로는 아직 모르겠어요'}
+            </Text>
+          </HStack>
+        </VStack>
+      ) : null}
 
       {/* ⚠ **이 행은 안 눌린다**(`flexShrink={0}`). MR 은 같은 자리에서
         * `flexGrow={1} minHeight={0}` 을 쓰는데 그건 **25행짜리 보드**라 안쪽
@@ -452,7 +511,7 @@ export function MomentumPage() {
               <>
                 <Stat
                   label="방향"
-                  value={macro.rate > 0 ? '금리 상승' : macro.rate < 0 ? '금리 하락' : '중립'}
+                  value={rateWord(macro.rate)}
                   tone={macro.rate > 0 ? 'up' : macro.rate < 0 ? 'down' : undefined}
                 />
                 <Stat label="합성" value={fmtStrength(macro.rate)} />
@@ -464,8 +523,7 @@ export function MomentumPage() {
                 <Stat
                   label="방향"
                   value={
-                    row.compositeRate > 0 ? '금리 상승'
-                      : row.compositeRate < 0 ? '금리 하락' : '중립'
+                    rateWord(row.compositeRate)
                   }
                   tone={row.compositeRate > 0 ? 'up' : row.compositeRate < 0 ? 'down' : undefined}
                 />
@@ -484,8 +542,13 @@ export function MomentumPage() {
       </HStack>
 
       {/* ── 표본내 장부 + 채점 잠금 ───────────────────────────────────── */}
+      {/* ⚠ **줄어드는 쪽은 여기다**(`flexShrink={1} minHeight={0}`). 히어로가
+          * 들어오면서 세 블록이 셸(911px)을 53px 넘겼는데, 위 두 표는 **오늘의
+          * 판단 재료**라 한 줄도 자르면 안 되고(그래서 그 행이 `flexShrink={0}`),
+          * 이 카드는 **표본내 배경 자료**라 안쪽 스크롤이 옳다. 어느 쪽을 줄일지는
+          * 「지금 무엇을 볼까」가 이 화면의 물음이라는 데서 정해진다. */}
       {book ? (
-        <VStack className="sr-card" flexShrink={0} width="100%">
+        <VStack className="sr-card" flexShrink={1} minHeight={0} width="100%">
           <HStack
             alignItems="center"
             justifyContent="space-between"
@@ -493,6 +556,7 @@ export function MomentumPage() {
             paddingX={2}
             paddingTop={1.5}
             paddingBottom={0.5}
+            flexShrink={0}
           >
             <Text font="label1" as="h2" noWrap>표본내 성적</Text>
             <Text font="legal" as="span" color="fgMuted" noWrap>

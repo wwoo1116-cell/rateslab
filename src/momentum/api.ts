@@ -50,6 +50,25 @@ export interface MomentumMacroLeg {
   notionalKrw: Record<string, number>;
 }
 
+/** 표 **앞**에 서는 한 줄 — 「지금 무엇을 볼까」의 답.
+ *
+ *  고르는 것은 **서버**다(§16). 또렷함 = (속도합의, |합성 강도|) 사전식이고,
+ *  그 순서는 이 레인의 규율에서 온다 — 「다섯 룩백이 갈리면 «모른다»에 가깝다」.
+ *  강도는 **무부호**이고 방향은 `rate` 가 진다(가격 상승 = 금리 하락).
+ *
+ *  `macroAgrees` 는 **셋째 값이 있다**: 매크로가 없거나 한쪽이 중립이면 `null`
+ *  이고 그건 「반대」가 아니라 **모른다**다. */
+export interface MomentumHeadline {
+  tenor: string;
+  rate: number;
+  strength: number;
+  speedAgree: number;
+  speedOf: number;
+  holdDays: number;
+  macroAgrees: boolean | null;
+  macroRate: number | null;
+}
+
 export interface MomentumBoard {
   asof: string;
   signal: string;
@@ -58,6 +77,8 @@ export interface MomentumBoard {
   costTicks: number;
   tstatCap: number;
   trend: MomentumTrendRow[];
+  /** 없을 수 있다 — 추세 행이 하나도 없으면 서버가 `null` 을 낸다. */
+  headline: MomentumHeadline | null;
   /** 매크로 신호 파일이 아직 안 왔으면 null — 그때는 `macroNote` 가 이유를 든다.
    *  값이 없는 것과 0 인 것을 섞지 않는다. */
   macro: MomentumMacroLeg | null;

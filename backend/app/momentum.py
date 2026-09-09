@@ -159,6 +159,34 @@ def _hold_days(vals: list[float]) -> int:
     return n
 
 
+def _headline(rows: list[dict], macro: dict | None) -> dict | None:
+    """표 앞에 설 한 줄 — 「지금 가장 또렷한 다리」와 그 판단 재료.
+
+    또렷함 = (속도합의, |합성 강도|) 사전식. 이 레인의 규율이 「다섯 룩백이 갈리면
+    «모른다»에 가깝다」이므로 합의가 먼저다. `rate` 는 **금리 방향**이라 화면이
+    그대로 색으로 쓴다(가격 상승 = 금리 하락).
+    """
+    if not rows:
+        return None
+    best = max(rows, key=lambda r: (r["speedAgree"], abs(r["composite"])))
+    agrees: bool | None = None
+    if macro is not None and macro["rate"] != 0 and best["compositeRate"] != 0:
+        agrees = (macro["rate"] > 0) == (best["compositeRate"] > 0)
+    return {
+        "tenor": best["tenor"],
+        # 부호는 **방향이 진다** — 강도는 무부호다(캐논: 글리프가 부호를 지고
+        # 숫자는 크기만 적는다).
+        "rate": best["compositeRate"],
+        "strength": round(abs(best["composite"]), 3),
+        "speedAgree": best["speedAgree"],
+        "speedOf": best["speedOf"],
+        "holdDays": best["holdDays"],
+        #: 매크로가 없거나 어느 한쪽이 중립이면 **모른다**(`None`) — 「반대」가 아니다.
+        "macroAgrees": agrees,
+        "macroRate": (macro["rate"] if macro is not None else None),
+    }
+
+
 def build_board() -> dict:
     """오늘의 두 다리. 숫자는 여기서 끝난다(§16) — 브라우저는 포맷만 한다."""
     series, rolls = _load_prices()
@@ -245,6 +273,23 @@ def build_board() -> dict:
         "trend": rows,
         "macro": leg_macro,
         "macroNote": macro_note,
+        # ── 히어로: 「지금 무엇을 볼까」의 답을 표 **앞**에 세운다 ─────────────
+        #
+        # [OWNER 2026-09-09 — 「Momentum도 RV나 MR과 같이 위에 Hero 하나 올려서
+        # 트레이더가 바로 판단할 수 있게」]. RV 의 「지금 가장 매력적이에요」,
+        # MR 의 「지금 모니터링할 테너예요」와 같은 자리다.
+        #
+        # **고르는 규칙은 이 레인이 이미 적어 둔 것이다** — 「속도합의가 갈리면
+        # «모른다»에 가깝다」. 그러니 또렷함의 첫 열쇠는 강도가 아니라 **합의**이고,
+        # 동률일 때만 강도가 가른다. 내가 새 순위를 지어낸 것이 아니다.
+        #
+        # ⚠ 여기서 고르는 이유는 §16(브라우저는 계산하지 않는다)이다. 화면이
+        # `sort` 를 들면 「무엇이 1순위인가」가 두 곳에 살게 된다.
+        #
+        # 매크로 다리는 이 순위에 **안 들어간다** — 속도합의가 없어 같은 자로
+        # 못 잰다. 대신 「같은 방향인가」로 메타에 붙는다. 두 다리를 나란히 세운
+        # 이 화면에서 트레이더가 제일 먼저 묻는 것이 그것이라서다.
+        "headline": _headline(rows, leg_macro),
         # 50/50 은 **손익 수준** 결합이라 「합쳐진 신호」가 없다. 그 사실을 적는다.
         "blend": {
             "weight": 0.5,
