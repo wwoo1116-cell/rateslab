@@ -46,6 +46,7 @@ import { bookIdOf, defaultEntry, newRow } from '@/backtest/book';
 import { SettingView } from '@/ui/SettingView';
 import { BondTypeFilter } from '@/ui/BondTypeFilter';
 import { SimulationPage, type CaseRuns } from '@/sim/SimulationPage';
+import { MomentumPage } from '@/momentum/MomentumPage';
 import { MrPage } from '@/mr/MrPage';
 import { RvPage } from '@/rv/RvPage';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
@@ -610,7 +611,13 @@ const BANNER_H = 34;
             region={STRATEGY_ITEMS.find((i) => i.id === strategy)?.label ?? '전략'}
             fallback="전략 화면을 그리지 못했어요."
           >
-            {strategy === 'credit-rv' ? <RvPage /> : <MrPage />}
+            {strategy === 'credit-rv' ? (
+              <RvPage />
+            ) : strategy === 'mean-reversion' ? (
+              <MrPage />
+            ) : (
+              <MomentumPage />
+            )}
           </ErrorBoundary>
         ) : section === 'lab' && !isGroupTab ? (
           /* Lab 의 세입자 = **커브 표면** [v1 2026-08-14]. v1 의 첫 세입자

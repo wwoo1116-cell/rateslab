@@ -175,6 +175,15 @@ export const mrStrategyUrl = (query: string) => liveUrl("/api/mr/strategy", quer
 /** BSS 테너 통합 장부 — 같은 규칙을 아홉 만기에 동시에 건 한 장부.
  * query 는 `/api/mr/strategy` 와 같고 `id` 만 없다. */
 export const mrBookUrl = (query: string) => liveUrl("/api/mr/book", query);
+/** Momentum 측정면(Strategy 셋째 세입자) — 라이브 전용(선물 종가가 SQL 에만).
+ * 손잡이가 없어 query 도 없다: 룩백은 고르는 것이 아니라 축이고 신호는 등록된
+ * 북 그대로 `macross` 하나다(`backend/app/momentum.py` 머리). */
+export const momentumBoardUrl = () => liveUrl("/api/momentum/board");
+export const momentumHistoryUrl = (key: string) =>
+  liveUrl(`/api/momentum/history/${encodeURIComponent(key)}`);
+/** **표본내** 장부 — 동결일 이후는 서버가 잘라서 낸다(채점 잠금). */
+export const momentumBookUrl = () => liveUrl("/api/momentum/book");
+
 /** 거래 하나의 실가격 일별 대사 — 자산스왑으로 세워 민평 노드를 범프한
  * 테너별 KRD. **거래를 누를 때만** 도는 별도 패스라 라우트도 따로다
  * (KRD 범프가 본체보다 비싸다 — `cashbond` 의 그 근거). */

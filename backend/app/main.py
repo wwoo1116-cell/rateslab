@@ -68,6 +68,7 @@ from irs_pricer.services.simulation import bond_roll
 from . import instruments as instruments_mod
 from . import calendar_cache
 from . import df_cache
+from . import momentum
 from . import mr as mr_mod
 from . import mrbacktest as mrbt
 from . import mrbook
@@ -2841,6 +2842,36 @@ def mr_book(lookback: int = 60, entryZ: float = 2.0,
         "excluded": excluded,
         **out,
     }
+
+
+@router.get("/api/momentum/board")
+def momentum_board() -> dict:
+    """Momentum 측정면의 보드 — 추세 다리와 매크로 다리의 **오늘**(§16).
+
+    손잡이가 없다. 룩백은 이 레인의 규율상 고르는 것이 아니라 축이고
+    (`momentum.py` 머리), 신호는 등록된 북 그대로 `macross` 하나다.
+    """
+    return cached("momentum-board", _dataset.data_key, momentum.build_board)
+
+
+@router.get("/api/momentum/history/{key}")
+def momentum_history(key: str) -> dict:
+    """한 다리의 이력 — 상세 차트의 재료. **수준이 아니라 차분 누적**이다."""
+    try:
+        return cached(f"momentum-hist-{key}", _dataset.data_key,
+                      lambda: momentum.build_history(key))
+    except momentum.MomentumError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/api/momentum/book")
+def momentum_book() -> dict:
+    """**표본내** 성적 — 동결일 이후는 `momentum.build_book` 이 잘라서 낸다.
+
+    자르는 자리가 서버인 이유는 그 함수 머리에 있다: 프런트에서 자르면 네트워크
+    탭에 그대로 남는다.
+    """
+    return cached("momentum-book", _dataset.data_key, momentum.build_book)
 
 
 @router.get("/api/volatility")

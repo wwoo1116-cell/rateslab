@@ -99,3 +99,38 @@ export function directionGlyph(v: number | null | undefined): string {
 export function unsignedDelta(text: string): string {
   return text.replace(/^[+\u2212-]/, '');
 }
+
+/* ── 신호 강도의 틴트는 **또 다른 눈금**이다 (Momentum, 2026-09-09) ──────────
+ *
+ * 위 둘과 같은 이유로 눈금이 따로 선다. `tintAlpha` 는 **bp** 로 재고
+ * (0.5 아래는 잡음), `matrixTint` 는 **자기 과거 백분위**로 잰다. Momentum 의
+ * 칸은 둘 다 아니다 — 값이 −1~+1 의 «추세 강도»이고, 그 눈금은 엔진이 이미
+ * 고정해 두었다(`ctabacktest.TSTAT_CAP` = 4, 그래서 |t|=4 면 1.0).
+ *
+ * 그 값을 bp 램프에 그대로 넣으면 전 칸이 바닥(0.5) 아래라 **아무것도 안 칠해진다**.
+ * 그래서 눈금만 옮기고 **알파 끝점은 변화 열의 것을 그대로 쓴다**(0.06~0.20):
+ * 이 칸의 숫자도 변화 열처럼 **색 있는 글자**라, 뒤에 깊은 채움을 깔면 그 글자의
+ * 대비를 갉아먹는다. 매트릭스가 0.45 까지 가는 것은 거기 숫자가 잉크이기 때문이다.
+ *
+ * 바닥은 |t| = 0.5 에 해당하는 0.125 다. 그 아래를 칠하면 「추세랄 것이 없다」를
+ * 옅은 추세로 읽게 가르친다 — 위 램프가 0.2bp 에 대해 하는 말과 같다.
+ */
+
+/** 강도(0~1) 바닥. 이 아래는 아예 안 칠한다. |t| = 0.5 에 해당한다. */
+export const SIGNAL_FLOOR = 0.125;
+
+/**
+ * 신호 칸의 틴트. `rate` 는 **금리 방향**으로 부호를 뒤집은 값이다
+ * (가격 상승 = 금리 하락 — `backend/app/momentum.py` 머리).
+ */
+export function signalTint(rate: number | null | undefined): React.CSSProperties | undefined {
+  if (rate == null || rate === 0) return undefined;
+  const a = Math.abs(rate);
+  if (a < SIGNAL_FLOOR) return undefined;
+  const t = Math.min(1, (a - SIGNAL_FLOOR) / (1 - SIGNAL_FLOOR));
+  const alpha = Number((0.06 + t * 0.14).toFixed(3));
+  const hue = rate > 0 ? 'var(--sr-up)' : 'var(--sr-down)';
+  return {
+    backgroundColor: `color-mix(in srgb, ${hue} ${Math.round(alpha * 100)}%, transparent)`,
+  };
+}

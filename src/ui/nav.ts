@@ -235,7 +235,7 @@ export function isLabId(v: string | undefined): v is LabId {
  * 회사채AAA·카드채AA+·캐피탈채AA- 와 함께). 그 둘은 벤치마크로 같이 서는 것이고,
  * 데스크가 이 화면을 「크레딧 RV」로 부르는 것이 맞다는 판단이다. 화면이 그
  * 사실을 한 줄로 말한다. */
-export type StrategyId = 'credit-rv' | 'mean-reversion';
+export type StrategyId = 'credit-rv' | 'mean-reversion' | 'momentum';
 
 export const DEFAULT_STRATEGY: StrategyId = 'credit-rv';
 
@@ -269,10 +269,28 @@ export const STRATEGY_ITEMS: {
        골랐다. vol 의 '〜'(상대 변동성)와는 딴 것이라 같은 그림을 안 쓴다. */
     glyph: '∿',
   },
+  /* 셋째 세입자 [OWNER 2026-09-09 — "v2 strategy tab 밑에 지금까지 한 거
+     momentum으로 붙이는 계획. 위계상으로는 RV, MR과 동일"]. **방향과 강도를
+     재는 화면이지 단독 전략이 아니다** — 선물 추세 단독은 자본비용 전액 규약에서
+     MMF 초과 −1.07 ~ +0.97%/년이었다(research\ktb-tsmom). 이웃 둘의 명구 의무를
+     같은 문법으로 진다(desc 도 명령형·추천 금지).
+
+     구조는 «등록된 북» 그대로다 — AQR 병렬 50/50 의 두 다리(추세·매크로)이고,
+     추세 다리의 신호는 macross 하나다. tsmom·donchian 은 PBO 격자 차원이지 이
+     북에 안 든다(backend/app/momentum.py 머리). */
+  {
+    id: 'momentum',
+    label: 'Momentum',
+    desc: '추세가 어느 쪽으로 얼마나 강한지 — 계약별 속도 프로파일과 매크로 다리',
+    /* 오름 화살 [OWNER 2026-09-09 확인]. 변화 셀의 `directionGlyph`(↗↘)와 그림이
+       겹치지만, 거기서는 «그 값의 부호»이고 여기서는 «추세»라 뜻이 이어진다 —
+       오너가 그대로 가기로 정했다. */
+    glyph: '↗',
+  },
 ];
 
 export function isStrategyId(v: string | undefined): v is StrategyId {
-  return v === 'credit-rv' || v === 'mean-reversion';
+  return v === 'credit-rv' || v === 'mean-reversion' || v === 'momentum';
 }
 
 /** 내려간 세입자. 지금은 없지만 자리를 비워 둔다 — `RETIRED_LAB` 과 같은 이유로,

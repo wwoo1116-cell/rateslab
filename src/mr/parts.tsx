@@ -13,6 +13,7 @@ import { HStack, VStack } from '@coinbase/cds-web/layout';
 import { TableCell } from '@coinbase/cds-web/tables';
 import { Text } from '@coinbase/cds-web/typography';
 
+import { fmtRatio } from '@/lib/format';
 import { fmtKrw } from '@/lib/krw';
 import { Stat, StatColumn } from '@/ui/Stat';
 
@@ -94,8 +95,11 @@ export function Panel({
  *
  *  ⚠ 두 창이 같이 쓴다 [2026-09-07] — 낱개 창에 있던 것을 여기로 옮겼다.
  *  통합 장부도 같은 일곱을 세우게 되면서 두 벌이 될 자리였다(얼라인 8). */
-export const fmtRatio = (v: number | null | undefined): string =>
-  v == null ? '—' : v.toFixed(2);
+// `fmtRatio` 는 `lib/format` 이 진다 — 모멘텀 화면에 같은 함수가 두 벌이었다.
+// ⚠ `export { x } from '...'` 만 쓰면 **이 모듈 안에서는 못 쓴다**(재수출은 지역
+// 이름을 안 만든다). 이 파일이 `fmtRatio` 를 직접 부르므로 들여온 뒤 다시 낸다 —
+// 부르는 쪽(`OptimizePane` 등)은 그대로 `./parts` 에서 가져간다.
+export { fmtRatio };
 
 /** 비율 한 칸 — 못 잰 값은 «—» 다(0 이 아니다 — `fmtRatio` 머리의 그 근거). */
 export function NumCell({ v }: { v: number | null }) {

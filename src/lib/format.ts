@@ -168,3 +168,13 @@ export function dirClass(v: number | null | undefined): string {
 export function headFont(label: string): "caption" | "legal" {
   return /[a-z]/.test(label) ? "legal" : "caption";
 }
+
+/** 비율 한 칸 — 소수 둘. **못 잰 값은 «—» 다**(0 이 아니다: 「쟀는데 0」과
+ *  구별이 안 된다).
+ *
+ *  ⚠ 여기 있는 이유: 같은 함수가 `mr/parts` 와 모멘텀 화면에 **글자 하나 안 틀리고
+ *  두 벌** 있었다. 캐논 규칙 8(「같은 것은 한 번만 만든다」)의 그 자리다 — `Field`
+ *  가 네 곳에 흩어져 라벨 타이포가 셋으로 갈렸던 판례와 같다. */
+export function fmtRatio(v: number | null | undefined): string {
+  return v == null ? "—" : v.toFixed(2);
+}

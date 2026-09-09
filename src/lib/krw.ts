@@ -110,3 +110,24 @@ export function splitCashBondKrw(
   const uFund = manUnits(funding);
   return { uPnl, uVal, uRoll, uFund, uCarry: uPnl - uVal - uRoll - uFund };
 }
+
+/** **부호 없는** 압축 크기 — `1.2억` · `100만` · `8,300`.
+ *
+ *  `fmtKrw` 와 다른 물건이다: 저쪽은 **손익**이라 부호가 뜻을 지고 「+1억 2,000만원」
+ *  으로 적는다. 이쪽은 **크기**(액면·변동성 목표처럼 부호가 없는 값)라 부호를 붙이면
+ *  없는 방향을 주장하게 된다.
+ *
+ *  ⚠ 여기 있는 이유: 모멘텀 화면이 `fmtEok`·`fmtMan` 두 벌을 자기 파일 안에 들고
+ *  있었다. 캐논 규칙 1(「새로 만들기 전에 찾는다」)은 없을 때 만들지 말라는 뜻이
+ *  아니라 **찾을 수 있는 자리에 두라**는 뜻이다 — 다음 화면이 또 만들지 않도록.
+ *
+ *  ⚠ **단위(「원」)를 안 붙인다** — 캐논이 「열 제목이 단위를 진다」이고, 표 안에서는
+ *  머리(「액면」)가 그 일을 한다. 문장 안에 쓸 때만 부르는 쪽이 「원」을 붙인다.
+ *  처음 판은 작은 값 갈래만 「원」을 달고 있어서 문장에서 「8,300원원」이 됐다. */
+export function fmtSize(v: number | null | undefined): string {
+  if (v == null) return "—";
+  const n = Math.abs(v);
+  if (n >= 1e8) return `${(n / 1e8).toFixed(1)}억`;
+  if (n >= 1e4) return `${Math.round(n / 1e4).toLocaleString()}만`;
+  return Math.round(n).toLocaleString();
+}
