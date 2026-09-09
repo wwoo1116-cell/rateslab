@@ -433,6 +433,13 @@ def aggregate(legs: list[dict[str, Any]], *, notional: float,
         tr = leg["r"]["trades"]
         per.append({
             "id": leg["id"], "label": leg["label"], "tenor": tenor_of(leg["id"]),
+            # ── 이 다리의 돈이 **어느 회계에서 나왔나** [2026-09-09] ──────────
+            # `_mr_real_accounting` 은 못 재면 조용히 엔진 근사로 되돌린다. 낱개
+            # 창과 격자는 그 사실을 `real`/`headReal` 로 말하는데 **통합 장부만
+            # 안 말하고 있었다** — 다리마다 갈릴 수 있으므로 합계가 두 회계를
+            # 더한 수가 될 수 있다(krw-crs 레인 실측: 162칸 중 42칸이 섞임).
+            # `None` 은 「이 다리가 회계를 안 말한다」다 — 0/1 로 뭉개지 않는다.
+            "real": leg.get("real"),
             "totalPnl": round(s["totalPnl"], 2),
             "maxDrawdown": round(s["maxDrawdown"], 2),
             "sharpe": round(s["sharpe"], 3) if s["sharpe"] is not None else None,
@@ -449,6 +456,22 @@ def aggregate(legs: list[dict[str, Any]], *, notional: float,
             "asof": leg["dates"][-1] if leg["dates"] else None,
         })
 
+    # ── 장부 수준의 회계 — **불리언 하나가 아니라 «몇/몇»** [2026-09-09] ────
+    #
+    # 섞였을 때 「근사」로 뭉뚱그리면 **8/9 와 0/9 가 같은 말**이 된다. 그래서
+    # 센 수와 **어느 다리인지**를 같이 낸다(이 리포의 「빈칸으로 렌더하느니 이유를
+    # 쓴다」 규율 — `MR_RECON_WHY` 가 그 본보기).
+    #
+    # 셋째 칸 `unknown` 은 「그 다리가 회계를 안 말한다」다(구 계약·시험 픽스처).
+    # 모르는 것을 근사로 세면 화면이 없는 사실을 말하게 된다.
+    reals = [(leg["id"], leg.get("real")) for leg in legs]
+    accounting = {
+        "real": sum(1 for _sid, v in reals if v is True),
+        "total": len(reals),
+        "approx": [sid for sid, v in reals if v is False],
+        "unknown": [sid for sid, v in reals if v is None],
+    }
+
     port_sharpe = _sharpe(daily)
     idle = sum(1 for x in live if x == 0)
     # 채점용 봉 — `mrmetrics.score` 는 엔진 봉의 어휘를 먹는다(`dailyPnl`·
@@ -464,6 +487,8 @@ def aggregate(legs: list[dict[str, Any]], *, notional: float,
 
     return {
         "asof": dates[-1] if dates else None,
+        # 어느 회계로 잰 장부인가 — 위 주석의 그 셋.
+        "accounting": accounting,
         "from": dates[0] if dates else None,
         "to": dates[-1] if dates else None,
         "bars": len(dates),

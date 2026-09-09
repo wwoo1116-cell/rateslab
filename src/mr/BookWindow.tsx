@@ -84,6 +84,10 @@ const CHART_H_SUB = 140;
 const TABLE_H = CHART_H + CHART_H_SUB;
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+/** `BSS-2Y` → `2Y` — 회계 칸이 만기만 적는다(계열 이름은 이 창에서 전부 BSS 라
+ *  접두가 아무 말도 안 한다). 서버의 `mrbook.tenor_of` 와 같은 규칙이다. */
+const tenorOf = (sid: string) => sid.split('-').slice(1).join('-');
 const bp = (v: number) => `${v > 0 ? '+' : ''}${v.toFixed(2)}bp`;
 
 /** 만기별 표의 숫자 한 칸 — 손익만 방향색이다(낱개 창 거래 표와 같은 규칙). */
@@ -653,6 +657,39 @@ export function BookWindow({
                   />
                 ) : null}
                 <Stat label="종가" value={run.asof ?? '—'} />
+                {/* ── 회계 [2026-09-09, krw-crs 레인이 잡아 보낸 결함] ──────────
+                    이 장부의 돈이 **실가격 대사**에서 나왔는지 **엔진 근사**에서
+                    나왔는지를 말한다. 낱개 창(`real`)과 격자(`headReal`)는 종전에도
+                    말했는데 **이 창만 안 말했다** — 그런데 다리마다 갈릴 수 있으므로
+                    합계가 두 회계를 더한 수일 수 있다(레인 실측: 격자 162칸 중
+                    42칸이 섞임 · 이 화면 기본 노브에서는 9/9 실가격).
+
+                    **「근사」로 뭉뚱그리지 않는다** — 8/9 와 0/9 가 같은 말이 되면
+                    안 되므로 센 수를 적고, 섞였으면 **어느 다리인지 이름**을 적는다
+                    (「빈칸으로 렌더하느니 이유를 쓴다」 — `MR_RECON_WHY` 의 그 규율).
+                    구 백엔드는 필드가 없다: 그때 «실가격» 으로 조용히 떨어지지 않고
+                    모른다고 말한다. */}
+                {run.accounting ? (
+                  <Stat
+                    label="회계"
+                    value={run.accounting.real === run.accounting.total
+                      ? '실가격'
+                      : `실가격 ${run.accounting.real}/${run.accounting.total}`}
+                    tone={run.accounting.real === run.accounting.total ? undefined : 'down'}
+                    note={run.accounting.real === run.accounting.total
+                      ? '자산스왑 대사'
+                      : [
+                          run.accounting.approx.length
+                            ? `엔진 근사: ${run.accounting.approx.map(tenorOf).join(' · ')}`
+                            : null,
+                          run.accounting.unknown.length
+                            ? `모름: ${run.accounting.unknown.map(tenorOf).join(' · ')}`
+                            : null,
+                        ].filter(Boolean).join(' · ')}
+                  />
+                ) : (
+                  <Stat label="회계" value="모름" note="이 백엔드는 회계를 안 말해요" />
+                )}
                 <Stat label="방향" value={only ? only.legs : '양방향'} />
                 {run.dirs.why ? (
                   <Stat

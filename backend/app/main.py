@@ -1258,8 +1258,12 @@ def _mr_check_knobs(lookback: int, entryZ: float, exitZ: float,
 #: 3배 명목에서 차이가 서버 자신의 원 단위 반올림 ≤2원). 그래서 한 번 재고
 #: 배수로 쓴다 — 명목 노브를 돌려도 다시 안 잰다.
 MR_REF_PRINCIPAL = 1_000_000_000.0
-#: (워터마크, 계열, 진입, 청산, 방향, 조달기준, 조달스프레드) → 기준 액면의 행.
+#: (워터마크, 계열, 진입, 청산, 방향, 조달기준, 조달스프레드, 다리, 창) → 행.
 #: 워터마크가 키에 있어 민평이 갱신되면 저절로 갈린다.
+#:
+#: **여기 든 `None` 은 「결정적으로 반쪽」이다** — 창이 잘렸다는 잰 결과이고 같은
+#: 자료 위에서 다시 재도 답이 안 바뀐다. 예외로 못 잰 자리는 **아예 안 들어온다**
+#: (`_mr_recon_rows` 머리 — 실패를 붙들었더니 87칸이 뒤집혔다).
 _mr_recon_cache: dict[tuple, dict | None] = {}
 MR_RECON_CACHE_MAX = 4096
 
@@ -1327,8 +1331,9 @@ MR_FUT_MAP: dict[str, tuple[str, str, int]] = {
     "FSW-10Y": ("FSW:10Y", "10Y", 1),
 }
 
-#: 선물 대사 캐시 — `_mr_recon_cache` 와 같은 규율(거래 목록은 z 에만 달려 있어
-#: 노브를 돌리는 동안 거의 다 맞는다).
+#: 선물 대사 캐시 — `_mr_recon_cache` 와 **같은 규율**이다(거래 목록은 z 에만
+#: 달려 있어 노브를 돌리는 동안 거의 다 맞는다). 실패를 안 붙드는 이유도 같다
+#: (그 함수 머리의 실측 — 붙들었더니 87칸이 뒤집혔다).
 _mr_fut_cache: dict = {}
 
 
@@ -1406,8 +1411,13 @@ def _mr_fut_recon(sid: str, direction: int, notional: float,
         rolls = sorted(d for d in futures.roll_days(list(fs.dates))
                        if entry < d <= exit_)
         got = {"blocks": blocks, "face": face, "rolls": [d.isoformat() for d in rolls]}
-    except (futures.FuturesError, BacktestError, KeyError, ValueError, IndexError):
-        got = None
+    except (futures.FuturesError, BacktestError, KeyError, ValueError, IndexError) as exc:
+        # **같은 병, 같은 처방** [2026-09-09] — 이 캐시도 실패를 붙들면 한 번의
+        # 사고가 재시작 전까지 그 다리를 근사로 묶는다(`_mr_recon_rows` 머리의
+        # 그 실측). 캐시에 안 넣고 나간다.
+        logging.getLogger("app.main").warning(
+            "[mr] 선물 실가격 대사 실패 — %s %s~%s: %s", sid, entry, exit_, exc)
+        return None
     if len(_mr_fut_cache) >= MR_RECON_CACHE_MAX:
         _mr_fut_cache.clear()
     _mr_fut_cache[key] = got
@@ -1415,24 +1425,56 @@ def _mr_fut_recon(sid: str, direction: int, notional: float,
 
 
 def _mr_recon_rows(m, tenor: str, entry: dt.date, exit_: dt.date,
-                   direction: int, spec, with_legs: bool = False) -> dict | None:
+                   direction: int, spec, with_legs: bool = False,
+                   max_days: int | None = cashbond.RECON_MAX_DAYS) -> dict | None:
     """기준 액면에서의 대사 — `{"tenors", "rows"}`. 못 세우면 `None`.
 
     **거래 목록은 z 에만 달려 있다**(`mrbacktest` 머리) — 명목·비용·조달을
     돌려도 진입·청산 날짜가 안 움직인다. 그래서 이 캐시는 노브를 돌리는 동안
     거의 다 맞는다. 통합 장부(아홉 다리 143건)가 매번 8초를 쓰지 않는 이유다.
+
+    ## ⚠ 실패를 **영구히 캐시하지 않는다** [2026-09-09]
+
+    종전에는 예외를 잡아 `None` 을 그대로 열쇠에 넣었다. 그래서 DB 가 **한 번**
+    버벅이면 그 거래창을 쓰는 뒤의 모든 요청이 근사로 떨어지고, 캐시가 4,096칸을
+    채워 통째로 비워질 때까지 안 나았다 — 사용자에게는 「같은 화면인데 열 때마다
+    손익이 다르다」로 보인다.
+
+    실측(krw-crs 레인 2026-09-09): 셀 캐시를 3프로세스로 나눠 돌렸더니 근사가
+    443/1,458 나왔는데, BSS-3Y 만 단독으로 다시 받으니 실가격이 48 → 135칸으로
+    **162칸 중 87칸이 뒤집혔다.** 진짜 절단은 결정적이라 다시 돌려도 같은 답이므로
+    **그 차이는 전부 캐시 오염**이었다.
+
+    그래서 실패를 둘로 가른다:
+
+      · **결정적 실패**(`truncated` — 창이 잘렸다) → 같은 자료면 늘 같은 답이라
+        **캐시한다.** 다시 재도 답이 안 바뀌므로 재시도는 값이 없다.
+      · **그 밖의 실패**(예외) → **캐시하지 않는다.** 자료가 없어서 못 재는
+        것인지 이번에 못 잰 것인지를 여기서 확실히 가를 수 없기 때문이다
+        (`CashBondError` 는 둘 다에서 난다 — 「민평 진입일이 IRS 달력에 없다」는
+        자료이고, 그 아래 커브 조회가 흔들린 것은 이번 일이다). 가를 수 없으면
+        **다시 재는 쪽**이 맞다: 늘 실패하는 자리가 무는 것은 예외 하나의 값이고,
+        붙들었을 때 무는 것은 **틀린 손익을 화면에 띄우는 값**이다.
+
+    `truncated` 를 성공처럼 캐시하는 것이 이상해 보이면 — 이건 「못 잰다」가 아니라
+    **「이 창에서는 반쪽이다」라는 잰 결과**다. 회계 경로는 2026-09-09 부터
+    `max_days=None` 으로 부르므로 애초에 이 답을 거의 안 받는다.
     """
     #: `with_legs` 가 **열쇠에 든다** — 다리 유무는 응답의 모양을 바꾼다. 안
     #: 넣으면 회계가 먼저 캐시를 채우고 화면이 다리 없는 판을 받는다.
+    #: `max_days` 도 **같은 이유로 열쇠에 든다** [2026-09-09] — 창이 다르면 답도
+    #: 다르고(잘림 여부가 통째로 갈린다), 안 넣으면 화면이 채운 절단 캐시를 회계가
+    #: 받아 창을 가른 것이 아무 일도 안 하게 된다.
     key = (m.watermark, tenor, entry, exit_, direction, spec.basis, spec.spread_bp,
-           with_legs)
+           with_legs, max_days)
     if key in _mr_recon_cache:
         return _mr_recon_cache[key]
     try:
         pos = cashbond.BondPosition(
             kind=cashbond.KIND_ASW, bond_type="KTB", tenor=tenor,
             direction=direction, notional=MR_REF_PRINCIPAL, entry=entry, exit=exit_)
-        rec = cashbond.book_recon(m, _dataset, [pos], spec, with_legs=with_legs)
+        rec = cashbond.book_recon(m, _dataset, [pos], spec, with_legs=with_legs,
+                                  max_days=max_days)
         # 창이 잘리면 **회계가 반쪽이다** — 반쪽을 총손익이라 부르지 않는다.
         got = (
             None if rec.get("truncated")
@@ -1441,8 +1483,14 @@ def _mr_recon_rows(m, tenor: str, entry: dt.date, exit_: dt.date,
             else {"tenors": rec["tenors"], "rows": rec["rows"],
                   "legTenors": rec.get("legTenors")}
         )
-    except (cashbond.CashBondError, creditmatrix.CreditMatrixError, KeyError, ValueError):
-        got = None
+    except (cashbond.CashBondError, creditmatrix.CreditMatrixError, KeyError, ValueError) as exc:
+        # **캐시에 안 넣고 그대로 나간다**(위 문단) — 다음 요청이 다시 잰다.
+        # 조용히 근사로 떨어지는 것이 이 결함의 정체였으므로 로그는 남긴다.
+        # 늘 실패하는 자리는 요청마다 예외 비용을 다시 무는데, 그 값은 «틀린 수를
+        # 붙들고 있는 값» 보다 싸다 — 여기는 회계다.
+        logging.getLogger("app.main").warning(
+            "[mr] 실가격 대사 실패 — %s %s~%s: %s", tenor, entry, exit_, exc)
+        return None
     if len(_mr_recon_cache) >= MR_RECON_CACHE_MAX:
         _mr_recon_cache.clear()          # 통째로 버린다 — LRU 를 짤 값이 아니다
     _mr_recon_cache[key] = got
@@ -1665,7 +1713,13 @@ def _mr_real_accounting(r: dict, *, sid: str, kind: str, tenor: str,
             # 회계는 **총계만** 쓴다 — 다리를 물으면 IRS 파 커브 범프가 거래마다
             # 붙어서(실측 5.55배) 전략 라우트가 통째로 느려진다. 다리는 거래를
             # 누를 때 `/api/mr/recon` 이 받는다.
-            got = _mr_recon_rows(m, tenor, e_d, x_d, -int(direction), spec)
+            # **회계 경로는 창을 안 자른다** [2026-09-09] — 잘린 창은 반쪽이라
+            # `None` 이 되고, 그러면 이 다리 전체가 엔진 근사로 되돌아간다.
+            # 서빙 경로(`/api/mr/recon`)는 상수를 그대로 쓴다: 페이로드와
+            # 응답시간은 한 자도 안 바뀐다(근거·실측은 `cashbond.RECON_MAX_DAYS`
+            # 머리 — 이 경로가 `with_legs=False` 라 6배 싼 쪽이다).
+            got = _mr_recon_rows(m, tenor, e_d, x_d, -int(direction), spec,
+                                 max_days=None)
             if got is None:
                 return False                           # 한 건이라도 못 재면 전부 안 바꾼다
             rows = _mr_scale_rows(got["rows"], principal / MR_REF_PRINCIPAL)
@@ -2078,7 +2132,14 @@ def _attach_leg_recon(points: list[dict], *, kind: str,
 
 @router.get("/api/mr/strategy")
 def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
-                exitZ: float = 0.5, stopZ: float = 3.5,
+                # 손절 기본값 3.5 → **2.5** [OWNER 2026-09-09]. 프리셋이
+                # 2026-09-08 에 갈렸는데(커밋 `74d8eb8f`) 기본값이 안 따라와
+                # 초기 화면이 옛 값으로 서 있었다. 근거·프레임의 갈림은 프런트
+                # `api.ts::MR_STRATEGY_DEFAULTS.stopZ` 주석에 있다(같은 값을 두
+                # 곳에서 쓰므로 근거는 한 곳에만 적고 여기서 가리킨다).
+                # ⚠ 사전등록 스크립트(`scripts/mr_live_wfo.py::STOP_Z`)의 3.5 는
+                # 안 따라간다 — 그 값은 OOS 전에 못 박은 값이다.
+                exitZ: float = 0.5, stopZ: float = 2.5,
                 # 편도 비용 기본값 0.05 → 0.5 [OWNER 2026-08-28]. 0.05 은 첫 PMS 의
                 # 값이고 이 데스크의 실측이 아니다 — 국고3Y·IRS3Y 패키지 실제 편도가
                 # ≤0.5bp 라는 오너 답이 있으므로 **보수적인 쪽을 기본**으로 둔다.
@@ -2433,7 +2494,7 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
 @router.get("/api/mr/optimize")
 def mr_optimize(id: str, span: str = "all",
                 lookback: int = 60, entryZ: float = 2.0,
-                exitZ: float = 0.5, stopZ: float = 3.5,
+                exitZ: float = 0.5, stopZ: float = 2.5,
                 costBp: float = 0.5, notional: float = 1_000_000.0,
                 carry: bool = True, entryMode: str = "level",
                 timeStop: int = 0, costModel: str = "flat",
@@ -2643,7 +2704,7 @@ def mr_recon(id: str, entry: str, exit: str, notional: float = 1_000_000.0,
 @router.get("/api/mr/book/optimize")
 def mr_book_optimize(span: str = "all",
                      lookback: int = 60, entryZ: float = 2.0,
-                     exitZ: float = 0.5, stopZ: float = 3.5,
+                     exitZ: float = 0.5, stopZ: float = 2.5,
                      costBp: float = 0.5, notional: float = 1_000_000.0,
                      carry: bool = True, entryMode: str = "level",
                      timeStop: int = 0, costModel: str = "flat",
@@ -2697,7 +2758,7 @@ def mr_book_optimize(span: str = "all",
 
 @router.get("/api/mr/book")
 def mr_book(lookback: int = 60, entryZ: float = 2.0,
-            exitZ: float = 0.5, stopZ: float = 3.5,
+            exitZ: float = 0.5, stopZ: float = 2.5,
             costBp: float = 0.5, notional: float = 1_000_000.0,
             carry: bool = True, entryMode: str = "level",
             timeStop: int = 0, costModel: str = "flat",
