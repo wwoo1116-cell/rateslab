@@ -281,3 +281,51 @@ def test_report_number_drops_meaningless_decimals_on_large_values():
     assert _num(1.6834) == "1.6834"
     # 없는 값은 «—» 다(0 이 아니다).
     assert _num(None) == "—"
+
+
+# ── 자기상관 보정 Sharpe ─────────────────────────────────────────────────
+
+def test_sharpe_lo_reduces_to_root_q_when_days_are_independent():
+    """ρ = 0 이면 Lo 보정이 **√252 곱셈으로 되돌아온다** — 식이 맞다는 증거."""
+    import numpy as np
+    from evaluation.metrics import sharpe_lo
+
+    rng = np.random.default_rng(20260909)
+    r = pd.Series(rng.normal(0.0004, 0.01, 4000))
+    plain = float(r.mean() / r.std(ddof=0) * math.sqrt(252))
+    got = sharpe_lo(r)
+    assert got is not None
+    # iid 표본이라 ρ 가 정확히 0 은 아니다 — 5% 안이면 같은 수로 본다.
+    assert abs(got - plain) < abs(plain) * 0.05
+
+
+def test_sharpe_lo_deflates_positively_autocorrelated_series():
+    """**양의 자기상관은 √252 곱셈을 부풀린다** — 그래서 보정하면 내려간다.
+
+    MR 이 그 자리다(AR(1) +0.21 — 무포지션인 날이 절반이라 0 이 뭉치고 캐리가
+    매일 같은 방향으로 쌓인다). 한쪽만 부푼 자를 그대로 쓰면 같은 기준이 아니다.
+    """
+    import numpy as np
+    from evaluation.metrics import sharpe_lo
+
+    rng = np.random.default_rng(11)
+    e = rng.normal(0, 0.01, 4000)
+    x = np.zeros(4000)
+    for i in range(1, 4000):
+        x[i] = 0.4 * x[i - 1] + e[i]
+    r = pd.Series(x + 0.0004)
+    plain = float(r.mean() / r.std(ddof=0) * math.sqrt(252))
+    got = sharpe_lo(r)
+    assert got is not None and 0 < got < plain, f"{got} 가 {plain} 보다 작아야 해요"
+
+
+def test_sharpe_lo_is_scale_invariant():
+    """배율을 곱해도 안 변한다 — 원(₩) 계열과 비율 계열을 나란히 놓는 자리라서."""
+    import numpy as np
+    from evaluation.metrics import sharpe_lo
+
+    rng = np.random.default_rng(7)
+    r = pd.Series(rng.normal(0.0003, 0.008, 2000))
+    base = sharpe_lo(r)
+    for c in (1e-6, 1e6):
+        assert math.isclose(sharpe_lo(r * c), base, rel_tol=1e-9)

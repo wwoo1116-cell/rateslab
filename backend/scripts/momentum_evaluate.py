@@ -238,6 +238,28 @@ def verdicts_by_cost(splits: int = 16) -> None:
             _row(f"{leg} 편도 {ticks}틱", out)
 
 
+def trials_sweep(leg: str = "blend", splits: int = 16) -> None:
+    """**N 을 흔들면 판정이 뒤집히나** — 「그 레인이 N 을 확정하면」을 기다리지 않는다.
+
+    이 자리의 N=36 은 내가 그 레인의 문서를 읽어 센 값이라 그 레인이 다르게 셀 수
+    있다. 기다리는 대신 **범위를 재 두면** 그 확정이 판정을 바꿀 일인지 아닌지가
+    미리 나온다 — 「가정하지 말고 재라」의 N 판이다.
+
+        9    룩백을 안 세고 다리 구성도 안 센 최소치(신호계 × 볼 윈도)
+        36   지금 값(신호계 × 볼 윈도 × 다리 구성)
+        180  룩백 다섯까지 시행으로 센 최대치 — 그 레인의 규율상 틀린 셈이지만
+             **N 이 다섯 배가 돼도 판정이 그대로면** 이 축은 결론을 안 흔든다
+    """
+    print()
+    print(f"── N 을 흔들면 판정이 뒤집히나 (「{leg}」) ──────────────")
+    print(f"  {'시행수 N':22s} {'DSR':>8s} {'PBO':>8s} {'CDaR비':>8s}  판정")
+    for n in (9, TRIALS, 180):
+        _row(f"N = {n}", evaluate_leg(leg, trials=n, splits=splits))
+    print()
+    print("  ⚠ PBO 는 N 과 무관하다 — CSCV 는 **칸 행렬**만 먹는다. 움직이는 것은")
+    print("     DSR 뿐이고, 그것이 이 표가 답하는 물음이다.")
+
+
 def _row(label: str, out: dict, tail: str = "") -> None:
     """없는 값은 «—» 다 — 게이트에 떨어지면 CDaR 비를 **아예 안 낸다**(사양)."""
     g, r = out["gate"], out["ranking"]
@@ -257,8 +279,13 @@ def main() -> int:
     ap.add_argument("--splits", type=int, default=16)
     ap.add_argument("--ticks", type=float, default=cta.COST_TICKS)
     ap.add_argument("--costs", action="store_true", help="비용 가정 민감도")
+    ap.add_argument("--trials-sweep", action="store_true", dest="sweep",
+                    help="시행수 N 민감도")
     a = ap.parse_args()
 
+    if a.sweep:
+        trials_sweep(a.leg or "blend", a.splits)
+        return 0
     if a.costs:
         verdicts_by_cost(a.splits)
         return 0

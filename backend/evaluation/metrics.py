@@ -272,6 +272,41 @@ def cdar_ratio(returns: pd.Series, alpha: float = 0.05,
 # ── 동반 진단 — 내되 **순위에 안 쓴다** ────────────────────────────────────
 
 
+def sharpe_lo(returns: pd.Series, freq: str = "D") -> float | None:
+    """자기상관을 보정한 **연** Sharpe — Lo(2002).
+
+        SR_연 = SR_일 · q / √( q + 2·Σ_{k=1}^{q−1} (q−k)·ρ_k )
+
+    일별 SR 에 √q 를 곱하는 것은 **날들이 독립일 때만** 맞다. 이 데스크에서 그
+    자리가 레인마다 비대칭이다 — MR 은 AR(1) 이 **+0.21**(무포지션인 날이 절반이라
+    0 이 뭉치고 캐리가 매일 같은 방향으로 쌓인다), 모멘텀은 **−0.15** 다. 한쪽만
+    부푼 자를 그대로 쓰면 그건 같은 기준이 아니다.
+
+    ρ_k 는 **AR(1) 가정**으로 ρ^k 를 쓴다 — ρ 하나만 추정한다(252개를 추정하면
+    표본이 감당 못 한다). ρ = 0 이면 분모가 √q 라 √252 곱셈으로 되돌아온다.
+
+    ★ 이 식은 `scripts/lane_compare.py`(모멘텀 레인)가 자기 안에 들고 있던 것이다.
+    두 레인이 같은 자를 쓰는 것이 이 층의 일이라 여기로 올렸다 — 정의가 두 곳에
+    살면 언젠가 갈린다.
+    """
+    r = np.asarray(returns.dropna(), dtype=float)
+    if r.size < 3:
+        return None
+    sd = float(np.std(r, ddof=0))
+    if sd <= 0:
+        return None
+    rho = float(pd.Series(r).autocorr(lag=1))
+    if not np.isfinite(rho):
+        return None
+    rho = max(-0.99, min(0.99, rho))
+    q = ANN.get(freq, 252)
+    k = np.arange(1, q)
+    den = math.sqrt(q + 2.0 * float(np.sum((q - k) * rho ** k)))
+    if den <= 0:
+        return None
+    return float(np.mean(r) / sd * q / den)
+
+
 def diagnostics(returns: pd.Series, freq: str = "D") -> dict[str, Any]:
     """왜도·첨도·꼬리비·최장 낙폭·승률·평균이익/손실.
 
@@ -300,6 +335,9 @@ def diagnostics(returns: pd.Series, freq: str = "D") -> dict[str, Any]:
         "avg_loss": float(np.mean(losses)) if losses.size else None,
         "ann_vol": float(np.std(x, ddof=1) * math.sqrt(ANN.get(freq, 252))),
         "ar1": float(pd.Series(x).autocorr(lag=1)) if x.size > 2 else None,
+        #: AR(1) 을 보정한 연 SR — 위의 `ar1` 옆에 둔다. 둘을 나란히 봐야 「√252
+        #: 곱셈이 이 계열에서 얼마나 부풀렸나」가 한눈에 읽힌다.
+        "sr_annualized_lo": sharpe_lo(r, freq),
     }
 
 

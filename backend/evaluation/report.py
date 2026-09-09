@@ -78,6 +78,10 @@ def render(out: dict[str, Any]) -> str:
         f"| 평균이익 / 평균손실 | {_num(d.get('avg_win'), 6)} / {_num(d.get('avg_loss'), 6)} |",
         f"| 연환산 변동성 | {_num(d.get('ann_vol'), 4)} |",
         f"| SR(주기별 / 연환산) | {_num(d.get('sr_period'), 5)} / {_num(d.get('sr_annualized'), 3)} |",
+        # 연환산 바로 아래 둔다 — 두 수의 **차이**가 「√252 곱셈이 이 계열에서
+        # 얼마나 부풀렸나」이고, 그 부풀림이 레인마다 비대칭이라(MR +0.21 대
+        # 모멘텀 −0.15) 나란히 안 놓으면 같은 자로 견줬다고 말할 수 없다.
+        f"| 연환산 SR — AR(1) 보정(Lo 2002) | {_num(d.get('sr_annualized_lo'), 3)} |",
         f"| SR0(뽑기로 나오는 최고) | {_num(d.get('sr0_period'), 5)} |",
         f"| PBO 열화 기울기 | {_num(d.get('pbo_degradation'), 3)} |",
         f"| PBO 시험 손실확률 | {_num(d.get('pbo_prob_oos_loss'), 3)} |",
