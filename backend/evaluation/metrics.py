@@ -272,6 +272,94 @@ def cdar_ratio(returns: pd.Series, alpha: float = 0.05,
 # ── 동반 진단 — 내되 **순위에 안 쓴다** ────────────────────────────────────
 
 
+def failure_shape(*, dsr_pass: bool, pbo_pass: bool,
+                  min_trl_years: float | None, actual_years: float,
+                  configs: pd.DataFrame | None,
+                  freq: str = "D") -> dict[str, Any]:
+    """**왜 떨어졌나를 종류로 나눠 적는다** — 판정은 **안 바꾼다**
+    [OWNER 2026-09-09].
+
+    ## 왜 필요한가
+
+    이 층이 열셋을 재서 하나를 통과시켰는데, 떨어진 열둘의 사정이 서로 **다른
+    물건**이었다:
+
+        MR 낱개 아홉    SR 이 문턱에 닿을 물건이 아니다        ← 진짜로 떨어진다
+        증거금 상한판   칸이 서로 닮아 **못 고른다**            ← 제일 나쁜 칸도 SR 1.07
+        모멘텀 50/50    표본이 1.3년 모자란다                   ← 기다리면 닿는다
+
+    셋을 「미통과」 한 낱말로만 적으면 **읽는 사람이 그 차이를 못 본다.** 그래서
+    사양·문턱은 그대로 두고 **사정만** 적는다. 게이트를 느슨하게 만드는 것이
+    아니다 — 느슨하게 할지는 별건이고 그건 오너가 정한다.
+
+    ## 무엇을 근거로 하나 — **수를 먼저 내고 이름은 그 다음이다**
+
+    DSR 쪽은 **MinTRL 이 표본의 몇 배인가**로 읽는다. MinTRL 은 「지금 SR 로 이
+    문턱에 닿으려면 몇 해가 필요한가」라 그 배수가 곧 거리다.
+
+        배수 < 1.0     통과 영역
+        1.0 ~ 1.5      **표본이 곧 닿는다**
+        1.5 ~ 5        표본이 한참 모자라다
+        ≥ 5            이 SR 로는 못 닿는다
+
+    PBO 쪽은 **칸들이 서로 얼마나 닮았나**로 읽는다. 닮은 칸끼리는 표본내 1등이
+    거의 뽑기로 정해져 PBO 가 0.5 위로 뜨는데, 그건 「격자가 최적 칸을 고르나」의
+    답이지 「이 전략이 되나」의 답이 아니다(CTA 레인이 먼저 적어 둔 그 기제).
+    **제일 나쁜 칸이 그래도 좋으면 못 고르는 것이 안 아프다** — 그래서 최저 칸의
+    SR 을 같이 본다.
+
+    ⚠ 여기 나오는 문턱(0.8 · 1.5 · 5)은 **서술의 눈금**이지 게이트가 아니다.
+    그래서 이름과 함께 **근거 수를 전부** 같이 낸다 — 눈금이 마음에 안 들면
+    수를 보고 다르게 읽으면 된다.
+
+    ⚠⚠ 「칸이 닮아 못 고른다」는 **자주 뜬다** — 같은 신호 위의 파라미터 격자는
+    원래 서로 닮기 때문이다. 그것이 이 딱지의 결함이 아니라 **하려는 말**이다:
+    PBO 는 「고른 칸이 표본밖에서도 위쪽인가」를 재는데, 칸이 다 비슷하면 그
+    물음의 답이 뽑기가 된다. `min SR > 0` 을 같이 거는 이유가 그것이다 —
+    **어느 칸을 골랐어도 되는** 격자에서만 붙는 딱지다. 실제로 칸이 갈리는
+    격자(BSS-6M 은 칸별 SR 0.08~0.44)에서는 안 붙는다.
+    """
+    out: dict[str, Any] = {"shapes": [], "trl_multiple": None,
+                           "cells_median_corr": None, "cells_sr_min": None,
+                           "cells_sr_max": None, "note": None}
+    if dsr_pass and pbo_pass:
+        return out
+
+    ann = ANN.get(freq, 252)
+    if not dsr_pass:
+        if min_trl_years is not None and actual_years > 0 and math.isfinite(min_trl_years):
+            mult = min_trl_years / actual_years
+            out["trl_multiple"] = float(mult)
+            if mult < 1.5:
+                out["shapes"].append("표본이 곧 닿는다")
+            elif mult < 5.0:
+                out["shapes"].append("표본이 한참 모자라다")
+            else:
+                out["shapes"].append("이 SR 로는 못 닿는다")
+        else:
+            out["shapes"].append("DSR 을 못 쟀다")
+
+    if not pbo_pass and configs is not None and configs.shape[1] >= 2:
+        c = configs.corr().to_numpy(dtype=float)
+        off = c[np.triu_indices_from(c, 1)]
+        off = off[np.isfinite(off)]
+        sd = configs.std(ddof=1)
+        sr = (configs.mean() / sd.where(sd > 0)).dropna() * math.sqrt(ann)
+        if off.size and not sr.empty:
+            med = float(np.median(off))
+            out["cells_median_corr"] = med
+            out["cells_sr_min"] = float(sr.min())
+            out["cells_sr_max"] = float(sr.max())
+            if med >= 0.8 and sr.min() > 0:
+                out["shapes"].append("칸이 닮아 못 고른다")
+            else:
+                out["shapes"].append("칸이 갈리는데 표본밖에서 뒤집힌다")
+
+    if out["shapes"]:
+        out["note"] = " · ".join(out["shapes"])
+    return out
+
+
 def sharpe_lo(returns: pd.Series, freq: str = "D") -> float | None:
     """자기상관을 보정한 **연** Sharpe — Lo(2002).
 
@@ -409,8 +497,13 @@ def evaluate(returns: pd.Series,
     if p["pbo"] is not None and p["pbo"] >= PBO_DISCARD:
         notes.append(f"PBO {p['pbo']:.2f} ≥ {PBO_DISCARD} — 사양은 이 전략을 폐기하라고 해요.")
 
+    shape = failure_shape(dsr_pass=dsr_pass, pbo_pass=pbo_pass,
+                          min_trl_years=trl, actual_years=actual_years,
+                          configs=configs, freq=freq)
+
     return {
         "strategy_id": strategy_id,
+        "failure_shape": shape,
         "gate": {
             "dsr": d["dsr"], "dsr_pass": dsr_pass,
             "min_trl_years": trl, "actual_years": actual_years,

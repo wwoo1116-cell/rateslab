@@ -186,8 +186,11 @@ def _matrix(seed: int = 4, better: bool = True) -> pd.DataFrame:
 def test_contract_shape_is_the_agreed_one():
     out = ev.evaluate(_iid(1.5), trials=9, configs=_matrix(), is_oos_splits=8,
                       strategy_id="BSS-10Y", cost_bp_roundtrip=1.0)
-    assert set(out) == {"strategy_id", "gate", "ranking", "diagnostics",
-                        "inputs", "assumptions"}
+    # `failure_shape` 는 2026-09-09 에 **더한** 칸이다 [OWNER — 「실패 유형만
+    # 적는다」]. 게이트·순위·문턱은 한 글자도 안 바뀌었고, 「미통과」 한 낱말이
+    # 서로 다른 세 사정을 같은 말로 만들던 것을 갈라 적기만 한다.
+    assert set(out) == {"strategy_id", "failure_shape", "gate", "ranking",
+                        "diagnostics", "inputs", "assumptions"}
     assert set(out["gate"]) == {"dsr", "dsr_pass", "min_trl_years",
                                 "actual_years", "pbo", "pbo_pass", "overall_pass"}
     assert set(out["ranking"]) == {"cdar_ratio", "cdar", "ann_return_normalized",
@@ -329,3 +332,88 @@ def test_sharpe_lo_is_scale_invariant():
     base = sharpe_lo(r)
     for c in (1e-6, 1e6):
         assert math.isclose(sharpe_lo(r * c), base, rel_tol=1e-9)
+
+
+# ── 실패 «유형» — 판정은 안 바꾸고 사정만 적는다 [OWNER 2026-09-09] ────────
+
+def _cells(sr_list, n=800, rho=0.95, seed=3):
+    """칸 행렬 하나 — 공통 인자 `rho` 로 칸끼리 닮은 정도를 조절한다."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    common = rng.normal(0, 0.01, n)
+    cols = {}
+    for j, target in enumerate(sr_list):
+        own = rng.normal(0, 0.01, n)
+        x = rho * common + math.sqrt(max(0.0, 1 - rho ** 2)) * own
+        x = (x - x.mean()) / x.std(ddof=1)
+        cols[f"c{j}"] = x * 0.01 + target / math.sqrt(252) * 0.01
+    return pd.DataFrame(cols)
+
+
+def test_failure_shape_is_empty_when_the_gate_passes():
+    """통과했으면 «어떻게 떨어졌나» 가 없다 — 없는 사정을 지어내지 않는다."""
+    from evaluation.metrics import failure_shape
+
+    got = failure_shape(dsr_pass=True, pbo_pass=True, min_trl_years=1.0,
+                        actual_years=5.0, configs=None)
+    assert got["shapes"] == [] and got["note"] is None
+
+
+def test_failure_shape_reads_homogeneous_cells_as_cannot_pick():
+    """**칸이 닮았고 제일 나쁜 칸도 좋으면** 「못 고른다」다 — 과적합이 아니다.
+
+    증거금 상한판이 그 자리였다(칸 상관 0.90 · 칸별 SR 1.07~1.32). 어느 칸을
+    골랐어도 됐다는 뜻이라 못 고르는 것이 안 아프다.
+    """
+    from evaluation.metrics import failure_shape
+
+    m = _cells([1.1, 1.2, 1.3, 1.15, 1.25, 1.05], rho=0.97)
+    got = failure_shape(dsr_pass=True, pbo_pass=False, min_trl_years=None,
+                        actual_years=6.0, configs=m)
+    assert got["shapes"] == ["칸이 닮아 못 고른다"]
+    assert got["cells_median_corr"] > 0.8
+    assert got["cells_sr_min"] > 0
+
+
+def test_failure_shape_reads_diverging_cells_as_a_real_signal():
+    """**칸이 갈리는데** 표본밖에서 뒤집히면 그건 딴 이야기다(BSS-6M 이 그 자리)."""
+    from evaluation.metrics import failure_shape
+
+    m = _cells([0.1, 0.4, -0.3, 0.2, -0.1, 0.35], rho=0.2)
+    got = failure_shape(dsr_pass=True, pbo_pass=False, min_trl_years=None,
+                        actual_years=6.0, configs=m)
+    assert got["shapes"] == ["칸이 갈리는데 표본밖에서 뒤집힌다"]
+
+
+def test_failure_shape_grades_the_sample_gap_by_multiple():
+    """필요 표본이 실제의 **몇 배**인가로 나눈다 — 1.3년과 1,043년은 다른 말이다."""
+    from evaluation.metrics import failure_shape
+
+    def shape(trl, actual):
+        return failure_shape(dsr_pass=False, pbo_pass=True, min_trl_years=trl,
+                             actual_years=actual, configs=None)["shapes"]
+
+    assert shape(10.74, 9.40) == ["표본이 곧 닿는다"]        # 모멘텀 50/50
+    assert shape(15.03, 9.40) == ["표본이 한참 모자라다"]     # 모멘텀 추세
+    assert shape(1049.0, 6.54) == ["이 SR 로는 못 닿는다"]    # BSS-6M
+    # SR ≤ SR0 이면 MinTRL 이 아예 없다 — 그것도 사정이다.
+    assert shape(None, 6.54) == ["DSR 을 못 쟀다"]
+
+
+def test_failure_shape_never_touches_the_verdict():
+    """이 함수는 **아무것도 통과시키지 않는다** — 사양은 그대로다.
+
+    오너 결정이 「실패 유형만 적는다」였고, 딱지가 게이트를 건드리는 순간 그
+    결정을 어긴 것이 된다. `evaluate` 의 판정이 딱지와 무관함을 여기서 잰다.
+    """
+    import numpy as np
+    from evaluation.metrics import evaluate
+
+    rng = np.random.default_rng(5)
+    r = pd.Series(rng.normal(0.0002, 0.01, 900))
+    m = _cells([1.1, 1.2, 1.3], rho=0.99)
+    out = evaluate(r, trials=50, configs=m, is_oos_splits=8)
+    assert "failure_shape" in out
+    assert out["gate"]["overall_pass"] == (out["gate"]["dsr_pass"]
+                                           and out["gate"]["pbo_pass"])

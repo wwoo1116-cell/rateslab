@@ -54,6 +54,24 @@ def render(out: dict[str, Any]) -> str:
     ]
     if not g["overall_pass"]:
         lines += [f"> 순위는 안 매긴다 — {r['reason_if_null']}", ""]
+        # **어떻게 떨어졌나** — 판정은 안 바꾸고 사정만 적는다 [OWNER 2026-09-09].
+        # 「미통과」 한 낱말로만 적으면 「SR 이 닿을 물건이 아니다」와 「표본이
+        # 1.3년 모자라다」와 「칸이 닮아 못 고른다」가 같은 말로 읽힌다.
+        sh = out.get("failure_shape") or {}
+        if sh.get("note"):
+            lines += [f"**어떻게 떨어졌나 — {sh['note']}**", ""]
+            ev = []
+            if sh.get("trl_multiple") is not None:
+                ev.append(f"필요 표본이 실제의 **{_num(sh['trl_multiple'], 1)}배**")
+            if sh.get("cells_median_corr") is not None:
+                ev.append(
+                    f"칸 사이 상관 중앙 **{_num(sh['cells_median_corr'], 2)}** · "
+                    f"칸별 연 SR **{_num(sh['cells_sr_min'], 2)}"
+                    f"~{_num(sh['cells_sr_max'], 2)}**")
+            if ev:
+                lines += ["- " + "\n- ".join(ev), "",
+                          "> 이 눈금(상관 0.8 · 배수 1.5·5)은 **서술**이지 게이트가 "
+                          "아니다. 문턱도 판정도 안 바뀐다.", ""]
 
     lines += [
         "## 순위 지표",

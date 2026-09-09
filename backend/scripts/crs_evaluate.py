@@ -238,6 +238,67 @@ def compare(splits: int = 16) -> None:
     print("     모멘텀은 DSR 로 떨어져 있고 그 사실이 이 수들로 지워지지 않는다.")
 
 
+def mix(splits: int = 16) -> None:
+    """★**두 기준이 왜 갈리나** — 섞는 비율·창을 흔들어 본다 [OWNER 2026-09-09].
+
+    상한판과 모멘텀 50/50 의 상관이 −0.02 라 위험 반반으로 섞으면 AR 보정 SR 이
+    1.006 → 1.267 로 오르는데, **CDaR 비는 3.264 → 2.091 로 떨어진다.** 두 기준이
+    반대 답을 내므로 「섞자/말자」를 지금 정하면 유리한 쪽을 고른 것이 된다.
+
+    그래서 먼저 잰다. 비율 w 는 **위험 기준**이다 — 각 계열을 자기 표준편차로 나눈
+    뒤 `w·MR + (1−w)·모멘텀` 으로 섞는다(원 크기로 섞으면 큰 쪽이 이긴다).
+
+    CDaR 비는 **분자와 분모가 따로 움직인다**(`연환산 수익 / 최악 5% 낙폭 평균`).
+    둘을 갈라 내야 「수익이 안 늘어서」인지 「꼬리가 나빠져서」인지가 갈린다 —
+    그것이 이 함수가 답하려는 물음이다.
+    """
+    from evaluation.metrics import cdar_ratio, sharpe_lo, vol_normalize
+
+    mb = _lane()
+    crs, _f = net_returns(mb, REGISTERED_LOT_UK, "bound")
+    crs.index = [d.date().isoformat() for d in crs.index]
+    try:
+        from scripts import momentum_evaluate as me
+    except ImportError:
+        print("  ⚠ 모멘텀 레인이 이 트리에 없어 못 쟀습니다.")
+        return
+    series, rolls, macro = me._inputs()
+    if macro is None:
+        print("  ⚠ 매크로 신호가 없어 50/50 을 못 세웠습니다.")
+        return
+    mom = me.returns_of(me.legs_of(series, rolls, macro, cache={})["blend"])
+
+    common = sorted(set(crs.index) & set(mom.index))
+    a, b = crs.loc[common], mom.loc[common]
+    za, zb = a / a.std(ddof=0), b / b.std(ddof=0)
+
+    def line(label: str, x: pd.Series) -> None:
+        n = vol_normalize(x.reset_index(drop=True))[0]
+        c = cdar_ratio(n)
+        lo = sharpe_lo(x)
+        print(f"  {label:16s} {(lo if lo is not None else float('nan')):8.3f} "
+              f"{(c['cdar_ratio'] if c['cdar_ratio'] is not None else float('nan')):8.3f} "
+              f"{c['ann_return']:9.4f} {c['cdar']:8.4f}")
+
+    print()
+    print(f"── 섞는 비율 (위험 기준) · 창 {common[0]}~{common[-1]} · {len(common)}봉 ──")
+    print(f"  {'w(MR 몫)':16s} {'AR보정SR':>8s} {'CDaR비':>8s} "
+          f"{'연수익*':>9s} {'CDaR*':>8s}")
+    for w in (0.0, 0.25, 0.5, 0.75, 1.0):
+        line(f"w = {w:.2f}", w * za + (1 - w) * zb)
+    print("  * 변동성 정규화 뒤의 수 — CDaR 비의 분자와 분모다.")
+
+    #: 창을 반으로 잘라 본다 — 위 곡선이 한쪽 반쪽의 사정이면 결론이 아니다.
+    half = len(common) // 2
+    for name, sl in (("앞절반", slice(0, half)), ("뒷절반", slice(half, None))):
+        print()
+        print(f"── {name} ({common[sl][0]}~{common[sl][-1]}) ──────────────")
+        print(f"  {'w(MR 몫)':16s} {'AR보정SR':>8s} {'CDaR비':>8s} "
+              f"{'연수익*':>9s} {'CDaR*':>8s}")
+        for w in (0.0, 0.5, 1.0):
+            line(f"w = {w:.2f}", (w * za + (1 - w) * zb).iloc[sl])
+
+
 def _row(label: str, out: dict, tail: str = "") -> None:
     g, r = out["gate"], out["ranking"]
 
@@ -258,10 +319,15 @@ def main() -> int:
     ap.add_argument("--splits", type=int, default=16)
     ap.add_argument("--vs", action="store_true",
                     help="상한판 MR 과 모멘텀 50/50 의 수준 비교")
+    ap.add_argument("--mix", action="store_true",
+                    help="섞는 비율·창을 흔들어 두 기준이 갈리는 이유를 본다")
     a = ap.parse_args()
 
     if a.vs:
         compare(a.splits)
+        return 0
+    if a.mix:
+        mix(a.splits)
         return 0
 
     mb = _lane()
