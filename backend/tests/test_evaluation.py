@@ -583,3 +583,49 @@ def test_ranking_carries_both_intervals():
     rk = out["ranking"]
     assert rk["cdar_ratio_ci"][0] is not None
     assert rk["sr_lo_ci"][0] is not None
+
+
+# ── ⑥ 순위 기준은 **CDaR 비다** — 오너가 닫은 결정 [OWNER 2026-09-09] ──────
+
+def test_the_ranking_basis_is_the_cdar_ratio_and_that_is_a_decision():
+    """순위값은 **변동성 정규화 CDaR 비**다. 「ㄱ 으로 간다」가 그 결정이다.
+
+    ## 이 시험이 지키는 것
+
+    2026-09-09 에 근거 셋이 모두 모인 상태에서 오너가 **바꾸지 않기로** 정했다 —
+    문헌의 원리(유효 표본 = 군집 수 · Ferro & Segers 2003), 문헌의 눈금(POT 독립
+    초과 30~50 · 15 미만 불안정), 그리고 우리 수(꼬리가 나온 낙폭 사건 2~5개 ·
+    CDaR 비 구간 폭 6~18배 대 Lo 보정 SR 2~8배). **Lo 보정 SR 이 3~5배 좁다는
+    사실을 알고도 CDaR 비를 순위로 둔 것**이라, 다음 세션이 「좁은 쪽이 낫잖아」로
+    조용히 갈아끼우면 그건 개선이 아니라 **결정을 어기는 것**이다.
+
+    ## 다시 열리는 조건
+
+    표본이 길어져 낙폭 사건이 쌓이면(문헌 눈금으로 15개, 우리는 지금 2~5개) 이
+    물음이 다시 선다. 그때는 이 시험을 고치는 것이 아니라 **오너에게 다시 묻는다.**
+
+    ⚠ 화면(`StrategyWindow`·`BookWindow`)의 자동 채택 기준도 같은 `cdarRatio` 다
+    (`guards/mr-optimize.test.ts` 가 그쪽을 잰다). **둘이 갈리면 안 된다** — 화면이
+    고르는 기준과 평가층이 순위 매기는 기준은 한 자여야 한다.
+    """
+    import numpy as np
+
+    #: 게이트를 **통과하는** 판이어야 순위값이 나온다(떨어지면 사양대로 `None`).
+    r = _iid(2.5, n=1400)
+    out = ev.evaluate(r, trials=2, configs=_matrix(), is_oos_splits=8)
+    rk = out["ranking"]
+    assert out["gate"]["overall_pass"], "이 시험은 통과한 판에서 순위값을 본다"
+
+    # ① 순위값 자체가 CDaR 비다 — Lo 보정 SR 은 «구간» 으로만 옆에 선다.
+    scaled = ev.vol_normalize(r)[0]
+    assert rk["cdar_ratio"] == pytest.approx(
+        ev.cdar_ratio(scaled)["cdar_ratio"], rel=1e-12)
+    assert rk["reference"] == ev.CDAR_REFERENCE
+
+    # ② Lo 보정 SR 은 순위값 자리에 **없다** — 구간과 진단으로만 나간다.
+    assert "sr_lo" not in rk and "sharpe" not in rk
+    assert rk["sr_lo_ci"][0] is not None, "그래도 구간은 나란히 낸다"
+
+    # ③ 그 결정의 근거가 판정문에 **같이** 실린다(사건 수 · 두 구간).
+    for key in ("tail_episodes", "total_episodes", "cdar_ratio_ci", "sr_lo_ci"):
+        assert key in rk, f"{key} 가 빠지면 순위값이 근거 없이 서게 된다"
