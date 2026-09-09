@@ -261,3 +261,23 @@ def test_vol_normalization_drops_the_warmup_instead_of_leaving_it_raw():
     #: 변동성이 **0 인 구간**도 NaN 이다 — 0 에서 목표로 키울 배수가 없다.
     flat, _ = ev.vol_normalize(pd.Series([0.001] * 100), min_obs=60)
     assert flat.isna().all()
+
+
+# ── 보고서의 수 적기 ─────────────────────────────────────────────────────
+
+def test_report_number_drops_meaningless_decimals_on_large_values():
+    """이 층은 **비율 계열도 원(₩) 계열도** 먹는다 — 자릿수가 그 사정을 따라야 한다.
+
+    모멘텀 레인은 자본 분모를 안 만들기로 해서(그 레인의 결정 1) 원 손익이 그대로
+    들어온다. 넷째 자리를 고정해 두면 「532,493.628808」 같은 줄이 나오는데, 원
+    단위에서 소수점 아래 여섯 자리는 **뜻이 없는 자리**다.
+    """
+    from evaluation.report import _num
+
+    assert _num(532493.628808) == "532,494"
+    assert _num(-478099.649493) == "-478,100"
+    # 비율 자리는 그대로 — 게이트가 읽는 수는 넷째 자리가 뜻을 가진다.
+    assert _num(0.9381) == "0.9381"
+    assert _num(1.6834) == "1.6834"
+    # 없는 값은 «—» 다(0 이 아니다).
+    assert _num(None) == "—"

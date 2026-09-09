@@ -96,7 +96,13 @@ DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
 # 보드가 13행 → 25행이고 `asof` 에 셋째 소스(`irs`)가 붙었다. 같은 SQL 이 다른
 # 모양을 만든다 — 안 올리면 v16 캐시가 13행 보드를 계속 내주고, 화면은 새 계열을
 # **아예 안 그리면서** 아무 에러도 안 낸다(v13·v16 에서 이미 두 번 밟은 그 함정).
-SCHEMA_VERSION = 17
+# v18 (2026-09-09): 통합 장부의 봉에 **`cost`(그날 문 비용 · 지불액 양수)** 가
+# 붙었다. 화면이 쓰는 칸은 아니고 **다른 레인이 읽는 칸**이다 — 모멘텀 레인이
+# 공통 창에서 MR 의 비용 쿠션을 다시 재려다 「장부 캐시가 일별 비용을 안 들고
+# 있다」로 막혀 있었다(`HANDOFF-momentum` §11-2). 안 올리면 v17 캐시가 그 칸 없는
+# 장부를 계속 내주고, 그쪽 스크립트는 **KeyError 도 아니고 그냥 못 재는** 상태로
+# 남는다.
+SCHEMA_VERSION = 18
 
 
 def data_hash(path: Path, asof: "object | None" = None) -> str:

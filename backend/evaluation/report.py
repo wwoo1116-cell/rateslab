@@ -17,13 +17,21 @@ REPORTS = Path(__file__).resolve().parent / "reports"
 
 
 def _num(v: Any, nd: int = 4, suffix: str = "") -> str:
-    """**없는 값은 «—» 다** — 0 으로 적으면 「쟀는데 0」과 구별이 안 된다."""
+    """**없는 값은 «—» 다** — 0 으로 적으면 「쟀는데 0」과 구별이 안 된다.
+
+    소수 자리는 **크기를 보고** 정한다. 이 층은 비율 계열(액면 대비)도 먹고 원(₩)
+    계열도 먹는데(모멘텀 레인은 자본 분모를 안 만들기로 했다), 넷째 자리를 고정하면
+    원 계열에서 「532,493.628808」 같은 줄이 나온다 — 소수점 아래가 뜻을 잃은
+    자리다. 1,000 을 넘으면 정수로 적는다.
+    """
     if v is None:
         return "—"
     if isinstance(v, bool):
         return "예" if v else "아니오"
     if isinstance(v, (int,)) and not isinstance(v, bool):
         return f"{v:,}{suffix}"
+    if abs(v) >= 1000:
+        return f"{v:,.0f}{suffix}"
     return f"{v:,.{nd}f}{suffix}"
 
 

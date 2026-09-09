@@ -325,3 +325,29 @@ def test_blocked_and_gated_are_summed_separately():
     assert out["blocked"]["spells"] == sum(leg["r"]["blocked"]["spells"] for leg in legs)
     assert out["blocked"]["spells"] > 0          # 한 방향뿐이면 실제로 막힌다
     assert out["gated"] == {"spells": 0, "days": 0}
+
+
+def test_points_carry_the_cost_paid_as_a_positive_number():
+    """봉마다 **문 비용**이 실린다 — 다른 레인이 공통 창에서 다시 재려면 필요하다.
+
+    두 가지를 잰다.
+
+    ① **부호는 지불액(양수)** 이다. 엔진 봉의 `barCost` 는 MR 에서 음수인데 CTA
+       엔진에서는 양수라 규약이 반대다(`scripts/lane_costs` 가 그 함정을 적어 뒀고,
+       실제로 한 번 10.5% 를 13.3% 로 잘못 낸 적이 있다). 페이로드를 읽는 쪽이 그
+       사정을 알 리 없으므로 이 칸에서는 부호를 없앤다.
+    ② **합이 손익분기 배수와 맞는다.** 봉의 비용을 다 더한 것이 장부가 실제로 문
+       비용이고, `breakevenCostMult = 1 + 총손익/문 비용` 이 그 위에 선다. 두 수가
+       갈리면 화면의 손익분기가 딴 비용을 말하고 있는 것이다.
+    """
+    legs = _three()
+    out = mrbook.aggregate(legs, notional=PIN["notional"],
+                           cost_bp=PIN["cost_bp"], dynamic_cost=False)
+    costs = [p["cost"] for p in out["points"]]
+    assert costs, "봉이 없어요"
+    assert all(c >= 0 for c in costs), "비용이 음수로 실렸어요"
+    assert sum(costs) > 0, "비용이 통째로 0 이에요"
+
+    paid = sum(costs)
+    mult = out["summary"]["breakevenCostMult"]
+    assert mult == pytest.approx(1.0 + out["summary"]["totalPnl"] / paid, abs=1e-3)

@@ -492,8 +492,14 @@ def aggregate(legs: list[dict[str, Any]], *, notional: float,
         "from": dates[0] if dates else None,
         "to": dates[-1] if dates else None,
         "bars": len(dates),
+        # ⚠ `cost` 는 **지불액(양수)** 이다. 엔진 봉의 `barCost` 는 MR 에서 음수고
+        # CTA 엔진에서는 양수라 규약이 반대인데(`scripts/lane_costs` 가 그 함정을
+        # 적어 뒀다), 페이로드를 읽는 쪽이 그 사정을 알 리 없으므로 여기서 부호를
+        # 없앤다. 이 칸이 있어야 다른 레인이 **공통 창에서** MR 의 비용 쿠션을
+        # 다시 잰다 — 없어서 못 재던 자리다(`HANDOFF-momentum` §11-2).
         "points": [{"t": dates[i], "pnl": round(daily[i], 2),
-                    "cum": round(cum[i], 2), "legs": live[i]}
+                    "cum": round(cum[i], 2), "legs": live[i],
+                    "cost": round(-barcost[i], 2)}
                    for i in range(len(dates))],
         "trades": trades,
         "legs": per,

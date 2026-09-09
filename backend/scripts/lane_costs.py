@@ -59,7 +59,15 @@ def tick_to_bp(tenor: str, ticks: float = 0.5) -> tuple[float, float, float]:
 
 def cta_book(cost_ticks: float = 0.5, signal: str = "macross",
              lookbacks: tuple[int, ...] = (20, 250)) -> dict | None:
-    """CTA 북 한 판. 레인이 아직 없으면 `None` — 조용히 0 을 내지 않는다."""
+    """CTA 북 한 판 — **엔진 기본 인자**로 돈다. 레인이 없으면 `None`.
+
+    ⚠ 이것은 **등록된 북이 아니다.** 룩백 둘에 북 변동성 목표가 없다. 처음 이
+    자리를 잴 때 등록된 북이 뭔지 몰라 엔진 기본값으로 쟀고, 그 수(연 회전 30.98회 ·
+    비용비 10.5%)를 오너에게 보고했다. 등록된 북은 `registered_book()` 이다 —
+    룩백 다섯에 북 전체 변동성 목표가 걸려 있고, 그것으로 재면 **27.86회 · 8.4%**
+    다. 결론(회전은 이쪽이 훨씬 크고 단가는 MR 이 훨씬 비싸다)은 안 바뀌지만
+    수는 바뀌었으므로 둘 다 남겨 둔다.
+    """
     try:
         from app import ctabacktest as cta
     except ImportError:
@@ -74,6 +82,24 @@ def cta_book(cost_ticks: float = 0.5, signal: str = "macross",
              for d in futures.roll_days(list(f.series[t].dates))}
     return cta.book_simulate(inst, signal=signal, lookbacks=lookbacks,
                              roll_days=rolls, cost_ticks=cost_ticks)
+
+
+def registered_book(cost_ticks: float = 0.5) -> dict | None:
+    """**등록된 북** — 모멘텀 레인의 추세 다리 그 자체다.
+
+    그 레인이 사전등록에 동결한 북이 곧 이 데스크의 CTA 다(신호 macross 하나 ·
+    룩백 다섯 등가중 · 북 전체 변동성 목표). 그래서 「CTA 를 잰다」는 말은 이
+    북을 잰다는 뜻이고, `momentum_evaluate` 가 그 북을 다시 세우는 자리라
+    여기서는 그 자리를 부른다 — 재구성이 두 곳에 살면 갈린다.
+    """
+    try:
+        from app import momentum as mo
+        from scripts import momentum_evaluate as me
+    except ImportError:
+        return None
+    series, rolls, _macro = me._inputs()
+    return me._run(series, rolls, signal=mo.SIGNAL, vol_window=mo.VOL_WINDOW,
+                   ticks=cost_ticks)
 
 
 def turnover(pos: dict[str, list[float]], n: int, years: float) -> tuple[float, float]:
@@ -121,46 +147,67 @@ def verdicts_by_cost() -> None:
     억지로 물리지 않는 이유는 그것이 **없는 비용을 가정하는 것**이기 때문이다 —
     규율의 뜻은 「한쪽에 유리한 가정을 쓰지 말라」이지 「다른 상품에 같은 수를
     적으라」가 아니다. 대신 위에서 두 비용을 **같은 단위로 옮겨** 견줄 수 있게 했다.
-    """
-    import pandas as pd
 
-    from evaluation import metrics as ev
+    ★ CTA 쪽은 `momentum_evaluate` 에 넘긴다. 처음 판은 여기서 칸 셋(신호계)만으로
+    급히 세웠는데, 그 격자는 **등록된 북의 격자가 아니었다** — 그 레인의 축은
+    신호계 셋 × 볼 윈도 셋이고 시행수도 다리 구성까지 세야 한다. 그 자리가 생겼으니
+    여기서 다시 정의하지 않는다.
+    """
     from scripts import mr_evaluate as mre
 
     print()
     print("── 비용 가정을 흔들면 판정이 뒤집히나 ──────────────────")
-    print(f"  {'레인/가정':22s} {'DSR':>8s} {'PBO':>8s} {'CDaR비':>8s}  판정")
+    print(f"  {'레인/가정':24s} {'DSR':>8s} {'PBO':>8s} {'CDaR비':>8s}  판정")
     for bp in (0.25, 0.5, 1.0):
         mre.BASE["costBp"] = bp
-        out = mre.evaluate_leg("BSS-2Y")
-        g, r = out["gate"], out["ranking"]
-        cd = r["cdar_ratio"]
-        print(f"  {'MR BSS-2Y 편도 ' + str(bp) + 'bp':22s} {g['dsr']:8.4f} "
-              f"{g['pbo']:8.4f} {(cd if cd is not None else float('nan')):8.3f}  "
-              f"{'통과' if g['overall_pass'] else '미통과'}")
+        _verdict_row(f"MR BSS-2Y 편도 {bp}bp", mre.evaluate_leg("BSS-2Y"))
     mre.BASE["costBp"] = 0.5
 
+    try:
+        from scripts import momentum_evaluate as me
+    except ImportError:
+        print("  ⚠ 모멘텀/CTA 레인이 없어 못 쟀습니다.")
+        return
     for ticks in (0.25, 0.5, 1.0):
-        mat = cta_matrix(ticks)
-        if mat is None:
-            print("  ⚠ CTA 레인이 없어 못 쟀습니다.")
-            return
-        base = cta_book(cost_ticks=ticks)
-        rets = pd.Series([p["dailyPnl"] for p in base["points"]])
-        #: 시행수 — 그 레인이 고른 축은 **신호 셋**이다. 매크로판까지 세면 더
-        #: 커지는데 그건 그 레인의 사전등록이 정할 값이라 여기서 안 정한다.
-        out = ev.evaluate(rets, trials=len(mat.columns), configs=mat,
-                          is_oos_splits=8, strategy_id=f"CTA-{ticks}tick",
-                          cost_bp_roundtrip=tick_to_bp("3Y", ticks)[0] * 2,
-                          assumptions=["시행수 = 신호 셋(그 레인이 고른 축). "
-                                       "매크로판·룩백 앙상블은 안 셌다 — 그 레인의 "
-                                       "사전등록이 정할 값이다."])
-        g, r = out["gate"], out["ranking"]
-        cd = r["cdar_ratio"]
-        print(f"  {'CTA 북 편도 ' + str(ticks) + '틱':22s} {g['dsr']:8.4f} "
-              f"{(g['pbo'] if g['pbo'] is not None else float('nan')):8.4f} "
-              f"{(cd if cd is not None else float('nan')):8.3f}  "
-              f"{'통과' if g['overall_pass'] else '미통과'}")
+        bp, _y, _f = tick_to_bp("3Y", ticks)
+        _verdict_row(f"CTA 추세 편도 {ticks}틱(3Y {bp:.3f}bp)",
+                     me.evaluate_leg("trend", ticks=ticks))
+
+
+def _verdict_row(label: str, out: dict) -> None:
+    """없는 값은 «—» 다 — 게이트에 떨어지면 CDaR 비를 아예 안 낸다(사양)."""
+    g, r = out["gate"], out["ranking"]
+
+    def num(v, w, f):
+        return f"{v:{w}{f}}" if v is not None else f"{'—':>{w}}"
+
+    print(f"  {label:24s} {num(g['dsr'], 8, '.4f')} {num(g['pbo'], 8, '.4f')} "
+          f"{num(r['cdar_ratio'], 8, '.3f')}  "
+          f"{'통과' if g['overall_pass'] else '미통과'}")
+
+
+def _measure(name: str, out: dict | None) -> None:
+    """북 한 판의 회전율·비용 — 두 북에 **같은 자**를 댄다."""
+    if out is None:
+        print(f"  ⚠ {name}: 그 레인이 이 트리에 없어요 — 못 쟀습니다.")
+        return
+    pts, pos, dates = out["points"], out["pos"], out["dates"]
+    n = len(pts)
+    years = n / 252
+    net = sum(p["dailyPnl"] for p in pts)
+    # ⚠ **`barCost` 의 부호 규약이 두 엔진에서 반대다.** MR(`mrbacktest`)은 음수로
+    # 싣고(`paid = -sum(barCost)`) CTA(`ctabacktest`)는 **양수**로 싣는다
+    # (`"barCost": -cost`, cost <= 0). 한 자로 견주는 자리에서 이걸 안 보면 비용이
+    # 손익에서 **두 번 빠지거나** 더해져 조용히 틀린다 — 그래서 절댓값으로 센다.
+    paid = abs(sum(p["barCost"] for p in pts))
+    gross = net + paid
+    turns, avg_face = turnover(pos, n, years)
+    print(f"  {name}")
+    print(f"    {dates[0]}~{dates[-1]} · {n}봉 · {years:.2f}년")
+    print(f"    순손익 {net:,.0f}원 · 비용 {paid:,.0f}원 · 비용전 {gross:,.0f}원")
+    print(f"    비용/비용전 = {paid / abs(gross) * 100:.1f}%")
+    print(f"    평균 |액면|(포지션 선 날) {avg_face:,.0f}원 · "
+          f"**연 회전 {turns:.2f}회(편도)**")
 
 
 def main() -> int:
@@ -171,26 +218,13 @@ def main() -> int:
               f"→ 편도 0.5틱 = **{bp:.3f}bp**")
     print(f"  MR 은 편도 {MR_COST_BP}bp — 스프레드 패키지(국고+IRS) 기준")
 
-    print("\n── CTA 북 실측 ─────────────────────────────────────────")
-    out = cta_book()
-    if out is None:
-        print("  ⚠ CTA 레인(`app/ctabacktest.py`)이 이 트리에 없어요 — 못 쟀습니다.")
-        return 0
-    pts, pos, dates = out["points"], out["pos"], out["dates"]
-    n = len(pts)
-    years = n / 252
-    net = sum(p["dailyPnl"] for p in pts)
-    # ⚠ **`barCost` 의 부호 규약이 두 엔진에서 반대다.** MR(`mrbacktest`)은 음수로
-    # 싣고(`paid = -sum(barCost)`) CTA(`ctabacktest`)는 **양수**로 싣는다
-    # (`"barCost": -cost`, cost ≤ 0). 한 자로 견주는 자리에서 이걸 안 보면 비용이
-    # 손익에서 **두 번 빠지거나** 더해져 조용히 틀린다 — 그래서 절댓값으로 센다.
-    paid = abs(sum(p["barCost"] for p in pts))
-    gross = net + paid
-    turns, avg_face = turnover(pos, n, years)
-    print(f"  {dates[0]}~{dates[-1]} · {n}봉 · {years:.2f}년")
-    print(f"  순손익 {net:,.0f}원 · 비용 {paid:,.0f}원 · 비용전 {gross:,.0f}원")
-    print(f"  비용/비용전 = {paid / abs(gross) * 100:.1f}%")
-    print(f"  평균 |액면|(포지션 선 날) {avg_face:,.0f}원 · **연 회전 {turns:.2f}회(편도)**")
+    print()
+    print("── CTA 북 실측 ─────────────────────────────────────────")
+    _measure("등록된 북(룩백 다섯 · 북 변동성 목표) — 이것이 이 데스크의 CTA 다",
+             registered_book())
+    print()
+    _measure("엔진 기본 인자 북(룩백 둘) — 처음 보고한 수가 이것이었다",
+             cta_book())
     verdicts_by_cost()
     return 0
 
