@@ -185,14 +185,17 @@ def _matrix(seed: int = 4, better: bool = True) -> pd.DataFrame:
 
 def test_contract_shape_is_the_agreed_one():
     out = ev.evaluate(_iid(1.5), trials=9, configs=_matrix(), is_oos_splits=8,
-                      strategy_id="BSS-10Y", cost_bp_roundtrip=1.0)
+                      strategy_id="BSS-10Y", cost_bp_roundtrip=1.0,
+                      placebo={"p": 0.01})
     # `failure_shape` 는 2026-09-09 에 **더한** 칸이다 [OWNER — 「실패 유형만
     # 적는다」]. 게이트·순위·문턱은 한 글자도 안 바뀌었고, 「미통과」 한 낱말이
     # 서로 다른 세 사정을 같은 말로 만들던 것을 갈라 적기만 한다.
     assert set(out) == {"strategy_id", "failure_shape", "gate", "ranking",
                         "diagnostics", "inputs", "assumptions"}
+    #: 위약 두 칸이 2026-09-10 에 더해졌다 [OWNER] — 게이트 셋째다.
     assert set(out["gate"]) == {"dsr", "dsr_pass", "min_trl_years",
-                                "actual_years", "pbo", "pbo_pass", "overall_pass"}
+                                "actual_years", "pbo", "pbo_pass",
+                                "placebo_p", "placebo_pass", "overall_pass"}
     # 순위 블록에 **자기 근거의 두께**가 더해졌다(2026-09-09) — 그 비율이 몇 개의
     # 낙폭 «사건» 위에 서 있는지. Calmar → CDaR 로 옮긴 이유가 「MaxDD 는 단일관측」
     # 이었으므로, CDaR 이 실제로 사건 둘 위에 서 있으면 그것도 적혀야 한다.
@@ -219,6 +222,54 @@ def test_gate_is_an_and_and_ranking_is_withheld_when_it_fails():
     assert out["ranking"]["reason_if_null"]
     #: 낙폭 자체는 **서술**이라 게이트와 무관하게 낸다.
     assert out["ranking"]["cdar"] is not None
+
+
+def test_the_gate_thresholds_are_the_owner_spec():
+    """★사양 값 자체를 못 박는다 [OWNER 2026-09-10].
+
+    2026-09-10 에 PBO 문턱이 0.20 에서 **0.50** 으로 옮겨졌고 위약이 **신설**되었다.
+    두 변경은 한 벌이다 — PBO 를 완화한 자리를 위약이 메운다. 어느 한쪽만 남으면
+    게이트가 헐거워지므로, 이 시험이 둘을 같이 지킨다.
+    """
+    assert ev.DSR_PASS == 0.95
+    assert ev.PBO_PASS == 0.50 == ev.PBO_DISCARD
+    assert ev.PLACEBO_PASS == 0.05
+
+
+def test_missing_placebo_does_not_pass_the_gate():
+    """위약을 **못 잰 것**은 통과가 아니다 — PBO 와 같은 규율이다.
+
+    이 층은 위약을 스스로 못 만든다(수익 계열로는 포지션을 못 되돌린다). 그래서
+    안 넘어오면 「쟀는데 통과」와 구별되도록 미통과로 두고 사유를 적는다.
+    """
+    out = ev.evaluate(_iid(3.0), trials=1, configs=_matrix(), is_oos_splits=8)
+    assert out["gate"]["dsr_pass"] is True
+    assert out["gate"]["pbo_pass"] is True
+    assert out["gate"]["placebo_p"] is None
+    assert out["gate"]["overall_pass"] is False
+    assert "위약" in out["ranking"]["reason_if_null"]
+
+
+def test_placebo_gate_lets_a_clean_book_through_and_stops_a_noisy_one():
+    out_ok = ev.evaluate(_iid(3.0), trials=1, configs=_matrix(), is_oos_splits=8,
+                         placebo={"p": 0.01})
+    out_no = ev.evaluate(_iid(3.0), trials=1, configs=_matrix(), is_oos_splits=8,
+                         placebo={"p": 0.06})
+    assert out_ok["gate"]["overall_pass"] is True
+    assert out_no["gate"]["overall_pass"] is False
+    assert "위약 p" in out_no["ranking"]["reason_if_null"]
+
+
+def test_selection_is_a_diagnostic_and_never_touches_the_verdict():
+    """전진 선택 손익은 **게이트가 아니다**(§17-4) — 손해로 나와도 판정 불변."""
+    kw = dict(trials=1, configs=_matrix(), is_oos_splits=8, placebo={"p": 0.01})
+    base = ev.evaluate(_iid(3.0), **kw)
+    worse = ev.evaluate(_iid(3.0), selection={"picked": 1.0, "fixed": 9.0,
+                                              "delta": -8.0, "basis": "CDaR 비"},
+                        **kw)
+    assert base["gate"] == worse["gate"]
+    assert worse["diagnostics"]["selection_delta"] == -8.0
+    assert worse["diagnostics"]["selection_basis"] == "CDaR 비"
 
 
 def test_missing_config_matrix_does_not_pass_the_gate():
@@ -611,8 +662,11 @@ def test_the_ranking_basis_is_the_cdar_ratio_and_that_is_a_decision():
     import numpy as np
 
     #: 게이트를 **통과하는** 판이어야 순위값이 나온다(떨어지면 사양대로 `None`).
+    #: 위약은 2026-09-10 에 게이트 셋째가 되었다 — 이 시험이 보는 것은 순위 기준이지
+    #: 위약이 아니므로 통과하는 값을 넣어 준다.
     r = _iid(2.5, n=1400)
-    out = ev.evaluate(r, trials=2, configs=_matrix(), is_oos_splits=8)
+    out = ev.evaluate(r, trials=2, configs=_matrix(), is_oos_splits=8,
+                      placebo={"p": 0.01})
     rk = out["ranking"]
     assert out["gate"]["overall_pass"], "이 시험은 통과한 판에서 순위값을 본다"
 

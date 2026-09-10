@@ -14,6 +14,8 @@ import math
 from pathlib import Path
 from typing import Any
 
+from . import metrics as mt
+
 REPORTS = Path(__file__).resolve().parent / "reports"
 
 
@@ -57,7 +59,10 @@ def render(out: dict[str, Any]) -> str:
         (f"- DSR **{_num(g['dsr'])}** ({'통과' if g['dsr_pass'] else '미통과'} "
          f"· 문턱 0.95)"),
         (f"- PBO **{_num(g['pbo'])}** ({'통과' if g['pbo_pass'] else '미통과'} "
-         f"· 문턱 0.20)"),
+         f"· 문턱 {mt.PBO_PASS})"),
+        (f"- 위약(순환이동) p **{_num(g.get('placebo_p'), 4)}** "
+         f"({'통과' if g.get('placebo_pass') else '미통과'} "
+         f"· 문턱 {mt.PLACEBO_PASS})"),
         (f"- 필요 표본 **{_num(g['min_trl_years'], 2, '년')}** 대 실제 "
          f"**{_num(g['actual_years'], 2, '년')}**"),
         "",
@@ -136,6 +141,20 @@ def render(out: dict[str, Any]) -> str:
         f"| SR0(뽑기로 나오는 최고) | {_num(d.get('sr0_period'), 5)} |",
         f"| PBO 열화 기울기 | {_num(d.get('pbo_degradation'), 3)} |",
         f"| PBO 시험 손실확률 | {_num(d.get('pbo_prob_oos_loss'), 3)} |",
+        # 위약의 «속» — 게이트는 p 만 보지만, 위약 중앙이 실제에 가까우면 p 가
+        # 0.05 아래여도 아슬아슬하다는 뜻이라 같이 적는다.
+        (f"| 위약 이동 수 / 중앙 SR / 95백분위 | "
+         f"{_num(d.get('placebo_shifts'), 0)} / "
+         f"{_num(d.get('placebo_median_sr'), 3)} / "
+         f"{_num(d.get('placebo_p95_sr'), 3)} |"),
+        # ★**게이트가 아니다**(§17-4). PBO 가 확률로 말하던 것을 원화로 적는 자리 —
+        # 「격자에서 고르면 얼마 잃나」. 고정 규약의 근거가 여기 남는다.
+        (f"| 전진 선택 손익(고르기 / 고정) | "
+         f"{_num(d.get('selection_picked'), 0)} / "
+         f"{_num(d.get('selection_fixed'), 0)} |"),
+        (f"| 그 차이 — **고르면 얼마 잃나** | {_num(d.get('selection_delta'), 0)}"
+         + (f" ({d['selection_basis']} 기준)" if d.get("selection_basis") else "")
+         + " |"),
         "",
         "## 입력",
         "",

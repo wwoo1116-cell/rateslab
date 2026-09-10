@@ -40,11 +40,28 @@ ANN: dict[str, int] = {"D": 252, "W": 52, "M": 12}
 #: 오일러-마스케로니 상수 — SR0 의 가우시안 최대값 근사에 든다.
 EULER = 0.5772156649015329
 
-#: 게이트 문턱 — 오너 사양의 값 그대로.
+#: 게이트 문턱.
 DSR_PASS = 0.95
-PBO_PASS = 0.20
-#: 「폐기」 문턱. 이 위면 고른 칸이 동전던지기보다 못하다는 뜻이다.
+
+#: ★**PBO 문턱이 0.20 에서 0.50 으로 옮겨졌다** [OWNER 2026-09-10].
+#:
+#: 근거 둘이다. 첫째, **찾아본 값을 두 번 물고 있었다** — DSR 의 시행수 N 이 이미
+#: 격자 탐색을 값으로 물리는데(N=72 면 허들이 0.52 → 0.705), PBO 0.20 이 같은 탐색을
+#: 한 번 더 벌했다. 둘째, 이 레인은 격자에서 **고르지 않는다**(등록된 칸 고정).
+#: PBO 가 묻는 「고른 칸이 표본 밖에서도 위인가」는 우리가 하지 않는 행위에 관한
+#: 물음이고, 실제로 그 행위의 값은 §17-4 가 원화로 쟀다(고르면 −1,562만).
+#:
+#: 0.50 은 새 숫자가 아니라 **사양이 이미 갖고 있던 「폐기」 눈금**이다. 그 위면
+#: 고른 칸이 동전던지기보다 못하다는 뜻이라 게이트로서의 뜻이 분명하다.
+#: ⚠ 이 완화는 그 자리를 비워 두지 않는다 — 아래 위약이 그 자리에 들어왔다.
+PBO_PASS = 0.50
 PBO_DISCARD = 0.50
+
+#: ★**순환이동 무작위화 검정** [OWNER 2026-09-10 신설]. 자세한 근거는
+#: `evaluation/randomization.py` 의 머리 주석에 있다. 요점은 이 검정이 **표본길이에
+#: 안 매달린다**는 것이다 — DSR 의 허들은 4분의 3이 표본길이에서 오는데(§16-1)
+#: 이 검정은 정규성·시행수·표본길이 어느 것도 안 쓴다.
+PLACEBO_PASS = 0.05
 #: 순위 지표의 기준선(사양) — 게이트가 아니라 읽는 눈금이다.
 CDAR_REFERENCE = 1.0
 
@@ -588,6 +605,8 @@ def evaluate(returns: pd.Series,
              sr_var: float | None = None,
              strategy_id: str = "unknown",
              cost_bp_roundtrip: float | None = None,
+             placebo: dict[str, Any] | None = None,
+             selection: dict[str, Any] | None = None,
              assumptions: list[str] | None = None) -> dict[str, Any]:
     """게이트 둘 + 순위 하나 + 동반 진단. 계약은 `HANDOFF` §9 그대로다.
 
@@ -602,6 +621,14 @@ def evaluate(returns: pd.Series,
     `cost_bp_roundtrip` 은 **계산에 안 쓴다** — 수익 계열이 이미 비용 차감 후다.
     그래도 입력에 실려 나가는 이유는 오너 규율이다: 전략마다 다른 비용 가정을
     쓰지 않으려면 무엇을 가정한 수인지가 보고서에 **적혀** 있어야 한다.
+
+    `placebo` 는 `randomization.placebo()` 의 반환이다. **이 층은 그것을 스스로 못
+    만든다** — 수익 계열만으로는 포지션 경로를 되돌릴 수 없고, 위약은 포지션을
+    민다. 그래서 북을 가진 호출부가 재서 넘긴다. 안 넘기면 **통과가 아니다**
+    (「못 잰 것은 0 이 아니다」 — PBO 와 같은 규율).
+
+    `selection` 은 전진 선택의 손익이다(§17-4). **게이트가 아니라 진단**이다 —
+    「고르면 얼마 잃나」를 원화로 적어 고정 규약의 근거를 남긴다.
     """
     notes = list(assumptions or [])
     r = returns.dropna().astype(float)
@@ -626,6 +653,11 @@ def evaluate(returns: pd.Series,
         p = pbo_cscv(configs, is_oos_splits)
     pbo_pass = bool(p["pbo"] is not None and p["pbo"] < PBO_PASS)
 
+    #: 위약 — 못 재면 통과가 아니다. 사유는 아래 `reason` 에 실린다.
+    pl = placebo or {"p": None, "why": "위약을 안 넘겨받았어요 — 이 층은 수익 계열만 "
+                                       "으로는 포지션을 못 되돌려서 직접 못 재요"}
+    placebo_pass = bool(pl.get("p") is not None and pl["p"] < PLACEBO_PASS)
+
     scaled, vol_estimator = vol_normalize(r, target_vol, freq)
     c = cdar_ratio(scaled, freq=freq)
     # ★**순위값에 오차막대를 붙인다.** 종속 꼬리 관측을 독립처럼 세면 표준오차가
@@ -637,7 +669,7 @@ def evaluate(returns: pd.Series,
                                 freq=freq)["cdar_ratio"])
     ci_sr = block_bootstrap_ci(r, lambda y: sharpe_lo(y, freq))
 
-    overall = dsr_pass and pbo_pass
+    overall = dsr_pass and pbo_pass and placebo_pass
     reason = None
     if not overall:
         bad = []
@@ -647,6 +679,10 @@ def evaluate(returns: pd.Series,
         if not pbo_pass:
             bad.append(f"PBO {p['pbo']:.4f} ≥ {PBO_PASS}" if p["pbo"] is not None
                        else f"PBO 를 못 쟀어요({p['why']})")
+        if not placebo_pass:
+            bad.append(f"위약 p {pl['p']:.4f} ≥ {PLACEBO_PASS}"
+                       if pl.get("p") is not None
+                       else f"위약을 못 쟀어요({pl.get('why')})")
         reason = " · ".join(bad)
     if p["pbo"] is not None and p["pbo"] >= PBO_DISCARD:
         notes.append(f"PBO {p['pbo']:.2f} ≥ {PBO_DISCARD} — 사양은 이 전략을 폐기하라고 해요.")
@@ -662,6 +698,7 @@ def evaluate(returns: pd.Series,
             "dsr": d["dsr"], "dsr_pass": dsr_pass,
             "min_trl_years": trl, "actual_years": actual_years,
             "pbo": p["pbo"], "pbo_pass": pbo_pass,
+            "placebo_p": pl.get("p"), "placebo_pass": placebo_pass,
             "overall_pass": overall,
         },
         "ranking": {
@@ -687,7 +724,17 @@ def evaluate(returns: pd.Series,
                         "sr0_period": d["sr0"],
                         "pbo_degradation": p["degradation"],
                         "pbo_prob_oos_loss": p["prob_oos_loss"],
-                        "pbo_splits": p["n_splits"]},
+                        "pbo_splits": p["n_splits"],
+                        #: 위약의 «속»— 게이트는 p 만 보지만 읽는 사람은 위약이
+                        #: 얼마나 세게 잡았는지를 알아야 p 를 읽을 수 있다.
+                        "placebo_shifts": pl.get("n_shifts"),
+                        "placebo_median_sr": pl.get("placebo_median"),
+                        "placebo_p95_sr": pl.get("placebo_p95"),
+                        #: 전진 선택 — **게이트가 아니라 진단**이다(§17-4).
+                        "selection_picked": (selection or {}).get("picked"),
+                        "selection_fixed": (selection or {}).get("fixed"),
+                        "selection_delta": (selection or {}).get("delta"),
+                        "selection_basis": (selection or {}).get("basis")},
         "inputs": {
             "trials": trials, "cost_bp": cost_bp_roundtrip,
             "target_vol": target_vol, "vol_estimator": vol_estimator,

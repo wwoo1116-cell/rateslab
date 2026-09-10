@@ -55,6 +55,7 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sqlalchemy import text
 
@@ -63,7 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import ctabacktest as cta                              # noqa: E402
 from app import momentum as mo                                  # noqa: E402
 from app.mysqldb import engine                                  # noqa: E402
-from evaluation import metrics as ev, report                    # noqa: E402
+from evaluation import metrics as ev, randomization as rz, report  # noqa: E402
 from scripts import momentum_evaluate as me                     # noqa: E402
 from scripts.lane_costs import tick_to_bp                       # noqa: E402
 
@@ -178,14 +179,62 @@ def _sr_var(mat: pd.DataFrame) -> float | None:
     return v if v > 0 else None
 
 
+def _placebo_for(which: str, *, cost_bp: float = IRS_COST_BP,
+                 ticks: float = cta.COST_TICKS, mask_index=None) -> dict:
+    """게이트 셋째 — 순환이동 위약 [OWNER 2026-09-10].
+
+    이 층은 위약을 스스로 못 만든다(수익 계열만으로는 포지션을 못 되돌린다).
+    북을 가진 이 자리가 재서 넘긴다.
+    """
+    if which == "IRS":
+        series = load_irs_series()
+        rolls: set = set()
+        tk = cost_bp / cta.TICK
+        book = cta.book_simulate(
+            series, signal=mo.SIGNAL, lookbacks=mo.LOOKBACKS,
+            vol_window=mo.VOL_WINDOW, target_book_vol_krw=mo.TARGET_VOL,
+            book_vol_window=mo.BOOK_VOL_WINDOW, roll_days=set(),
+            continuous=True, cost_ticks=tk)
+    else:
+        series, rolls = mo._load_prices()
+        tk = ticks
+        book = cta.book_simulate(
+            series, signal=mo.SIGNAL, lookbacks=mo.LOOKBACKS,
+            vol_window=mo.VOL_WINDOW, target_book_vol_krw=mo.TARGET_VOL,
+            book_vol_window=mo.BOOK_VOL_WINDOW, roll_days=rolls,
+            continuous=True, cost_ticks=tk)
+    price = {k: dict(zip(*series[k])) for k in series}
+    pl = rz.plumbing(book["dates"], price, rolls, tk, cta.TICK)
+    keep = None if mask_index is None else set(mask_index)
+    mask = (None if keep is None
+            else np.array([t in keep for t in book["dates"]]))
+    #: 이동 하한 = 최장 룩백. 그보다 짧게 밀면 신호가 덜 끊긴다.
+    return rz.placebo(pl, book["pos"], shift_min=max(mo.LOOKBACKS), mask=mask)
+
+
+def _selection_for(mat: pd.DataFrame) -> dict:
+    """진단 — 격자에서 매년 고르면 얼마 잃나(§17-4). **게이트가 아니다.**
+
+    고르는 자는 오너가 정한 순위기준(CDaR 비)이다. 표본내 SR 로 고르면 부호가
+    뒤집히는 다리가 있어서(§17-4), 우리가 «실제로 쓰는» 자로 재야 뜻이 있다.
+    """
+    from scripts import hard_test as ht                       # noqa: PLC0415
+    w = ht.walk_forward(mat, score=ht._score_cdar)
+    picked, fixed = float(w["picked"].sum()), float(w["fixed"].sum())
+    return {"picked": picked, "fixed": fixed, "delta": picked - fixed,
+            "basis": "CDaR 비[OWNER]"}
+
+
 def evaluate_side(name: str, mat: pd.DataFrame, *, trials: int = TRIALS,
                   splits: int = 16, cost_bp_rt: float,
+                  placebo: dict | None = None, selection: dict | None = None,
                   notes: list[str]) -> dict:
     """한 계기의 판정문. 대표 계열은 그 레인의 기본 칸(`macross-vw60`)이다."""
     return ev.evaluate(
         mat[BASE_COL].reset_index(drop=True), trials=trials,
         is_oos_splits=splits, configs=mat, sr_var=_sr_var(mat),
         strategy_id=name, cost_bp_roundtrip=cost_bp_rt,
+        placebo=placebo, selection=selection,
         assumptions=notes + [
             "자본 분모를 안 만들었다 [OWNER 2026-09-09] — 수익 계열이 원(₩) 손익 "
             "그대로다. 두 북 다 `target_book_vol_krw` 로 **같은 ₩ 변동성**에 "
@@ -226,12 +275,16 @@ def head_to_head(splits: int = 16, ticks: float = cta.COST_TICKS,
     bp10, _y, _f = tick_to_bp("10Y", ticks)
     o_irs = evaluate_side(
         "Momentum-trend-IRS", irs, splits=splits, cost_bp_rt=cost_bp * 2,
+        placebo=_placebo_for("IRS", cost_bp=cost_bp, mask_index=irs.index),
+        selection=_selection_for(irs),
         notes=[f"IRS 편도 {cost_bp}bp [OWNER] — 왕복 {cost_bp * 2}bp. 합성가가 "
                f"아니라 par 금리(-bp)를 그대로 넣었고 회계는 bp × 명목이다. "
                f"롤이 없다."])
     o_fut = evaluate_side(
         "Momentum-trend-FUT-on-IRS-window", fut, splits=splits,
         cost_bp_rt=bp3 * 2,
+        placebo=_placebo_for("선물", ticks=ticks, mask_index=fut.index),
+        selection=_selection_for(fut),
         notes=[f"선물 편도 {ticks}틱 = 3Y {bp3:.3f}bp · 10Y {bp10:.3f}bp. "
                f"`Momentum-trend.md` 와 같은 북이지만 **IRS 달력과 교집합한 창** "
                f"위에서 다시 쟀다 — 그래서 숫자가 조금 다르다."])
