@@ -68,10 +68,16 @@ def test_fee_arithmetic():
 
 
 def test_thresholds_are_untouched():
-    """③ 이 스크립트는 사양을 안 바꾼다."""
+    """③ 이 스크립트는 사양을 안 바꾼다.
+
+    ⚠ 값 자체는 2026-09-10 에 **오너가** 바꿨다(PBO 0.20 → 0.50 · 위약 신설 · §21).
+    이 시험이 지키는 것은 그 값이 아니라 **교정 스크립트가 값을 건드리지 않는다**는
+    것이다. 사양 값 자체는 `test_evaluation.test_the_gate_thresholds_are_the_owner_spec`
+    이 못 박는다.
+    """
     assert ev.DSR_PASS == 0.95
-    assert ev.PBO_PASS == 0.20
-    assert ev.PBO_DISCARD == 0.50
+    assert ev.PBO_PASS == 0.50 == ev.PBO_DISCARD
+    assert ev.PLACEBO_PASS == 0.05
 
 
 def test_every_peer_carries_a_source_and_a_period():
