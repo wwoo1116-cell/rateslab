@@ -191,8 +191,28 @@ def show_peers() -> None:
     print("  ⚠ 우리 수는 **보수 전**이라 이대로 견주면 우리 쪽이 유리하다. 아래가 그 정정이다.")
 
 
+def before_fees(sr_net: float, vol: float) -> float:
+    """보수 차감 «전» 으로 되돌린다 — `after_fees` 의 역함수.
+
+    ## 왜 이 방향도 필요한가 [OWNER 2026-09-10]
+
+    첫 판은 **우리 수를 보수 차감 후로 내리는 한 방향만** 냈다. 그건 「투자자가
+    지수를 사면 받는 것」과 견주는 자리이고, 이 데스크는 지수를 사는 쪽이 아니라
+    **전략을 굴리는 쪽**이다. 그러니 반대 방향, 즉 업계 지수를 **보수 전으로
+    되돌려** 우리 자기자본 북과 같은 자리에 놓는 비교도 같이 내야 대칭이 된다.
+
+    두 방향은 서로 다른 물음에 답한다.
+
+        후(after)  「지수를 사는 것과 우리 북 중 무엇이 나은가」 — 원화에서는 살
+                   지수가 없으므로 실행 가능한 대안이 아니다
+        전(before) 「업계가 «하는 일» 과 우리가 «하는 일» 중 무엇이 나은가」 —
+                   자기자본 북의 채택 판단은 이쪽이다
+    """
+    return sr_net / (1.0 - PERF_FEE) + MGMT_FEE / vol
+
+
 def show_fees() -> None:
-    """2/20 을 물려 SG CTA 지수와 같은 단위로 옮긴다."""
+    """양방향으로 단위를 맞춘다 — 우리를 내리고, 업계를 올린다."""
     print()
     print("── 같은 수수료 단위로 옮기면 (2/20) ──────────────────────")
     print(f"  {'다리':10s} {'총 연 SR':>9s} " +
@@ -203,8 +223,25 @@ def show_fees() -> None:
         cells = " ".join(f"{after_fees(g, v):>12.3f}" for v in VOL_CASES)
         print(f"  {name:10s} {g:>9.3f} {cells}")
     print()
-    print("  견줄 자리: SG CTA 지수 0.61 · CTA 펀드 장수 수렴 0.50 (둘 다 보수 차감 후).")
+    print("  ── 반대 방향: 업계 눈금을 **보수 전**으로 되돌리면 (우리 북과 같은 자리) ──")
+    print(f"  {'눈금':24s} {'보수 후':>8s} " +
+          " ".join(f"{'σ=' + f'{v:.0%}' + ' 보수 전':>13s}" for v in VOL_CASES))
+    for label, sr_ann, _period, fee, _src in PEERS:
+        if "차감 후" not in fee:
+            continue
+        cells = " ".join(f"{before_fees(sr_ann, v):>13.3f}" for v in VOL_CASES)
+        print(f"  {label:24s} {sr_ann:>8.2f} {cells}")
+    print()
+    for name, mat in _legs().items():
+        sr, _sk, _exku, _n, _var = moments(mat)
+        print(f"  우리 {name} 다리(보수 없음) {sr * math.sqrt(ANN):>8.3f}")
+    print()
+    print("  ★두 방향이 **같은 말을 한다**: 우리를 내리면 0.52~0.57 대 지수 0.61,")
+    print("     업계를 올리면 우리 0.851 대 지수 0.89~0.96. 어느 쪽으로 맞추든")
+    print("     **우리가 살짝 아래이고, 구별할 수 있을 만큼은 아니다**(§17-3 참조).")
     print("  ⚠ σ 는 이 레인이 일부러 안 정한 값이다 — 고른 것이 아니라 범위다.")
+    print("  ⚠ 단, 업계 눈금은 **50~70개 시장**에 분산된 포트폴리오다. 시장당으로 보면")
+    print("     문헌 평균이 0.4 이므로 계기 둘짜리 0.851 은 그쪽 기준으로는 위다.")
 
 
 def main() -> int:
