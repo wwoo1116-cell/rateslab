@@ -6,6 +6,19 @@ r"""왜 스왑 다리가 선물 다리보다 1.8배를 버나 [OWNER 2026-09-10]
     python -m scripts.why_irs --decomp    # ② 스왑 스프레드로 쪼갠다 ★결정적
     python -m scripts.why_irs --trend     # ③ 계열 자체가 더 추세를 그리나(분산비)
     python -m scripts.why_irs --roll      # ④ 롤이 얼마나 무나
+    python -m scripts.why_irs --quotes    # ⑥ 뭉갠 고시·비동시 마감 — 오진 둘을 닫는다
+
+## ⚠★정정 [OWNER 2026-09-10 「원화채권이 CTD가 아닌데」]
+
+첫 판에서 격차의 기제로 **「CTD 가 바뀐다」**를 적었는데 **틀렸다.
+원화 국채선물에는 CTD 가 없다.** KRX 국채선물은 **현금결제**이고 기초자산은
+표면금리 5% · 6개월 이표의 **가상 국고채**다. 최종결제기준가격은 거래소가 지정한
+**최종결제기준채권**의 최종거래일 수익률로 계산한다 — 인도가 없으니 «가장 싼
+인도채권»을 고를 여지 자체가 없다. 미국 국채선물의 인도 옵션을 원화에 그대로
+옮겨 적은 오류였다.
+
+**측정은 그대로 서고 이름표만 틀렸다.** ⑥ 이 그 정정 뒤에 남는 오진 둘(현물 고시가
+뭉갠 것 아닌가 · 마감 시각이 어긋난 것 아닌가)을 닫는다.
 
 ## 무엇을 설명해야 하나
 
@@ -381,21 +394,90 @@ def adjust() -> None:
     print("   · 롤일 잔차σ 배수가 크면 조정이 롤에서 뭔가를 남긴 것이다. 다만")
     print("     **롤일을 빼도 VR 이 안 돌아오면** 롤은 범인이 아니다(38일뿐이다).")
     print("   · 잔차 자체의 VR 이 1 보다 **한참 작으면** 그 잔차는 평균회귀하는")
-    print("     고주파 잡음이다 — 베이시스·CTD 가 그런 모양이다.")
+    print("     고주파 잡음이다 — 선물 베이시스(수급)가 그런 모양이다.")
     print("   · 그 잡음은 **1일 분산(분모)만 부풀리고** q일 분산(분자)에는 안 쌓인다.")
     print("     그래서 VR 이 내려간다. 전략에는 두 번 문다 — 신호가 잡음 위에서")
     print("     만들어지고, 크기 조절이 쓰는 실현변동성도 같이 부푼다.")
 
 
+
+
+# ── ⑥ 고시가 뭉갠 것 아닌가 · 비동시 마감 아닌가 ─────────────────────────
+
+def _xcorr(a: np.ndarray, b: np.ndarray, lag: int) -> float:
+    """corr(a_t, b_(t+lag)). **양의 lag 이면 b 가 뒤**다 — 부호를 헷갈리면 「누가
+    먼저인가」가 통째로 뒤집힌다(그래서 시험이 심어 둔 선후로 잰다)."""
+    if lag < 0:
+        return float(np.corrcoef(a[-lag:], b[:lag])[0, 1])
+    if lag > 0:
+        return float(np.corrcoef(a[:-lag], b[lag:])[0, 1])
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+def quotes() -> None:
+    """세 계열의 «고시 성질» 과 **선후 관계** — 두 가지 흔한 오진을 닫는다.
+
+    ## 왜 이 자리가 필요한가 [OWNER 2026-09-10 정정]
+
+    ⑤ 까지의 결론(「선물 계열이 문제다」)에 내가 **틀린 기제**를 붙였었다 —
+    「CTD 가 바뀐다」. **원화 국채선물에는 CTD 가 없다.** KRX 국채선물은 현금결제
+    이고 기초자산은 표면금리 5%·6개월 이표의 **가상 국고채**이며, 최종결제기준가격은
+    거래소가 지정한 **최종결제기준채권**의 최종거래일 수익률로 계산한다. 인도가
+    없으니 «가장 싼 인도채권»을 고를 여지도 없다.
+
+    그래서 기제를 다시 세우기 전에, 남아 있는 두 오진 후보부터 닫는다.
+
+        ㄱ 현물이 뭉개진 것 아닌가   민평·고시 계열은 매끄러워지기 쉽다. 그러면
+                                 현물의 VR 이 «인공적으로» 올라간 것이고, 「선물이
+                                 문제」가 아니라 「현물이 거짓말」이 된다.
+        ㄴ 마감 시각이 다른 것 아닌가  선물 종가와 채권 고시 시각이 어긋나면 하루짜리
+                                 선후가 생기고, 그것만으로 분산비가 갈린다.
+
+    ㄱ 은 일 Δ 의 AR(1)·AR(2) 와 «Δ=0 인 날»로, ㄴ 은 **교차상관을 앞뒤로** 재서 본다.
+    """
+    irs, fut, days = series_pair()
+    ktb = load_ktb_bp()
+    have = [d for d in days if all(d in ktb[t] for t in TENORS)]
+    keep = [i for i, d in enumerate(days) if d in set(have)]
+    ser = {}
+    print()
+    print(f"── ⑥ 고시 성질과 선후 관계 ({len(have):,}봉) ──")
+    print(f"  {'계열':14s} {'일Δ σ':>8s} {'AR(1)':>8s} {'AR(2)':>8s} {'Δ=0 비율':>9s}")
+    for lab, x in (("IRS 3Y", np.asarray(irs["3Y"][1])[keep]),
+                   ("국고 현물 3Y", np.asarray([ktb["3Y"][d] for d in have])),
+                   ("국고 선물 3Y", np.asarray(fut["3Y"][1])[keep]),
+                   ("IRS 10Y", np.asarray(irs["10Y"][1])[keep]),
+                   ("국고 현물 10Y", np.asarray([ktb["10Y"][d] for d in have])),
+                   ("국고 선물 10Y", np.asarray(fut["10Y"][1])[keep])):
+        d = np.diff(np.asarray(x, dtype=float))
+        ser[lab] = d
+        a1 = float(np.corrcoef(d[1:], d[:-1])[0, 1])
+        a2 = float(np.corrcoef(d[2:], d[:-2])[0, 1])
+        print(f"  {lab:14s} {d.std(ddof=1):>8.3f} {a1:>+8.3f} {a2:>+8.3f} "
+              f"{float(np.mean(d == 0)):>9.3f}")
+    print("  → 뭉개진 고시면 AR(1) 이 양수로 크고 Δ=0 인 날이 많아야 한다.")
+
+    print()
+    print("  교차상관 — 현물이 선물을 «따라가나»(비동시 마감의 서명)")
+    for t in TENORS:
+        c, f_ = (ser[f"국고 현물 {t}"], ser[f"국고 선물 {t}"])
+        c = (c - c.mean()) / c.std()
+        f_ = (f_ - f_.mean()) / f_.std()
+        cells = [f"{lag:+d}:{_xcorr(c, f_, lag):+.3f}"
+                 for lag in (-2, -1, 0, 1, 2)]
+        print(f"  {t:5s} corr(Δ현물_t, Δ선물_(t+k)) — " + " · ".join(cells))
+    print("  → 선후가 있으면 k=−1 이나 +1 이 «양수로» 커야 한다.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    for flag in ("cross", "decomp", "trend", "roll", "adjust"):
+    for flag in ("cross", "decomp", "trend", "roll", "adjust", "quotes"):
         ap.add_argument(f"--{flag}", action="store_true")
     a = ap.parse_args()
     todo = [f for f, on in ((cross, a.cross), (decomp, a.decomp),
                             (trend, a.trend), (roll, a.roll),
-                            (adjust, a.adjust)) if on]
-    for f in todo or (cross, decomp, trend, roll, adjust):
+                            (adjust, a.adjust), (quotes, a.quotes)) if on]
+    for f in todo or (cross, decomp, trend, roll, adjust, quotes):
         f()
     return 0
 

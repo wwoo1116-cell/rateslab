@@ -149,3 +149,37 @@ def test_vr_horizons_cover_the_lookback_bundle():
     from app import momentum as mo
     assert min(w.VR_Q) <= min(mo.LOOKBACKS)
     assert max(w.VR_Q) >= max(mo.LOOKBACKS)
+
+
+# ── ⑥ 선후 관계 ─────────────────────────────────────────────────────────
+
+def test_xcorr_lag_sign_is_not_flipped():
+    """b 가 a 를 **하루 늦게** 따라가면 corr(a_t, b_(t+1)) 이 커야 한다.
+
+    부호를 헷갈리면 「현물이 선물을 따라간다」와 그 반대가 뒤집힌다 — 그 한 칸이
+    「비동시 마감이다/아니다」를 가르는 자리다.
+    """
+    rng = np.random.default_rng(7)
+    a = rng.normal(0, 1, 3000)
+    b = np.concatenate(([0.0], a[:-1]))          # b 는 a 의 하루 지연
+    assert w._xcorr(a, b, 1) > 0.9
+    assert abs(w._xcorr(a, b, 0)) < 0.1
+    assert abs(w._xcorr(a, b, -1)) < 0.1
+
+
+def test_xcorr_at_zero_is_plain_correlation():
+    rng = np.random.default_rng(8)
+    a = rng.normal(0, 1, 500)
+    b = a * 2.0 + rng.normal(0, 0.1, 500)
+    assert w._xcorr(a, b, 0) == pytest.approx(float(np.corrcoef(a, b)[0, 1]))
+
+
+def test_krw_bond_futures_have_no_ctd_note_is_pinned():
+    """★[OWNER 2026-09-10] 원화 국채선물은 현금결제라 CTD 가 없다.
+
+    이 사실을 모듈 머리에 못 박아 둔다 — 다음 세션이 미국 국채선물의 인도 옵션을
+    다시 옮겨 적지 않도록. 문서가 지워지면 이 시험이 깨진다.
+    """
+    doc = w.__doc__ or ""
+    assert "CTD 가 없다" in doc
+    assert "현금결제" in doc
