@@ -193,6 +193,9 @@ def placebo_for(mb, lot_uk: int, funding: str) -> dict:
 
     #: 이동 하한 = 그 레인의 z 룩백. 없으면 60봉(BSS 규약).
     lo = int(getattr(mb, "LOOKBACK", 60))
+    #: ⚠ 비용 0 판을 **못 만든다.** 체결비용이 `L` 안에 이미 들어 있어 떼어낼 수가
+    #: 없다. 그 레인이 비용 전 손익을 따로 내주기 전에는 이 다리가 게이트의
+    #: 위약을 못 넘는다 — 「못 잰 것은 0 이 아니다」.
     return rz.placebo(pl, pos, shift_min=lo, sign_only=False, repnl_fn=repnl)
 
 

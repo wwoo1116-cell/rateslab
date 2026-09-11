@@ -225,12 +225,14 @@ def placebo_for(leg: str, series, rolls, macro, *, ticks: float = cta.COST_TICKS
 
     t_book = book_of(None)
     pl = rz.plumbing(t_book["dates"], price, rolls, tk, cta.TICK)
+    #: 비용 0 판 — 게이트는 둘 다 넘어야 통과다.
+    pl_g = rz.plumbing(t_book["dates"], price, rolls, 0.0, cta.TICK)
     keep = {p["t"] for p in _cut(t_book["points"], start)}
 
     if leg == "trend":
         mask = np.array([d in keep for d in t_book["dates"]])
         return rz.placebo(pl, t_book["pos"], shift_min=max(mo.LOOKBACKS),
-                          mask=mask)
+                          mask=mask, pl_gross=pl_g)
 
     if macro is None:
         return {"p": None, "n_shifts": 0, "real_sr": 0.0,
@@ -242,25 +244,38 @@ def placebo_for(leg: str, series, rolls, macro, *, ticks: float = cta.COST_TICKS
 
     if leg == "macro":
         return rz.placebo(pl, m_book["pos"], shift_min=max(mo.LOOKBACKS),
-                          mask=mask)
+                          mask=mask, pl_gross=pl_g)
 
     # blend — 두 북을 같은 k 로 밀고 손익을 반씩
-    def blended(pos_t, pos_m):
-        return 0.5 * rz.repnl(pl, pos_t) + 0.5 * rz.repnl(pl, pos_m)
+    def blended(which, pos_t, pos_m):
+        return 0.5 * rz.repnl(which, pos_t) + 0.5 * rz.repnl(which, pos_m)
 
-    real = rz._sr(blended(t_book["pos"], m_book["pos"])[mask])
     lo = max(mo.LOOKBACKS)
     shifts = list(range(lo, pl["n"] - lo, rz.SHIFT_STEP))
+    real = rz._sr(blended(pl, t_book["pos"], m_book["pos"])[mask])
     if len(shifts) < 20:
         return {"p": None, "n_shifts": len(shifts), "real_sr": real,
                 "why": f"이동이 {len(shifts)}가지뿐이라 p 의 바닥이 너무 높아요"}
-    a = np.array([rz._sr(blended(rz.shifted(t_book["pos"], k, sign_only=True),
-                                 rz.shifted(m_book["pos"], k, sign_only=True))[mask])
-                  for k in shifts])
+
+    def dist(which):
+        return np.array([
+            rz._sr(blended(which,
+                           rz.shifted(t_book["pos"], k, sign_only=True),
+                           rz.shifted(m_book["pos"], k, sign_only=True))[mask])
+            for k in shifts])
+
+    a = dist(pl)
     beat = int((a >= real).sum())
+    real_g = rz._sr(blended(pl_g, t_book["pos"], m_book["pos"])[mask])
+    g = dist(pl_g)
+    beat_g = int((g >= real_g).sum())
     return {"p": (beat + 1) / (len(a) + 1), "n_shifts": len(a), "real_sr": real,
             "beat": beat, "placebo_median": float(np.median(a)),
             "placebo_p95": float(np.percentile(a, 95)),
+            "p_gross": (beat_g + 1) / (len(g) + 1), "real_sr_gross": real_g,
+            "beat_gross": beat_g,
+            "placebo_gross_median": float(np.median(g)),
+            "placebo_gross_p95": float(np.percentile(g, 95)),
             "sign_only": True, "why": None}
 
 

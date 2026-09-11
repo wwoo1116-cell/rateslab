@@ -186,7 +186,7 @@ def _matrix(seed: int = 4, better: bool = True) -> pd.DataFrame:
 def test_contract_shape_is_the_agreed_one():
     out = ev.evaluate(_iid(1.5), trials=9, configs=_matrix(), is_oos_splits=8,
                       strategy_id="BSS-10Y", cost_bp_roundtrip=1.0,
-                      placebo={"p": 0.01})
+                      placebo={"p": 0.01, "p_gross": 0.01})
     # `failure_shape` 는 2026-09-09 에 **더한** 칸이다 [OWNER — 「실패 유형만
     # 적는다」]. 게이트·순위·문턱은 한 글자도 안 바뀌었고, 「미통과」 한 낱말이
     # 서로 다른 세 사정을 같은 말로 만들던 것을 갈라 적기만 한다.
@@ -195,7 +195,7 @@ def test_contract_shape_is_the_agreed_one():
     #: 위약 두 칸이 2026-09-10 에 더해졌다 [OWNER] — 게이트 셋째다.
     assert set(out["gate"]) == {"dsr", "dsr_pass", "min_trl_years",
                                 "actual_years", "pbo", "pbo_pass",
-                                "placebo_p", "placebo_pass", "overall_pass"}
+                                "placebo_p", "placebo_p_gross", "placebo_pass", "overall_pass"}
     # 순위 블록에 **자기 근거의 두께**가 더해졌다(2026-09-09) — 그 비율이 몇 개의
     # 낙폭 «사건» 위에 서 있는지. Calmar → CDaR 로 옮긴 이유가 「MaxDD 는 단일관측」
     # 이었으므로, CDaR 이 실제로 사건 둘 위에 서 있으면 그것도 적혀야 한다.
@@ -252,9 +252,9 @@ def test_missing_placebo_does_not_pass_the_gate():
 
 def test_placebo_gate_lets_a_clean_book_through_and_stops_a_noisy_one():
     out_ok = ev.evaluate(_iid(3.0), trials=1, configs=_matrix(), is_oos_splits=8,
-                         placebo={"p": 0.01})
+                         placebo={"p": 0.01, "p_gross": 0.01})
     out_no = ev.evaluate(_iid(3.0), trials=1, configs=_matrix(), is_oos_splits=8,
-                         placebo={"p": 0.06})
+                         placebo={"p": 0.06, "p_gross": 0.06})
     assert out_ok["gate"]["overall_pass"] is True
     assert out_no["gate"]["overall_pass"] is False
     assert "위약 p" in out_no["ranking"]["reason_if_null"]
@@ -262,7 +262,7 @@ def test_placebo_gate_lets_a_clean_book_through_and_stops_a_noisy_one():
 
 def test_selection_is_a_diagnostic_and_never_touches_the_verdict():
     """전진 선택 손익은 **게이트가 아니다**(§17-4) — 손해로 나와도 판정 불변."""
-    kw = dict(trials=1, configs=_matrix(), is_oos_splits=8, placebo={"p": 0.01})
+    kw = dict(trials=1, configs=_matrix(), is_oos_splits=8, placebo={"p": 0.01, "p_gross": 0.01})
     base = ev.evaluate(_iid(3.0), **kw)
     worse = ev.evaluate(_iid(3.0), selection={"picked": 1.0, "fixed": 9.0,
                                               "delta": -8.0, "basis": "CDaR 비"},
@@ -666,7 +666,7 @@ def test_the_ranking_basis_is_the_cdar_ratio_and_that_is_a_decision():
     #: 위약이 아니므로 통과하는 값을 넣어 준다.
     r = _iid(2.5, n=1400)
     out = ev.evaluate(r, trials=2, configs=_matrix(), is_oos_splits=8,
-                      placebo={"p": 0.01})
+                      placebo={"p": 0.01, "p_gross": 0.01})
     rk = out["ranking"]
     assert out["gate"]["overall_pass"], "이 시험은 통과한 판에서 순위값을 본다"
 
@@ -683,3 +683,36 @@ def test_the_ranking_basis_is_the_cdar_ratio_and_that_is_a_decision():
     # ③ 그 결정의 근거가 판정문에 **같이** 실린다(사건 수 · 두 구간).
     for key in ("tail_episodes", "total_episodes", "cdar_ratio_ci", "sr_lo_ci"):
         assert key in rk, f"{key} 가 빠지면 순위값이 근거 없이 서게 된다"
+
+
+# ── 위약 두 판 [OWNER 2026-09-11 「더 센 위약」] ─────────────────────────
+
+def test_the_placebo_gate_needs_both_variants():
+    """비용 포함 하나만으로는 통과가 아니다.
+
+    비용만 포함해 재면 민 경로가 왕복비용을 물어 귀무가설이 음수로 깔리고, 그러면
+    연 SR 이 양수이기만 하면 통과한다(BSS 아홉의 위약 95백분위 −0.05~+0.30).
+    비용을 양쪽에서 빼면 귀무가설이 0 언저리로 올라온다(+0.32~+0.70). 둘 다
+    넘어야 통과다 — 실측으로 BSS-5Y 가 0.0260 에서 0.0519 로 넘어간다.
+    """
+    kw = dict(trials=1, configs=_matrix(), is_oos_splits=8)
+    both = ev.evaluate(_iid(3.0), placebo={"p": 0.01, "p_gross": 0.01}, **kw)
+    only_net = ev.evaluate(_iid(3.0), placebo={"p": 0.01, "p_gross": 0.06}, **kw)
+    only_gross = ev.evaluate(_iid(3.0), placebo={"p": 0.06, "p_gross": 0.01}, **kw)
+    assert both["gate"]["placebo_pass"] is True
+    assert only_net["gate"]["placebo_pass"] is False
+    assert only_gross["gate"]["placebo_pass"] is False
+
+
+def test_a_missing_gross_placebo_is_not_a_pass():
+    """못 잰 것은 0 이 아니다 — PBO 와 같은 규율.
+
+    ⚠ 증거금 상한판(CRS)이 지금 이 자리에 있다. 체결비용이 `L` 안에 들어 있어
+    비용 0 판을 못 만든다. 그 레인이 비용 전 손익을 내주기 전에는 미통과다.
+    """
+    out = ev.evaluate(_iid(3.0), trials=1, configs=_matrix(), is_oos_splits=8,
+                      placebo={"p": 0.001})
+    assert out["gate"]["placebo_p"] == 0.001
+    assert out["gate"]["placebo_p_gross"] is None
+    assert out["gate"]["placebo_pass"] is False
+    assert out["gate"]["overall_pass"] is False

@@ -194,3 +194,26 @@ def test_placebo_takes_a_second_engine():
     out = rz.placebo(pl, {"leg": list(pos)}, shift_min=60, sign_only=False,
                      repnl_fn=rz.repnl_mr)
     assert out["p"] is not None and out["p"] < 0.05
+
+
+def test_gross_plumbing_raises_the_null():
+    """비용을 빼면 귀무가설이 올라간다 — 그게 이 판이 «더 센» 이유다."""
+    n = 900
+    rng = np.random.default_rng(11)
+    dv = rng.normal(0, 1, n)
+    pos = np.sign(np.concatenate((dv[1:], [0.0])))
+    cost = rz.plumbing_mr(list(dv), [0.0] * n, notional=1.0, cost_bp=0.30)
+    free = rz.plumbing_mr(list(dv), [0.0] * n, notional=1.0, cost_bp=0.0)
+    out = rz.placebo(cost, {"leg": list(pos)}, shift_min=60, sign_only=False,
+                     repnl_fn=rz.repnl_mr, pl_gross=free)
+    assert out["p_gross"] is not None
+    # 비용이 없으면 위약 분포가 위로 올라온다
+    assert out["placebo_gross_median"] > out["placebo_median"]
+    assert out["placebo_gross_p95"] > out["placebo_p95"]
+
+
+def test_without_gross_plumbing_the_keys_are_none():
+    dates, price, pl = _pl(n=600)
+    out = rz.placebo(pl, {"A": [1.0] * 600}, shift_min=60)
+    assert out["p_gross"] is None
+    assert out["placebo_gross_p95"] is None

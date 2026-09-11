@@ -215,11 +215,14 @@ def _placebo_for(which: str, *, cost_bp: float = IRS_COST_BP,
             continuous=True, cost_ticks=tk)
     price = {k: dict(zip(*series[k])) for k in series}
     pl = rz.plumbing(book["dates"], price, rolls, tk, cta.TICK)
+    #: 비용 0 판 — 같은 북, 틱을 0 으로. 게이트는 둘 다 넘어야 통과다.
+    pl_gross = rz.plumbing(book["dates"], price, rolls, 0.0, cta.TICK)
     keep = None if mask_index is None else set(mask_index)
     mask = (None if keep is None
             else np.array([t in keep for t in book["dates"]]))
     #: 이동 하한 = 최장 룩백. 그보다 짧게 밀면 신호가 덜 끊긴다.
-    return rz.placebo(pl, book["pos"], shift_min=max(mo.LOOKBACKS), mask=mask)
+    return rz.placebo(pl, book["pos"], shift_min=max(mo.LOOKBACKS), mask=mask,
+                      pl_gross=pl_gross)
 
 
 def _selection_for(mat: pd.DataFrame) -> dict:

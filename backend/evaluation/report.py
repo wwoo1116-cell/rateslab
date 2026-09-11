@@ -60,7 +60,8 @@ def render(out: dict[str, Any]) -> str:
          f"· 문턱 0.95)"),
         (f"- PBO **{_num(g['pbo'])}** ({'통과' if g['pbo_pass'] else '미통과'} "
          f"· 문턱 {mt.PBO_PASS})"),
-        (f"- 위약(순환이동) p **{_num(g.get('placebo_p'), 4)}** "
+        (f"- 위약(순환이동) p 비용후 **{_num(g.get('placebo_p'), 4)}** · "
+         f"비용전 **{_num(g.get('placebo_p_gross'), 4)}** "
          f"({'통과' if g.get('placebo_pass') else '미통과'} "
          f"· 문턱 {mt.PLACEBO_PASS})"),
         (f"- 필요 표본 **{_num(g['min_trl_years'], 2, '년')}** 대 실제 "
@@ -147,6 +148,9 @@ def render(out: dict[str, Any]) -> str:
          f"{_num(d.get('placebo_shifts'), 0)} / "
          f"{_num(d.get('placebo_median_sr'), 3)} / "
          f"{_num(d.get('placebo_p95_sr'), 3)} |"),
+        (f"| 위약(비용 0) 중앙 SR / 95백분위 | "
+         f"{_num(d.get('placebo_gross_median_sr'), 3)} / "
+         f"{_num(d.get('placebo_gross_p95_sr'), 3)} |"),
         # ★**게이트가 아니다**(§17-4). PBO 가 확률로 말하던 것을 원화로 적는 자리 —
         # 「격자에서 고르면 얼마 잃나」. 고정 규약의 근거가 여기 남는다.
         (f"| 전진 선택 손익(고르기 / 고정) | "

@@ -656,7 +656,13 @@ def evaluate(returns: pd.Series,
     #: 위약 — 못 재면 통과가 아니다. 사유는 아래 `reason` 에 실린다.
     pl = placebo or {"p": None, "why": "위약을 안 넘겨받았어요 — 이 층은 수익 계열만 "
                                        "으로는 포지션을 못 되돌려서 직접 못 재요"}
-    placebo_pass = bool(pl.get("p") is not None and pl["p"] < PLACEBO_PASS)
+    #: 위약은 **두 판**이다 [OWNER 2026-09-11] — 비용 포함과 비용 0.
+    #: 비용 포함만 보면 민 경로가 비용만 물어 귀무가설이 음수로 깔리고,
+    #: 그러면 연 SR 이 양수이기만 하면 통과한다. 둘 다 넘어야 통과다.
+    #: 못 잰 쪽은 통과로 안 친다 — PBO 와 같은 규율.
+    placebo_pass = bool(pl.get("p") is not None and pl["p"] < PLACEBO_PASS
+                        and pl.get("p_gross") is not None
+                        and pl["p_gross"] < PLACEBO_PASS)
 
     scaled, vol_estimator = vol_normalize(r, target_vol, freq)
     c = cdar_ratio(scaled, freq=freq)
@@ -698,7 +704,8 @@ def evaluate(returns: pd.Series,
             "dsr": d["dsr"], "dsr_pass": dsr_pass,
             "min_trl_years": trl, "actual_years": actual_years,
             "pbo": p["pbo"], "pbo_pass": pbo_pass,
-            "placebo_p": pl.get("p"), "placebo_pass": placebo_pass,
+            "placebo_p": pl.get("p"), "placebo_p_gross": pl.get("p_gross"),
+            "placebo_pass": placebo_pass,
             "overall_pass": overall,
         },
         "ranking": {
@@ -730,6 +737,8 @@ def evaluate(returns: pd.Series,
                         "placebo_shifts": pl.get("n_shifts"),
                         "placebo_median_sr": pl.get("placebo_median"),
                         "placebo_p95_sr": pl.get("placebo_p95"),
+                        "placebo_gross_median_sr": pl.get("placebo_gross_median"),
+                        "placebo_gross_p95_sr": pl.get("placebo_gross_p95"),
                         #: 전진 선택 — **게이트가 아니라 진단**이다(§17-4).
                         "selection_picked": (selection or {}).get("picked"),
                         "selection_fixed": (selection or {}).get("fixed"),

@@ -156,8 +156,11 @@ def placebo_for(dates, vals, carry, base: dict) -> dict:
             f"위약 배관이 엔진과 안 맞아요 — 최대 차이 {gap:,.6f}원. "
             f"고치기 전에는 판정을 낼 수 없어요.")
 
+    #: 비용 0 판 — 같은 북, 비용만 뺀 배관. 게이트는 둘 다 넘어야 통과다.
+    pl_gross = rz.plumbing_mr(dv[:len(pts)], list(carry)[:len(pts)],
+                              BASE["notional"], 0.0)
     return rz.placebo(pl, {"leg": pos}, shift_min=BASE["lookback"],
-                      sign_only=False, repnl_fn=rz.repnl_mr)
+                      sign_only=False, repnl_fn=rz.repnl_mr, pl_gross=pl_gross)
 
 
 def evaluate_leg(sid: str, trials: int | None = None,

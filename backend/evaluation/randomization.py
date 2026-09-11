@@ -127,12 +127,32 @@ def repnl_mr(pl: dict, pos: dict[str, Any]) -> np.ndarray:
 
 def placebo(pl: dict, pos: dict[str, Any], *, shift_min: int,
             mask: np.ndarray | None = None, sign_only: bool = True,
-            step: int = SHIFT_STEP, repnl_fn=None) -> dict:
-    """순환이동 위약의 p 값.
+            step: int = SHIFT_STEP, repnl_fn=None, pl_gross=None) -> dict:
+    """순환이동 위약의 p 값 — **두 판**이다 [OWNER 2026-09-11 「더 센 위약」].
+
+    ## 왜 둘인가
+
+    비용을 포함해 재면 민 경로는 회귀를 못 잡으면서 왕복비용은 그대로 문다. 그래서
+    위약이 **구조적으로 음수로 깔리고**(BSS 아홉의 중앙 −0.33~−0.67), 연 SR 이
+    양수이기만 하면 거의 통과한다 — 95백분위가 −0.05~+0.30 이다.
+
+    비용을 양쪽에서 빼면 그 힘이 사라져 귀무가설이 0 언저리로 올라온다
+    (중앙 −0.30~+0.14 · 95백분위 +0.32~+0.70). **같은 다리에서 문턱이 실제로
+    올라간다** — BSS-5Y 가 0.0260 에서 0.0519 로 넘어간다.
+
+    ⚠ 셋째 판(보유구간을 섞어 재배치)도 재 봤는데 **버렸다.** `np.roll` 은 배열을
+    돌릴 뿐이라 보유구간의 개수·길이·포지션 일수를 이미 정확히 보존한다. 아홉
+    다리 전부에서 순환이동과 같은 판정이 나왔다(`scripts/mr_placebo_strength.py`).
+    「거래 횟수와 보유기간 분포를 유지하고 진입 시점만 재배치」라는 처방은
+    **순환이동이 이미 만족한다.**
 
     `mask` 는 판정을 낼 창(다른 다리와 겹치는 구간 등)이다. 없으면 전 구간.
     돌려주는 `p` 는 (실제를 이긴 위약 + 1) / (이동수 + 1) 이고, 이 «+1» 은 무작위화
     검정의 관례다(실제 자신도 하나의 배치로 센다).
+
+    `pl_gross` 는 **같은 북을 비용 0 으로 편 배관**이다. 주면 `p_gross` 를 같이
+    낸다. 안 주면 `p_gross` 가 `None` 이고, 게이트는 그것을 **통과로 안 친다**
+    (「못 잰 것은 0 이 아니다」).
     """
     m = np.ones(pl["n"], dtype=bool) if mask is None else mask
     #: 엔진마다 회계가 다르다. 기본은 CTA 배관이고, MR 은 `repnl_mr` 을 준다.
@@ -145,8 +165,20 @@ def placebo(pl: dict, pos: dict[str, Any], *, shift_min: int,
     a = np.array([_sr(fn(pl, shifted(pos, k, sign_only=sign_only))[m])
                   for k in shifts])
     beat = int((a >= real).sum())
-    return {"p": (beat + 1) / (len(a) + 1), "n_shifts": len(a),
-            "real_sr": real, "beat": beat,
-            "placebo_median": float(np.median(a)),
-            "placebo_p95": float(np.percentile(a, 95)),
-            "sign_only": sign_only, "why": None}
+    out = {"p": (beat + 1) / (len(a) + 1), "n_shifts": len(a),
+           "real_sr": real, "beat": beat,
+           "placebo_median": float(np.median(a)),
+           "placebo_p95": float(np.percentile(a, 95)),
+           "sign_only": sign_only, "why": None,
+           "p_gross": None, "real_sr_gross": None,
+           "placebo_gross_median": None, "placebo_gross_p95": None}
+    if pl_gross is not None:
+        real_g = _sr(fn(pl_gross, pos)[m])
+        g = np.array([_sr(fn(pl_gross, shifted(pos, k, sign_only=sign_only))[m])
+                      for k in shifts])
+        beat_g = int((g >= real_g).sum())
+        out.update({"p_gross": (beat_g + 1) / (len(g) + 1),
+                    "real_sr_gross": real_g, "beat_gross": beat_g,
+                    "placebo_gross_median": float(np.median(g)),
+                    "placebo_gross_p95": float(np.percentile(g, 95))})
+    return out
