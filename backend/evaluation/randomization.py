@@ -93,9 +93,41 @@ def shifted(pos: dict[str, Any], k: int, *, sign_only: bool) -> dict:
     return out
 
 
+def plumbing_mr(dv: list[float], carry: list[float], notional: float,
+                cost_bp: float) -> dict:
+    """평균회귀 엔진(`mrbacktest`)의 회계를 배열로 편다.
+
+    CTA 엔진과 회계가 다르다 — 캐리가 있고, 비용이 **집행 한 번당 정액**이며,
+    포지션이 ±1 의 단위다. 그래서 `plumbing` 을 늘리지 않고 **두 번째 배관**을
+    둔다. 한 함수에 엔진 둘을 태우면 어느 쪽 규약인지가 호출부에서 안 보인다.
+
+        pnl_t = pos_{t-1}·notional·dv_t  −  pos_{t-1}·carry_t
+                −  |pos_t − pos_{t-1}|·notional·cost_bp
+
+    ⚠ `dv` 와 `carry` 는 엔진에 들어간 그 배열이어야 한다. 실제 포지션 경로를
+    넣으면 엔진의 `dailyPnl` 과 **한 치도 안 달라야** 하고, 시험이 그것을 잰다.
+    """
+    n = len(dv)
+    return {"kind": "mr", "n": n,
+            "dv": np.asarray(dv, dtype=float),
+            "carry": np.asarray(carry, dtype=float),
+            "notional": float(notional),
+            "exec_cost": float(notional) * float(cost_bp)}
+
+
+def repnl_mr(pl: dict, pos: dict[str, Any]) -> np.ndarray:
+    """포지션 경로 하나로 일별 손익(캐리·비용 포함)을 낸다."""
+    a = np.asarray(pos["leg"], dtype=float)
+    prev = np.concatenate(([0.0], a[:-1]))
+    out = prev * pl["notional"] * pl["dv"]
+    out -= prev * pl["carry"]
+    out -= np.abs(a - prev) * pl["exec_cost"]
+    return out
+
+
 def placebo(pl: dict, pos: dict[str, Any], *, shift_min: int,
             mask: np.ndarray | None = None, sign_only: bool = True,
-            step: int = SHIFT_STEP) -> dict:
+            step: int = SHIFT_STEP, repnl_fn=None) -> dict:
     """순환이동 위약의 p 값.
 
     `mask` 는 판정을 낼 창(다른 다리와 겹치는 구간 등)이다. 없으면 전 구간.
@@ -103,12 +135,14 @@ def placebo(pl: dict, pos: dict[str, Any], *, shift_min: int,
     검정의 관례다(실제 자신도 하나의 배치로 센다).
     """
     m = np.ones(pl["n"], dtype=bool) if mask is None else mask
-    real = _sr(repnl(pl, pos)[m])
+    #: 엔진마다 회계가 다르다. 기본은 CTA 배관이고, MR 은 `repnl_mr` 을 준다.
+    fn = repnl_fn or repnl
+    real = _sr(fn(pl, pos)[m])
     shifts = list(range(shift_min, pl["n"] - shift_min, step))
     if len(shifts) < 20:
         return {"p": None, "n_shifts": len(shifts), "real_sr": real,
                 "why": f"이동이 {len(shifts)}가지뿐이라 p 의 바닥이 너무 높아요"}
-    a = np.array([_sr(repnl(pl, shifted(pos, k, sign_only=sign_only))[m])
+    a = np.array([_sr(fn(pl, shifted(pos, k, sign_only=sign_only))[m])
                   for k in shifts])
     beat = int((a >= real).sum())
     return {"p": (beat + 1) / (len(a) + 1), "n_shifts": len(a),

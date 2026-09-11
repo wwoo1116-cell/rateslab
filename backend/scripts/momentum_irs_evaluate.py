@@ -179,6 +179,16 @@ def _sr_var(mat: pd.DataFrame) -> float | None:
     return v if v > 0 else None
 
 
+def _frozen_prices() -> tuple[dict, set]:
+    """선물 조정가를 **FREEZE 로 자른** 것. 자르는 산술은 `momentum_evaluate._inputs`
+    한 곳에 있다 — 두 곳에 두면 언젠가 갈린다.
+
+    ★2026-09-11 에 잡은 결함 [OWNER 「고쳐」]. 그 함수의 주석이 사정을 진다.
+    """
+    series, rolls, _macro = me._inputs()
+    return series, rolls
+
+
 def _placebo_for(which: str, *, cost_bp: float = IRS_COST_BP,
                  ticks: float = cta.COST_TICKS, mask_index=None) -> dict:
     """게이트 셋째 — 순환이동 위약 [OWNER 2026-09-10].
@@ -196,7 +206,7 @@ def _placebo_for(which: str, *, cost_bp: float = IRS_COST_BP,
             book_vol_window=mo.BOOK_VOL_WINDOW, roll_days=set(),
             continuous=True, cost_ticks=tk)
     else:
-        series, rolls = mo._load_prices()
+        series, rolls = _frozen_prices()
         tk = ticks
         book = cta.book_simulate(
             series, signal=mo.SIGNAL, lookbacks=mo.LOOKBACKS,
@@ -398,6 +408,8 @@ def full_sample(splits: int = 16) -> None:
     out = evaluate_side(
         "Momentum-trend-IRS-full", mat, splits=splits,
         cost_bp_rt=IRS_COST_BP * 2,
+        placebo=_placebo_for("IRS", mask_index=mat.index),
+        selection=_selection_for(mat),
         notes=[f"표본을 IRS 자료 첫날({FULL_START})까지 늘렸다. 선물엔 없는 해라 "
                f"**나란히 못 놓는다** — 이 줄은 「표본이 길어지면 게이트가 어떻게 "
                f"움직이나」만 답한다."])

@@ -166,3 +166,25 @@ def test_layer_is_scale_invariant_on_this_series(built):
     for c in (1e-6, 1e3):
         got = ev.cdar_ratio(ev.vol_normalize(r * c)[0])["cdar_ratio"]
         assert math.isclose(got, base, rel_tol=1e-9), f"배율 {c} 에서 갈렸어요"
+
+
+# ── 동결 ────────────────────────────────────────────────────────────────
+
+def test_inputs_cuts_the_series_at_the_freeze():
+    """★2026-09-11 의 그 결함. 위약은 배열 «전체»를 순환이동시키므로, 계열이
+    동결일보다 길면 **봉이 붙을 때마다 위약 분포가 달라진다.** 수익 계열은
+    `_cut` 이 잘라 줘서 DSR·PBO 는 멀쩡했고 위약만 흔들렸다 — 그래서 이 시험은
+    «자르는 자리»를 잰다(`_cut` 이 아니라 `_inputs`).
+    """
+    series, rolls, _macro = me._inputs()
+    for _k, (days, _px) in series.items():
+        assert days[-1] <= mo.FREEZE
+    assert all(r <= mo.FREEZE for r in rolls)
+
+
+def test_the_irs_lane_cuts_at_the_same_place():
+    """자르는 산술이 두 곳에 살면 언젠가 갈린다 — 한 함수를 쓴다."""
+    import scripts.momentum_irs_evaluate as mie
+    a, _ra = mie._frozen_prices()
+    b, _rb, _m = me._inputs()
+    assert {k: v[0][-1] for k, v in a.items()} == {k: v[0][-1] for k, v in b.items()}

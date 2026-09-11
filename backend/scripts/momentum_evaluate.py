@@ -71,13 +71,14 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import ctabacktest as cta                              # noqa: E402
 from app import momentum as mo                                  # noqa: E402
-from evaluation import metrics as ev, report                    # noqa: E402
+from evaluation import metrics as ev, randomization as rz, report                    # noqa: E402
 from scripts.lane_costs import tick_to_bp                       # noqa: E402
 
 #: 그 레인이 실제로 훑은 축. 볼 윈도는 `scripts/cta_validate.py` 의 그 셋인데
@@ -113,9 +114,24 @@ def cells_for(leg: str) -> list[tuple[str, int]]:
 # ── 그 레인의 북을 그대로 다시 세운다 ────────────────────────────────────
 
 def _inputs():
-    """가격·롤·매크로 — 그 레인의 적재를 그대로 쓴다(따로 읽지 않는다)."""
+    """가격·롤·매크로 — 그 레인의 적재를 쓰되 **동결일에서 자른다**.
+
+    ★2026-09-11 에 잡은 결함 [OWNER 「고쳐」]. `momentum._load_prices()` 에는 거르는
+    곳이 없어서 `futures.load()` 가 가진 것을 다 준다(실측 2,622봉 · 끝 2026-09-10 —
+    FREEZE 인 2026-09-08 보다 이틀 길다). 수익 계열은 `_cut` 이 동결일로 잘라 왔으니
+    DSR·PBO 는 멀쩡했는데, **위약만 안 잘린 북 위에서** 돌았다. 위약은 `np.roll` 로
+    배열 «전체»를 돌리므로 봉이 하나 붙을 때마다 분포가 통째로 달라진다 — 코드를 한
+    줄도 안 바꾸고 다시 돌리면 선물 p 가 0.0607 → 0.0561 로 움직였다.
+
+    자르는 자리를 여기 하나로 둔다. `momentum_irs_evaluate` 도 이 함수를 쓴다.
+    """
     series, rolls = mo._load_prices()
-    return series, rolls, mo._load_macro()
+    cut = {}
+    for k, (days, px) in series.items():
+        keep = [i for i, d in enumerate(days) if d <= mo.FREEZE]
+        cut[k] = ([days[i] for i in keep], [px[i] for i in keep])
+    last = max(d[-1] for d, _p in cut.values())
+    return cut, {r for r in rolls if r <= last}, mo._load_macro()
 
 
 def _run(series, rolls, *, signal: str, vol_window: int, ticks: float,
@@ -174,6 +190,80 @@ def returns_of(points: list[dict]) -> pd.Series:
                      index=[p["t"] for p in points], dtype=float)
 
 
+def _plumb(series, rolls, ticks: float):
+    """CTA 회계를 배열로 편다 — 위약을 수백 번 돌려야 해서."""
+    price = {k: dict(zip(*series[k])) for k in series}
+    return price
+
+
+def placebo_for(leg: str, series, rolls, macro, *, ticks: float = cta.COST_TICKS,
+                cache: dict | None = None) -> dict:
+    """게이트 셋째 — 순환이동 위약 [OWNER 2026-09-10 · 배관 2026-09-11].
+
+    ★**부호만 민다**(`sign_only=True`). 경로를 통째로 밀면 방향뿐 아니라 북
+    변동성 목표가 만든 «크기 타이밍»까지 죽어 위약이 실제보다 세진다. MR 과
+    반대인 이유는 그쪽 포지션이 ±1 단위라 크기 조절이 없기 때문이다.
+
+    ★blend 는 두 북을 **같은 k 로** 밀어 손익을 반씩 섞는다. 한 북만 밀면 그건
+    위약이 아니라 「한쪽만 망가뜨린 다른 전략」이다.
+    """
+    start = None if macro is None else min(macro["macro_sign"])
+    price = _plumb(series, rolls, ticks)
+    tk = ticks
+
+    def book_of(external_key):
+        ext = (None if external_key is None
+               else {k: macro["macro_sign"] for k in series})
+        key = (mo.SIGNAL, mo.VOL_WINDOW, ticks, external_key)
+        if cache is not None and key in cache:
+            return cache[key]
+        out = _run(series, rolls, signal=mo.SIGNAL, vol_window=mo.VOL_WINDOW,
+                   ticks=ticks, external=ext)
+        if cache is not None:
+            cache[key] = out
+        return out
+
+    t_book = book_of(None)
+    pl = rz.plumbing(t_book["dates"], price, rolls, tk, cta.TICK)
+    keep = {p["t"] for p in _cut(t_book["points"], start)}
+
+    if leg == "trend":
+        mask = np.array([d in keep for d in t_book["dates"]])
+        return rz.placebo(pl, t_book["pos"], shift_min=max(mo.LOOKBACKS),
+                          mask=mask)
+
+    if macro is None:
+        return {"p": None, "n_shifts": 0, "real_sr": 0.0,
+                "why": "매크로 계열이 없어 이 다리를 못 세워요"}
+
+    m_book = book_of("macro")
+    keep &= {p["t"] for p in _cut(m_book["points"], start)}
+    mask = np.array([d in keep for d in t_book["dates"]])
+
+    if leg == "macro":
+        return rz.placebo(pl, m_book["pos"], shift_min=max(mo.LOOKBACKS),
+                          mask=mask)
+
+    # blend — 두 북을 같은 k 로 밀고 손익을 반씩
+    def blended(pos_t, pos_m):
+        return 0.5 * rz.repnl(pl, pos_t) + 0.5 * rz.repnl(pl, pos_m)
+
+    real = rz._sr(blended(t_book["pos"], m_book["pos"])[mask])
+    lo = max(mo.LOOKBACKS)
+    shifts = list(range(lo, pl["n"] - lo, rz.SHIFT_STEP))
+    if len(shifts) < 20:
+        return {"p": None, "n_shifts": len(shifts), "real_sr": real,
+                "why": f"이동이 {len(shifts)}가지뿐이라 p 의 바닥이 너무 높아요"}
+    a = np.array([rz._sr(blended(rz.shifted(t_book["pos"], k, sign_only=True),
+                                 rz.shifted(m_book["pos"], k, sign_only=True))[mask])
+                  for k in shifts])
+    beat = int((a >= real).sum())
+    return {"p": (beat + 1) / (len(a) + 1), "n_shifts": len(a), "real_sr": real,
+            "beat": beat, "placebo_median": float(np.median(a)),
+            "placebo_p95": float(np.percentile(a, 95)),
+            "sign_only": True, "why": None}
+
+
 def config_matrix(series, rolls, macro, leg: str, ticks: float,
                   cache: dict | None = None) -> pd.DataFrame:
     """칸마다의 수익 계열 — CSCV 가 먹는 T × 칸.
@@ -208,7 +298,11 @@ def evaluate_leg(leg: str, *, trials: int | None = None, splits: int = 16,
         sr_var=sr_var if sr_var > 0 else None,
         strategy_id=f"Momentum-{leg}",
         cost_bp_roundtrip=bp3 * 2,
+        placebo=placebo_for(leg, series, rolls, macro, ticks=ticks, cache=_RUNS),
         assumptions=[
+            "위약(순환이동)은 **부호만** 민다 — 경로를 통째로 밀면 북 변동성 목표가 "
+            "만든 크기 타이밍까지 죽어 위약이 실제보다 세진다. blend 는 두 북을 "
+            "**같은 k** 로 밀어 손익을 반씩 섞는다.",
             "자본 분모를 안 만들었다 [OWNER 2026-09-09] — 수익 계열이 원(₩) 손익 "
             "그대로다. 이 층은 스케일 불변이라 게이트·순위가 안 바뀐다.",
             f"비용 편도 {ticks}틱 = 3Y {bp3:.3f}bp · 10Y {bp10:.3f}bp. MR 자리는 "

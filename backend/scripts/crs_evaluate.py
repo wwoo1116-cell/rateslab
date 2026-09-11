@@ -61,11 +61,12 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from evaluation import metrics as ev, report                    # noqa: E402
+from evaluation import metrics as ev, randomization as rz, report                    # noqa: E402
 
 #: 그 레인이 이 리포 밖에 산다(`Projects\data\krw-crs`). `momentum.THEMES_CSV` 와
 #: 같은 사정이고 같은 규율이다 — 없으면 **조용히 0 을 내지 않고** 그 사실을 적는다.
@@ -149,6 +150,52 @@ def config_matrix(mb, funding: str) -> pd.DataFrame:
     return _MATRIX[funding]
 
 
+def placebo_for(mb, lot_uk: int, funding: str) -> dict:
+    """게이트 셋째 — 순환이동 위약 [OWNER 2026-09-10 · 배관 2026-09-11].
+
+    이 장부의 회계는 **만기별 배분 가중 × 그 만기의 기준 크기 손익**이다:
+
+        daily_d = Σ_t  w[d,t] · L[d,t]        w = face/base_face
+
+    그래서 위약은 **w 의 경로를 만기마다 같은 k 로 순환이동**시키고 다시 더한다.
+    포지션 분포와 배분 쏠림이 보존되고 시점 정합성만 사라진다.
+
+    ★**경로 전체를 민다**(`sign_only=False`). w 는 크기이지 부호가 아니라서
+    부호만 밀면 남는 것이 없다. MR 과 같은 사정이고 CTA 와는 반대다.
+
+    ⚠ **한 가지 한계.** 체결비용이 `L` 안에 이미 들어 있어서 위약이 비용을 다시
+    유도하지 못한다 — 옮긴 경로의 비용이 아니라 **원래 자리의 비용이 w 에 비례해**
+    따라온다. CTA·MR 배관은 `|Δpos|` 로 비용을 다시 매기는데 여기서는 못 한다.
+    그 레인이 비용 전 손익을 따로 내주면 그때 고칠 자리다.
+    """
+    P, Lmat, Z, meta = mb.load()
+    daily, _used, _dv, _en, _bl, w = mb.simulate(P, Lmat, Z, meta, lot_uk,
+                                                 with_face=True)
+    cols = list(w.columns)
+    dp = {c: Lmat[c].reindex(w.index).fillna(0.0).to_numpy(dtype=float)
+          for c in cols}
+    pl = {"kind": "crs", "n": len(w), "keys": cols, "dp": dp}
+
+    def repnl(_pl, pos):
+        out = np.zeros(_pl["n"])
+        for c in _pl["keys"]:
+            out += np.asarray(pos[c], dtype=float) * _pl["dp"][c]
+        return out
+
+    pos = {c: w[c].to_numpy(dtype=float) for c in cols}
+
+    # ⚠ 실제 경로를 넣으면 엔진의 `daily` 와 한 치도 안 달라야 한다.
+    gap = float(np.abs(repnl(pl, pos) - daily.to_numpy(dtype=float)).max())
+    if gap > 1e-6:
+        raise SystemExit(
+            f"위약 배관이 그 레인 엔진과 안 맞아요 — 최대 차이 {gap:,.6f}원. "
+            f"고치기 전에는 판정을 낼 수 없어요.")
+
+    #: 이동 하한 = 그 레인의 z 룩백. 없으면 60봉(BSS 규약).
+    lo = int(getattr(mb, "LOOKBACK", 60))
+    return rz.placebo(pl, pos, shift_min=lo, sign_only=False, repnl_fn=repnl)
+
+
 def evaluate_lot(lot_uk: int = REGISTERED_LOT_UK, *, funding: str = "bound",
                  trials: int | None = None, splits: int = 16) -> dict:
     mb = _lane()
@@ -162,7 +209,11 @@ def evaluate_lot(lot_uk: int = REGISTERED_LOT_UK, *, funding: str = "bound",
         sr_var=sr_var if sr_var > 0 else None,
         strategy_id=f"CRS-lot{lot_uk}-{funding}",
         cost_bp_roundtrip=1.0,
+        placebo=placebo_for(mb, lot_uk, funding),
         assumptions=[
+            "위약(순환이동)은 만기별 배분 가중 w 의 **경로 전체**를 같은 k 로 민다. "
+            "⚠ 체결비용이 L 안에 이미 들어 있어 옮긴 경로의 비용을 다시 매기지 "
+            "못한다 — 원래 자리의 비용이 w 에 비례해 따라온다.",
             "⚠ **그 레인의 «판정 I» 이 아니다.** `PREREG_03_book_2026-09-09.md` 는 "
             "아직 안 얼었고, 이 장부(`margin_budget_book`)는 자기 머리에 «탐색적 — "
             "사전등록 아님» 이라고 적어 두고 있다. 여기 수는 탐색적 측정이다.",

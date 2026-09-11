@@ -50,6 +50,7 @@ import datetime as dt
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -59,7 +60,7 @@ from app import mrbacktest as bt                               # noqa: E402
 from app import mrcarry as mrc                                 # noqa: E402
 from app import mrseries as mrs                                # noqa: E402
 from app import funding as fnd                                 # noqa: E402
-from evaluation import metrics as ev, report                   # noqa: E402
+from evaluation import metrics as ev, randomization as rz, report  # noqa: E402
 
 #: 화면 기본 노브 — 「지금 화면이 말하는 그 전략」을 재는 것이 이 스크립트의 일이다.
 BASE = dict(lookback=60, entryZ=2.0, exitZ=0.5, stopZ=2.5, costBp=0.5,
@@ -127,6 +128,38 @@ def config_matrix(dates, vals, carry, face) -> pd.DataFrame:
     return pd.DataFrame(cols)
 
 
+def placebo_for(dates, vals, carry, base: dict) -> dict:
+    """게이트 셋째 — 순환이동 위약 [OWNER 2026-09-10 · 배관 2026-09-11].
+
+    ★**부호만이 아니라 경로 전체를 민다**(`sign_only=False`). CTA 쪽이 부호만 미는
+    이유는 경로를 통째로 밀면 변동성 목표의 타이밍까지 죽어 위약이 실제보다 세지기
+    때문인데, MR 포지션은 ±1 의 단위라 크기 조절이 없다. 여기서 부호만 밀면
+    「원래도 포지션이 있고 민 자리에도 포지션이 있는 날」만 남아 **노출이 통째로
+    줄어든다** — 그건 위약이 아니라 다른 전략이다. 경로 전체를 밀어야 포지션 분포와
+    회전율이 보존된다.
+
+    이동 하한은 z 룩백이다. 그보다 짧게 밀면 신호가 덜 끊긴다.
+    """
+    pts = base["points"]
+    pos = [float(p["position"]) for p in pts]
+    dv = [0.0] + [vals[i] - vals[i - 1] for i in range(1, len(vals))]
+    pl = rz.plumbing_mr(dv[:len(pts)], list(carry)[:len(pts)],
+                        BASE["notional"], BASE["costBp"])
+
+    # ⚠ 실제 경로를 넣으면 엔진의 `dailyPnl` 과 한 치도 안 달라야 한다.
+    # 이 등식이 깨지면 위약이 «다른 전략»을 재고 있다는 뜻이라 멈춘다.
+    got = rz.repnl_mr(pl, {"leg": pos})
+    want = np.array([float(p["dailyPnl"]) for p in pts])
+    gap = float(np.abs(got - want).max())
+    if gap > 1e-6:
+        raise SystemExit(
+            f"위약 배관이 엔진과 안 맞아요 — 최대 차이 {gap:,.6f}원. "
+            f"고치기 전에는 판정을 낼 수 없어요.")
+
+    return rz.placebo(pl, {"leg": pos}, shift_min=BASE["lookback"],
+                      sign_only=False, repnl_fn=rz.repnl_mr)
+
+
 def evaluate_leg(sid: str, trials: int | None = None,
                  splits: int = 16) -> dict:
     dates, vals, carry, face = _leg_inputs(sid)
@@ -143,7 +176,11 @@ def evaluate_leg(sid: str, trials: int | None = None,
         sr_var=sr_var if sr_var > 0 else None,
         strategy_id=sid,
         cost_bp_roundtrip=BASE["costBp"] * 2,
+        placebo=placebo_for(dates, vals, carry, base),
         assumptions=[
+            "위약(순환이동)은 **경로 전체**를 민다 — MR 포지션은 ±1 단위라 부호만 "
+            "밀면 노출이 줄어 위약이 다른 전략이 된다. 이동 하한 = z 룩백 "
+            f"{BASE['lookback']}봉.",
             f"자본 기준 = 액면 {face:,.0f}원(지금 커브의 pv01 하나 — 진입일마다 "
             f"다시 재면 표본 안에서 5~16% 움직인다).",
             "평가 단위 = **다리 하나** [OWNER 2026-09-09]. 통합 장부로 재면 "

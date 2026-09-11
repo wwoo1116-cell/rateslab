@@ -10,6 +10,9 @@
 ③ **p 의 방향** — 신호를 심으면 p 가 작아지고, 잡음이면 커져야 한다.
 ④ **바닥** — 이동이 너무 적으면 p 가 작아질 수가 없다. 그때는 수를 내지 말고
    못 쟀다고 말해야 한다.
+⑤ **엔진이 둘이다** — CTA 회계(가격차 × 포지션 + 틱 비용)와 MR 회계(bp 차 ×
+   명목 + 캐리 + 집행당 정액)는 다른 식이다. 배관도 둘이고, 각자 제 엔진과
+   등식을 이뤄야 한다.
 """
 from __future__ import annotations
 
@@ -137,3 +140,57 @@ def test_p_never_reaches_zero():
 def test_gate_threshold_is_the_owner_spec():
     from evaluation import metrics as ev
     assert rz.PLACEBO_PASS == ev.PLACEBO_PASS == 0.05
+
+
+# ── ⑤ MR 배관 ───────────────────────────────────────────────────────────
+
+def _mr(dv, carry, notional=1_000_000.0, cost_bp=0.5):
+    return rz.plumbing_mr(dv, carry, notional, cost_bp)
+
+
+def test_mr_mtm_uses_yesterdays_position():
+    """MR 도 오늘 bp 변화에는 **어제** 포지션이 걸린다."""
+    pl = _mr([0.0, 0.0, 3.0], [0.0, 0.0, 0.0], notional=1_000_000.0, cost_bp=0.0)
+    got = rz.repnl_mr(pl, {"leg": [0.0, -1.0, 0.0]})
+    assert got[1] == pytest.approx(0.0)
+    assert got[2] == pytest.approx(-1.0 * 1_000_000.0 * 3.0)
+
+
+def test_mr_carry_sign_follows_the_engine():
+    """엔진은 `-position × carry` 로 적는다 — 숏(−1)이 캐리를 «받는다»."""
+    pl = _mr([0.0, 0.0], [0.0, 7.0], cost_bp=0.0)
+    got = rz.repnl_mr(pl, {"leg": [-1.0, -1.0]})
+    assert got[1] == pytest.approx(7.0)
+
+
+def test_mr_cost_is_a_flat_fee_per_execution():
+    """CTA 는 명목에 비례하지만 MR 은 **집행 한 번당 정액**이다(±1 단위라서)."""
+    pl = _mr([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], notional=1_000_000.0, cost_bp=0.5)
+    got = rz.repnl_mr(pl, {"leg": [-1.0, -1.0, 0.0]})
+    assert got[0] == pytest.approx(-500_000.0)     # 진입
+    assert got[1] == pytest.approx(0.0)            # 보유 중엔 없다
+    assert got[2] == pytest.approx(-500_000.0)     # 청산
+
+
+def test_mr_full_shift_preserves_exposure_but_sign_only_does_not():
+    """MR 이 경로 전체를 미는 이유 — 부호만 밀면 노출이 줄어 다른 전략이 된다."""
+    pos = {"leg": [0.0, -1.0, -1.0, 0.0, -1.0, 0.0]}
+    full = rz.shifted(pos, 2, sign_only=False)["leg"]
+    sign = rz.shifted(pos, 2, sign_only=True)["leg"]
+    assert sum(abs(v) for v in full) == pytest.approx(3.0)
+    assert sum(abs(v) for v in sign) < 3.0
+
+
+def test_placebo_takes_a_second_engine():
+    """`repnl_fn` 을 주면 MR 회계 위에서 돈다 — 신호를 심으면 p 가 작아야 한다."""
+    n = 900
+    rng = np.random.default_rng(3)
+    dv = rng.normal(0, 1, n)
+    # 오늘 포지션에 **내일** 변화가 걸리므로(repnl 이 prev 를 쓴다) 완벽한 신호는
+    # 한 칸 앞을 본 것이다(부호 규약은 배관의 것이지 엔진의 숏 전용 규약이 아니다).
+    # 시험이 재는 것은 예지력이 아니라 배관의 부호·정렬이다.
+    pos = np.sign(np.concatenate((dv[1:], [0.0])))
+    pl = _mr(list(dv), [0.0] * n, notional=1.0, cost_bp=0.0)
+    out = rz.placebo(pl, {"leg": list(pos)}, shift_min=60, sign_only=False,
+                     repnl_fn=rz.repnl_mr)
+    assert out["p"] is not None and out["p"] < 0.05
