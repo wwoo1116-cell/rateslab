@@ -160,7 +160,13 @@ def main() -> int:
     ap.add_argument("--drop", default="", help="뺄 테마(쉼표). 예: policy")
     ap.add_argument("--paper", action="store_true",
                     help="테마 둘을 원논문 정의로 — 통화정책 통안2Y · 위험선호 주식초과수익")
+    ap.add_argument("--cycle", choices=("oecd", "bok"), default="oecd",
+                    help="경기순환 원천 — oecd 실현치(지금) 또는 bok 한은 전망치(논문). "
+                         "--paper 와 같이 쓸 때만 의미가 있다")
     a = ap.parse_args()
+    if a.cycle == "bok" and not a.paper:
+        raise SystemExit("--cycle bok 은 --paper 와 같이 쓰세요 — "
+                         "경기순환만 논문으로 되돌리는 판은 등록된 적이 없어요")
 
     series = mie.load_irs_series()
     _s, _r, macro = me._inputs()
@@ -172,7 +178,8 @@ def main() -> int:
         #: 것이 아니라 원문과 대조해 어긋난 자리를 맞춘 것이다.
         from scripts import macro_paper_fix as mp
         macro = dict(macro)
-        macro["macro_sign"] = mp.as_signal(mp.themes(mp._load(), paper=True))
+        macro["macro_sign"] = mp.as_signal(
+            mp.themes(mp._load(), paper=True, cycle=a.cycle))
 
     drop = tuple(x.strip() for x in a.drop.split(",") if x.strip())
     all_th = tuple(k for k, _l in mo.THEMES)
@@ -181,7 +188,11 @@ def main() -> int:
         raise SystemExit(f"그런 테마가 없어요 — {bad}. 있는 것은 {all_th} 예요")
     keep = tuple(t for t in all_th if t not in drop)
     sign = None if not drop else macro_sign_from(macro, keep)
-    tag = ("-paper" if a.paper else "") + ("" if not drop else f"-no-{'-'.join(drop)}")
+    #: ⚠ 원천이 다르면 다른 판이다. 판정문 id 가 같으면 **조용히 덮어쓴다**(09-11 에
+    #: 한 번 그랬다). 태그에 넣는다. 두 판 모두 2,389봉이다(RESULT_cycle_bok §1).
+    tag = (("-paper" if a.paper else "")
+           + ("-bokcycle" if a.cycle == "bok" else "")
+           + ("" if not drop else f"-no-{'-'.join(drop)}"))
 
     L = legs(series, macro, sign)
 

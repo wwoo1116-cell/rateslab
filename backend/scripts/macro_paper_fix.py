@@ -60,6 +60,9 @@ from app import momentum as mo                                  # noqa: E402
 PROJECTS = Path(r"C:\Users\infomax\Projects")
 THEMES_CSV = Path(mo.THEMES_CSV).resolve()
 RATES_CSV = PROJECTS / "data" / "ktb-supply" / "out" / "ecos_daily_rates.csv"
+#: 경기순환을 한은 **전망치**로 세운 계열 [2026-09-14].
+#: 만드는 곳은 `Projects\data\krw-macro-vintage\src\build_cycle_bok.py` 다.
+CYCLE_BOK_CSV = PROJECTS / "data" / "krw-macro-vintage" / "out" / "cycle_bok_daily.csv"
 
 BARS_1Y = 250          # 논문의 "one-year" — 그 레인 상수와 같다
 DUR_10Y = 8.0          # 지금 판이 쓰는 근사 듀레이션(비교용으로만 남긴다)
@@ -77,18 +80,37 @@ def _load() -> pd.DataFrame:
     d = th.join(rt[["msb_2y", "ktb_2y", "call_1d"]], how="left")
     for c in ("msb_2y", "call_1d"):
         d[c] = d[c].ffill()
+    #: 한은 전망치 경기순환. 없으면 조용히 비운다 — `--cycle bok` 일 때만 필요하다.
+    if CYCLE_BOK_CSV.exists():
+        cb = pd.read_csv(CYCLE_BOK_CSV, encoding="utf-8-sig",
+                         parse_dates=["date"]).set_index("date")
+        d["cycle_bok_raw"] = cb["cycle_bok_raw"]
+    else:
+        d["cycle_bok_raw"] = np.nan
     return d
 
 
-def themes(d: pd.DataFrame, *, paper: bool) -> pd.DataFrame:
-    """네 테마의 부호와 `macro_sign`. `paper=True` 면 논문 정의다."""
+def themes(d: pd.DataFrame, *, paper: bool, cycle: str = "oecd") -> pd.DataFrame:
+    """네 테마의 부호와 `macro_sign`.
+
+    `paper=True` 면 통화정책·위험선호가 논문 정의다.
+    `cycle="bok"` 이면 경기순환이 **한은 전망치**다 — 이것도 논문으로 되돌리는
+    변경이다(논문은 "forecasts of real GDP growth and CPI inflation" 이라고 적고,
+    우리는 OECD **실현치**를 대리로 써 왔다). 성과를 보고 고른 것이 아니다.
+    """
     lb = BARS_1Y
     out = pd.DataFrame(index=d.index)
 
-    # 경기순환 · 국제교역 — 논문과 같다. 그대로 쓴다.
+    # 국제교역 — 논문과 같다. 그대로 쓴다.
     #: ⚠ CSV 의 cycle_raw 는 그 레인이 **이미 부호를 뒤집어** 저장한 값이다.
     #: 여기서 다시 뒤집으면 조용히 반대가 된다 — 그대로 쓴다.
-    out["cycle_raw"] = d["cycle_raw"]
+    #: `cycle_bok_raw` 도 같은 규약으로 저장돼 있어 갈아끼우기만 하면 된다.
+    if cycle == "bok":
+        out["cycle_raw"] = d["cycle_bok_raw"]
+    elif cycle == "oecd":
+        out["cycle_raw"] = d["cycle_raw"]
+    else:
+        raise SystemExit(f"cycle 은 oecd 나 bok 이어야 해요 — {cycle!r}")
     out["trade_raw"] = np.log(d["neer"]).diff(lb)
 
     if paper:
@@ -122,11 +144,13 @@ def as_signal(t: pd.DataFrame) -> dict[str, float]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--compare", action="store_true")
+    ap.add_argument("--cycle", choices=("oecd", "bok"), default="oecd",
+                    help="경기순환 원천 — oecd 실현치(지금) 또는 bok 전망치(논문)")
     a = ap.parse_args()
 
     d = _load()
-    new = themes(d, paper=True)
-    old = themes(d, paper=False)
+    new = themes(d, paper=True, cycle=a.cycle)
+    old = themes(d, paper=False, cycle="oecd")
 
     print()
     print("── 원논문 정의로 되돌린 둘 ──")
@@ -134,6 +158,9 @@ def main() -> int:
           "   (논문: two-year yields, 1992~)")
     print("  위험선호  주식 − 채권  →  주식 − 무위험(콜)"
           "   (논문: equity market excess returns)")
+    if a.cycle == "bok":
+        print("  경기순환  OECD 실현치  →  한은 전망치"
+              "   (논문: forecasts of real GDP growth and CPI inflation)")
 
     live = new["macro_sign"].dropna()
     print()
