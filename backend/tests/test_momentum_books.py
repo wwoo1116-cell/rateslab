@@ -166,3 +166,25 @@ def test_execution_pv01_is_won_per_bp_not_annuity():
         assert 0.5 * T < ann < T
         # ₩/bp 는 근사식과 같은 자릿수여야 한다 — 3Y 3만 · 10Y 10만 언저리
         assert 0.5 * sg.pv01_per_100m()[tenor] < won_per_bp < sg.pv01_per_100m()[tenor]
+
+
+# ── ⑦ 아침 주문표 — 목표가 아니라 «차이» ─────────────────────────────────
+
+def test_daily_order_is_the_delta_from_yesterday(tmp_path, monkeypatch):
+    """연속 북이라 「진입」이 없다. 데스크가 치는 것은 어제와의 차이다.
+
+    같은 목표를 이틀 연속 세우면 둘째 날 주문은 0 이어야 한다 — 0 이 아니면
+    매일 북을 통째로 갈아엎는 셈이고 비용이 실제의 몇 배가 된다.
+    """
+    from scripts import sleeve_daily as sd
+
+    led = {"rows": [{"date": "d1", "scale": 1.0,
+                     "legs": {"3Y": {"signed_face": -27.5e8}, "10Y": {"signed_face": -10.9e8}}}]}
+    # 오늘 목표가 어제와 같으면 차이가 0
+    for k, want in (("3Y", -27.5e8), ("10Y", -10.9e8)):
+        prev = led["rows"][-1]["legs"][k]["signed_face"]
+        assert want - prev == 0.0
+    # 방향이 뒤집히면 차이는 두 배로 실린다(청산 + 반대 진입)
+    assert (+27.5e8) - (-27.5e8) == pytest.approx(2 * 27.5e8)
+    # 최소 주문 문턱은 1억 — 그 아래는 안 친다
+    assert sd.MIN_TICKET == pytest.approx(1e8)

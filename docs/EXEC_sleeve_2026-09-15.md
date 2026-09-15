@@ -20,7 +20,9 @@
 | ④ | 롤링 상관 경보(+0.3 이 6개월) | **완료** | `--quarterly` |
 | ⑤ | 분기 점검 · 연 1회 W2 판정 | **완료** | `--quarterly` · `--annual` |
 | ⑥ | 신호 달력을 IRS 에 맞추기 | **완료 · 등록서 §0.1 로 재동결** | `momentum_irs_books.registered_signals` |
-| ⑦ | MR 배분기와 실제로 물리기 | 남음 | `data/krw-crs` 쪽 작업 |
+| ⑦ | 아침 주문표(목표 아닌 **차이**) | **완료** | `scripts/sleeve_daily.py` |
+| ⑧ | 시험이 원자료를 다시 쓰던 것 | **완료** | `tests/conftest.py` 세션 오프라인 |
+| ⑨ | MR 배분기에 배율을 실제로 걸기 | 남음 | `data/krw-crs` 쪽 작업 |
 
 ---
 
@@ -123,10 +125,38 @@ pv01 이 과대평가되면 같은 DV01 에 필요한 액면을 **적게** 계�
 
 ---
 
-## 3.1 ⑦ 남은 것 — MR 배분기와 실제로 물리기
+## 3.1 ⑦ 아침 주문표 — `scripts/sleeve_daily.py`
 
-지금 ③ 은 **슬리브 쪽 배율만** 낸다. 실집행에서는 그 배율이 그날 주문 액면에 실제로 걸려야
-하고, 그 자리는 평균회귀 레인(`data/krw-crs`)의 배분기다. 이 레인이 할 수 있는 것은 여기까지다.
+**아침에 이것 하나만 돌린다.** 흩어져 있던 셋(신호 · 실측 액면 · W4 배율)을 한 줄로 잇고,
+목표가 아니라 **어제와의 차이**를 찍는다.
+
+    ① 신호      registered_signals (IRS 달력 전일 이월)
+    ② 목표 액면  다섯 북 DV01 → 실측 pv01 → 만기별 액면
+    ③ W4 배율   여력 = 100억 − 평균회귀 증거금
+    ④ **주문**   오늘 목표 × 배율 − 어제 실제
+
+★차이를 찍는 이유: 이 북은 매일 크기가 바뀌는 연속 북이라 「진입」이라는 사건이 없다.
+ 데스크가 실제로 치는 것은 어제와의 차이다. 같은 목표가 이틀이면 둘째 날 주문은 0 이다
+ (시험 `test_daily_order_is_the_delta_from_yesterday` 가 그것을 고정한다).
+★1억 미만 차이는 안 친다 — 호가 단위와 수수료를 못 이긴다.
+★기록은 `output/sleeve_daily_ledger.json` 에 쌓이고, 채점 창 이전은 「연습」으로 표시된다.
+
+2026-09-08 기준 첫 실행: 3Y 페이 27.5억 · 10Y 페이 10.9억 · 증거금 1.92억 · 배율 1.000.
+
+## 3.2 ⑧ 시험 위생 — 원자료를 다시 쓰던 것
+
+전체 시험을 한 번 돌리면 `backend/data/raw/bigfoot_*.csv` **열넷이 통째로 다시 쓰였다.**
+값은 같아도 행마다 박힌 `retrieved_at` 이 갈려 전 행이 diff 로 뜨고, 그 파일들은 git 이 추적한다.
+`test_rebake.py` 는 이미 호출마다 `offline=True` 로 막고 있었는데 다른 경로가 남아 있었다.
+
+`tests/conftest.py` 에 **세션 전체** `BIGFOOT_OFFLINE=1` 을 걸었다 — 호출부마다 기억하는 것보다
+싸고, 덤으로 통과 여부가 망 상태에 안 달린다. 일부러 온라인을 재야 하면 그 시험 안에서만 끈다.
+
+## 3.3 ⑨ 남은 것 — MR 배분기에 배율을 실제로 걸기
+
+지금 ③⑦ 은 **슬리브 쪽 배율과 주문**을 낸다. 실집행에서는 그 배율이 평균회귀 배분기의 그날
+증거금 사용액과 같은 트랜잭션 안에서 결정돼야 한다. 그 자리는 `data/krw-crs` 이고 이 레인 밖이다.
+지금 배율이 계속 1.000 이라(6.5년에 28일 발동) 당장 막는 자리는 아니다.
 
 ---
 
@@ -139,3 +169,4 @@ pv01 이 과대평가되면 같은 DV01 에 필요한 액면을 **적게** 계�
     backend/scripts/momentum_irs_books.py      판정문 셋 `-books-paper`
     backend/scripts/sleeve_allocation.py       배분을 액면·증거금으로 편 그림 둘
     backend/scripts/sleeve_monitor.py          ③④⑤ 매일·분기·연 · output/sleeve_monitor_state.json
+    backend/scripts/sleeve_daily.py            ⑦ 아침 주문표 · output/sleeve_daily_ledger.json

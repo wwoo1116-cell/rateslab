@@ -66,6 +66,33 @@ def bond_roll_lane_off():
     bond_roll.set_sector_curve_provider(None)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _offline_data_sources():
+    """시험은 **망을 안 때리고 추적되는 원자료를 다시 쓰지 않는다** [2026-09-15].
+
+    `bigfoot/data/ecos.py` 는 받아온 응답을 `backend/data/raw/bigfoot_*.csv` 에
+    캐시로 쓴다. 값은 같아도 행마다 박힌 `retrieved_at` 이 갈려서 **전 행이 diff 로
+    뜨고**, 그 파일들은 git 이 추적한다. 실측: 전체 시험을 한 번 돌리면 열넷이
+    통째로 다시 쓰였다.
+
+    `test_rebake.py` 는 이미 호출마다 `offline=True` 를 넘겨 이 자리를 막고 있었다.
+    여기서 **세션 전체**로 넓힌다 — 새 시험이 로더를 부를 때마다 같은 사고가 나는
+    것을 막는 편이 호출부마다 기억하는 것보다 싸다. 덤으로 통과 여부가 망 상태에
+    안 달린다.
+
+    ⚠ 일부러 온라인을 재야 하는 시험은 `monkeypatch.delenv("BIGFOOT_OFFLINE")` 로
+    그 시험 안에서만 끈다.
+    """
+    import os
+    before = os.environ.get("BIGFOOT_OFFLINE")
+    os.environ["BIGFOOT_OFFLINE"] = "1"
+    yield
+    if before is None:
+        os.environ.pop("BIGFOOT_OFFLINE", None)
+    else:
+        os.environ["BIGFOOT_OFFLINE"] = before
+
+
 @pytest.fixture(autouse=True)
 def _isolate_caches():
     """Reset the process-global TTL cache around every test.
