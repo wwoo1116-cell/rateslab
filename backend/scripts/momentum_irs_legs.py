@@ -61,8 +61,17 @@ def macro_sign_from(macro: dict, themes: tuple[str, ...]) -> dict[str, float]:
     return out
 
 
+def _ext_key(external) -> int | None:
+    """외부 신호의 **내용**으로 키를 만든다. `is not None` 만 보면 원천이 다른 두
+    거시 북(oecd/bok · drop 조합)이 한 프로세스에서 조용히 서로를 재사용한다
+    (2026-09-15 계보 감사). 호출부가 캐시를 비우던 관행은 이제 필요 없다."""
+    if external is None:
+        return None
+    return hash(tuple((k, tuple(sorted(v.items()))) for k, v in sorted(external.items())))
+
+
 def _book(series, *, signal: str, vol_window: int, external=None) -> dict:
-    key = (signal, vol_window, external is not None)
+    key = (signal, vol_window, _ext_key(external))
     if key in _RUNS:
         return _RUNS[key]
     out = cta.book_simulate(

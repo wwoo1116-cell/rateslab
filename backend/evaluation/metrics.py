@@ -686,9 +686,18 @@ def evaluate(returns: pd.Series,
             bad.append(f"PBO {p['pbo']:.4f} ≥ {PBO_PASS}" if p["pbo"] is not None
                        else f"PBO 를 못 쟀어요({p['why']})")
         if not placebo_pass:
-            bad.append(f"위약 p {pl['p']:.4f} ≥ {PLACEBO_PASS}"
-                       if pl.get("p") is not None
-                       else f"위약을 못 쟀어요({pl.get('why')})")
+            #: 두 판(비용후·비용전) 중 어느 쪽이 깨졌는지를 적는다 — 비용후만 찍으면
+            #: 통과한 값을 사유로 인용하는 판정문이 나온다(2026-09-15 실측, -bokcycle).
+            if pl.get("p") is None:
+                bad.append(f"위약을 못 쟀어요({pl.get('why')})")
+            else:
+                pg = pl.get("p_gross")
+                parts = []
+                if pl["p"] >= PLACEBO_PASS:
+                    parts.append(f"비용후 {pl['p']:.4f}")
+                if pg is not None and pg >= PLACEBO_PASS:
+                    parts.append(f"비용전 {pg:.4f}")
+                bad.append(f"위약 p {' · '.join(parts) or f'{pl['p']:.4f}'} ≥ {PLACEBO_PASS}")
         reason = " · ".join(bad)
     if p["pbo"] is not None and p["pbo"] >= PBO_DISCARD:
         notes.append(f"PBO {p['pbo']:.2f} ≥ {PBO_DISCARD} — 사양은 이 전략을 폐기하라고 해요.")
