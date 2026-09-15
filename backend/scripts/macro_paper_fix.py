@@ -40,8 +40,11 @@ Brooks, *A Half Century of Macro Momentum*(AQR 2017) Appendix B 를 그대로 �
 
 ## 안 건드리는 것
 
-경기순환·국제교역은 논문과 같다(OECD 빈티지 EX·CP 평균 · NEER 수출가중 로그 1년
-변화). 부호 규약 넷, 룩백 250봉, `macro_sign` = 테마 평균도 그대로다.
+국제교역은 논문과 같다(NEER 수출가중 로그 1년 변화). **경기순환은 논문과 다르다** —
+논문은 실질 GDP 성장률·물가 «전망치»인데 우리는 성장률 자리에 OECD **수출** 실현치를
+두고, 성장·물가를 신호에서 평균한 뒤 부호를 낸다(논문은 북 둘을 평균, 각주 12).
+2026-09-15 원문 대조 `docs/BROOKS2017_appendix_BC.md`. 부호 규약 넷, 룩백 250봉,
+`macro_sign` = 테마 평균은 등록서대로 그대로다.
 """
 from __future__ import annotations
 

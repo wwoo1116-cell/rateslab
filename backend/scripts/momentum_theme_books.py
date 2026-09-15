@@ -13,8 +13,10 @@ r"""거시 다리의 «구조»를 2×2 로 가른다 — 합성 하나 대 북 
 
     합성·부호   등록 북 (macro_sign 평균, 북 하나)
     합성·연속   09-08 탐색의 「매크로 z」 (zcap 평균, 북 하나)
-    북넷·부호   테마별 부호 → 북 넷 → 등가중
-    북넷·연속   테마별 zcap → 북 넷 → 등가중   ← 논문 구조
+    북넷·부호   테마별 부호 → 북 넷 → 등가중   ← 논문 부록 C 의 directional 구조가 이것이다
+    북넷·연속   테마별 zcap → 북 넷 → 등가중   (연속값·순위 표준화는 논문에서 횡단면 롱숏에만 쓴다)
+    북넷·부호·위험선호평균제거   위험선호 부호를 확장 평균 대비로 (부록 C 의 그 문장)
+    북넷·부호·논문충실         위 + 경기순환을 성장 북·물가 북으로 갈라 평균 (각주 12)
 
 각 북은 같은 배관(`momentum_irs_legs._book`)이고 북 변동성 목표 100만원/일이라, 북
 넷의 등가중은 곧 **테마 간 위험 등배분**이다. 50/50 은 등록 규약대로 추세와 거시의
@@ -111,14 +113,36 @@ def main() -> int:
 
     sign = np.sign(raw).where(full)
     zed = pd.DataFrame({t: zcap(raw[t]) for t in THEMES}).where(full)
+
+    #: 논문 부록 B·C 대조(2026-09-15)로 드러난 두 자리를 논문대로 되돌린 계열.
+    #:  ① 위험선호 — "since one-year equity returns are positive on average, I compare to an
+    #:     expanding mean" : 부호를 0 이 아니라 **확장 평균** 대비로 낸다.
+    #:  ② 경기순환 — 성장·물가를 신호에서 평균한 뒤 부호를 내는 것이 아니라(sign(mean)),
+    #:     논문 각주 12 처럼 **성장 북과 물가 북을 따로 세워 평균**한다(mean of books).
+    #:     수출(EX)·물가(CP) 가속을 따로 꺼내 쓴다 — 성장률 자리에 수출이 서 있는 것은 그대로다.
+    eq_ex = -raw["risk"]                                   # 주식 초과수익 1년 (부호 되돌림)
+    risk_dm = -(eq_ex - eq_ex.expanding(min_periods=250).mean())
+    pit = pd.read_csv(mp.PROJECTS / "data" / "krw-macro-vintage" / "out" / "macro_pit_monthly.csv",
+                      encoding="utf-8-sig", parse_dates=["available_from"])
+    comp = {}
+    for m_ in ("EX", "CP"):
+        w_ = pit[pit["measure"] == m_].dropna(subset=["dg_1y"]).set_index("available_from")["dg_1y"].sort_index()
+        comp[m_] = -w_.reindex(raw.index, method="ffill")   # 가속 → 국채 숏이라 부호 −
+    sign_dm = sign.copy(); sign_dm["risk"] = np.sign(risk_dm).where(full)
+
     sigs = {
-        "합성·부호": {"composite": sign.mean(axis=1)},
-        "합성·연속": {"composite": zed.mean(axis=1)},
-        "북넷·부호": {t: sign[t] for t in THEMES},
-        "북넷·연속": {t: zed[t] for t in THEMES},
+        "합성·부호": {"composite": (1.0, sign.mean(axis=1))},
+        "합성·연속": {"composite": (1.0, zed.mean(axis=1))},
+        "북넷·부호": {t: (1.0, sign[t]) for t in THEMES},
+        "북넷·연속": {t: (1.0, zed[t]) for t in THEMES},
+        "북넷·부호·위험선호평균제거": {t: (1.0, sign_dm[t]) for t in THEMES},
+        "북넷·부호·논문충실": {"growth": (0.5, np.sign(comp["EX"]).where(full)),
+                          "inflation": (0.5, np.sign(comp["CP"]).where(full)),
+                          "policy": (1.0, sign["policy"]), "trade": (1.0, sign["trade"]),
+                          "risk": (1.0, sign_dm["risk"])},
     }
     # 같은 창 — 네 변형 중 가장 늦게 서는 날부터 FREEZE 까지
-    start = max(min(as_sig(s.dropna())) for v in sigs.values() for s in v.values())
+    start = max(min(as_sig(s_.dropna())) for v in sigs.values() for _w, s_ in v.values())
     print(f"공통 창 {start} ~ {mo.FREEZE} (연속판 워밍업 때문에 등록 창 2017-01-06 보다 늦다)")
 
     def cut(s: pd.Series) -> pd.Series:
@@ -147,18 +171,20 @@ def main() -> int:
         books = {}
         for vw in me.VOL_WINDOWS:
             books[vw] = {}
-            for t, s in parts.items():
-                ext = {k: as_sig(s) for k in series}
+            for t, (_w, s_) in parts.items():
+                ext = {k: as_sig(s_) for k in series}
                 books[vw][t] = ml._book(series, signal=mo.SIGNAL, vol_window=vw, external=ext)
         n = len(parts)
-        macro_cells = {vw: cut(sum(pnl_of(b) for b in books[vw].values()) / n) for vw in me.VOL_WINDOWS}
+        wsum = sum(w_ for w_, _s in parts.values())
+        wt = {t: w_ / wsum for t, (w_, _s) in parts.items()}
+        macro_cells = {vw: cut(sum(wt[t] * pnl_of(b) for t, b in books[vw].items())) for vw in me.VOL_WINDOWS}
         macro = macro_cells[mo.VOL_WINDOW]
         ix = trend.index.intersection(macro.index)
         blend_cells = {vw: 0.5 * trend_cells[vw].loc[ix] + 0.5 * macro_cells[vw].loc[ix] for vw in me.VOL_WINDOWS}
         blend = blend_cells[mo.VOL_WINDOW]
         # 신호의 0 비중 (합성은 신호 자체, 북넷은 네 북 포지션이 전부 0 인 날)
         if n == 1:
-            s0 = cut(parts["composite"].dropna().rename(lambda d: d.strftime("%Y-%m-%d")))
+            s0 = cut(parts["composite"][1].dropna().rename(lambda d: d.strftime("%Y-%m-%d")))
             zero = float((s0 == 0).mean())
         else:
             pos_sum = sum(np.abs(np.asarray(b["pos"][k], dtype=float))
@@ -180,10 +206,10 @@ def main() -> int:
             mat = pd.DataFrame({f"{mo.SIGNAL}-vw{vw}": c for vw, c in cells.items()}).dropna()
             sr_var = float(((mat.mean() / mat.std(ddof=1)).dropna()).var(ddof=1))
             if leg == "macro":
-                wts = [(1.0 / n, b["pos"]) for b in books[mo.VOL_WINDOW].values()]
+                wts = [(wt[t], b["pos"]) for t, b in books[mo.VOL_WINDOW].items()]
             else:
                 km = 1.0 if leg == "blend" else k_rp[mo.VOL_WINDOW]
-                wts = [(0.5, t_book["pos"])] + [(0.5 * km / n, b["pos"]) for b in books[mo.VOL_WINDOW].values()]
+                wts = [(0.5, t_book["pos"])] + [(0.5 * km * wt[t], b["pos"]) for t, b in books[mo.VOL_WINDOW].items()]
             pb = placebo_multi(pl, pl_g, wts, mask, lo)
             e = ev.evaluate(mat[f"{mo.SIGNAL}-vw{mo.VOL_WINDOW}"].reset_index(drop=True),
                             trials=mie.TRIALS, is_oos_splits=16, configs=mat,
@@ -213,7 +239,7 @@ def main() -> int:
           f"{'50/50SR':>8s} {'DSR':>7s} {'PBO':>7s} {'위약후/전':>14s} {'판정':>4s} | {'맞춤누적':>8s} {'맞춤MDD':>8s} {'Calmar':>6s}")
     for name, r in rows:
         m, b, bm = r["macro"], r["blend"], r["blend_matched"]
-        print(f"  {name:10s} {m['sr']:7.3f} {m['vol']/1e4:7,.0f}만 {r['zero_share']:6.3f} {r['rho_trend']:+6.3f} "
+        print(f"  {name:14s} {m['sr']:7.3f} {m['vol']/1e4:7,.0f}만 {r['zero_share']:6.3f} {r['rho_trend']:+6.3f} "
               f"{m['p']:6.4f}/{m['p_gross']:6.4f} | {b['sr']:8.3f} {b['dsr']:7.4f} {b['pbo']:7.4f} "
               f"{b['p']:6.4f}/{b['p_gross']:6.4f} {'통과' if b['pass'] else '미통과':>4s} | "
               f"{bm['cum']/1e4:8,.0f} {bm['mdd']/1e4:8,.0f} {bm['calmar']:6.2f}")
@@ -222,7 +248,7 @@ def main() -> int:
     print(f"  {'변형':10s} {'k':>5s} | {'50/50SR':>8s} {'DSR':>7s} {'PBO':>7s} {'위약후/전':>14s} {'판정':>4s} | {'맞춤누적':>8s} {'맞춤MDD':>8s} {'Calmar':>6s}")
     for name, r in rows:
         b, bm = r["blend_rp"], r["blend_rp_matched"]
-        print(f"  {name:10s} {r['k_rp']:5.2f} | {b['sr']:8.3f} {b['dsr']:7.4f} {b['pbo']:7.4f} "
+        print(f"  {name:14s} {r['k_rp']:5.2f} | {b['sr']:8.3f} {b['dsr']:7.4f} {b['pbo']:7.4f} "
               f"{b['p']:6.4f}/{b['p_gross']:6.4f} {'통과' if b['pass'] else '미통과':>4s} | "
               f"{bm['cum']/1e4:8,.0f} {bm['mdd']/1e4:8,.0f} {bm['calmar']:6.2f}")
     print()
