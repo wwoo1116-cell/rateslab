@@ -19,6 +19,7 @@
  * changed. */
 
 import type { Row } from "./rows";
+import { eul, gwa } from "@/lib/josa";
 
 export type Construct =
   | { kind: "outright"; tenor: string }
@@ -114,9 +115,9 @@ export function instrumentGloss(row: Row): string {
     case "outright":
       return `${tenorKo(c.tenor)} 만기 KRW IRS 파 금리예요. CD 91일물을 변동금리로 교환하는 조건이에요. 국내 IRS 시장의 표준 호가예요.`;
     case "spread":
-      return `${c.short}·${c.long} 커브 스프레드예요. ${c.long}에서 ${c.short}를 뺀 값이에요. 확대는 스티프닝, 축소는 플래트닝이에요.`;
+      return `${c.short}·${c.long} 커브 스프레드예요. ${c.long}에서 ${c.short}${eul(c.short)} 뺀 값이에요. 확대는 스티프닝, 축소는 플래트닝이에요.`;
     case "butterfly":
-      return `${c.short}·${c.belly}·${c.long} 버터플라이예요. ${c.belly} 금리의 두 배에서 ${c.short}와 ${c.long}를 뺀 값이에요. 확대되면 벨리가 윙 대비 약세, 축소되면 강세예요.`;
+      return `${c.short}·${c.belly}·${c.long} 버터플라이예요. ${c.belly} 금리의 두 배에서 ${c.short}${gwa(c.short)} ${c.long}${eul(c.long)} 뺀 값이에요. 확대되면 벨리가 윙 대비 약세, 축소되면 강세예요.`;
     case "forward":
       return c.tenor === "SPOT"
         ? `${tenorKo(c.start)} 현물 파 금리예요. 현재 커브에서 도출해요. 해당 구간에 대한 시장의 기대 금리를 나타내요.`

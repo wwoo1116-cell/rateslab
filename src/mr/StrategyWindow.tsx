@@ -82,6 +82,7 @@ import { backtestDays, futuresReconNote, reconNote, reconTenors } from '@/backte
 import { ReconStack, type ReconStackDay } from '@/ui/window/ReconStack';
 import { MrKnobBar, mrKnobsStale } from './KnobBar';
 import { OptimizePane } from './OptimizePane';
+import { eun } from '@/lib/josa';
 import { Panel, RiskAdjusted, SplitColumn, WHY_WORD, headFont } from './parts';
 
 /* 얼라인 규칙 [OWNER 2026-08-25 — CLAUDE.md «얼라인» 절]. 첫 판은 라벨을
@@ -1903,8 +1904,10 @@ export function StrategyWindow({
                   동시에 볼 수 없었다. */}
               <Panel title="거래" sub={tradeSub}>
                 {/* 표 높이는 차트 둘을 합친 값 — 풀폭이 된 뒤에도 200 이면 38거래에서
-                    세 줄만 보인다. `overflow`·`position` 은 Box prop 이 없어 style 에 남는다. */}
-                <Box style={{ position: 'relative', height: TABLE_H, overflow: 'auto' }} width="100%">
+                    세 줄만 보인다. ⚠ 여기 있던 「`overflow`·`position` 은 Box prop 이 없다」는
+                    주석은 **틀렸다**(2026-09-15 확인). CDS 9.22 의
+                    `styles/responsive/base.d.ts` 가 둘 다 내보내고 Box 는 StyleProps 를 받는다. */}
+                <Box position="relative" height={TABLE_H} overflow="auto" width="100%">
                   <Table bordered={false}>
                     {/* 거래가 수십 줄이라 머리가 따라와야 한다(Main 규칙). */}
                     <TableHeader sticky>
@@ -2133,7 +2136,7 @@ export function StrategyWindow({
                   빈칸으로 두면 화면이 「이 거래엔 액면이 없다」고 말한다. */}
               {run.principalNote ? ` ${run.principalNote}` : ''}
               {run.principal
-                ? ` 액면은 거래마다 진입일 커브로 환산해요 — 그래야 「Delta ${run.params.notional.toLocaleString()}원/bp」가 모든 거래에서 같은 뜻이에요. 머리의 ${fmtEok(run.principal.krw)}은 「지금 세우면」이고, 거래마다의 액면은 그 거래의 대사표가 적어요(표본 안에서 ${run.real ? '5~16%' : ''} 움직여요).`
+                ? ` 액면은 거래마다 진입일 커브로 환산해요 — 그래야 「Delta ${run.params.notional.toLocaleString()}원/bp」가 모든 거래에서 같은 뜻이에요. 머리의 ${fmtEok(run.principal.krw)}${eun(fmtEok(run.principal.krw))} 「지금 세우면」이고, 거래마다의 액면은 그 거래의 대사표가 적어요(표본 안에서 ${run.real ? '5~16%' : ''} 움직여요).`
                 : ''}
               {/* 다리 레벨의 출처와 항등 — 안 적으면 이 세 열이 어디서 온
                   값인지, 스프레드와 무슨 관계인지 화면만 보고는 알 수 없다. */}

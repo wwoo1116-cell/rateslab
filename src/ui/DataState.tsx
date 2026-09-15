@@ -1,8 +1,11 @@
 'use client';
 
 import { Button } from '@coinbase/cds-web/buttons';
+
 import { HStack, VStack } from '@coinbase/cds-web/layout';
 import { TextBody, TextCaption } from '@coinbase/cds-web/typography';
+
+import { eul } from '@/lib/josa';
 
 /**
  * A failure looks different from a wait, and a failure is retryable in place.
@@ -21,7 +24,8 @@ export function LoadingState({ what }: { what: string }) {
   return (
     <VStack gap={0.5} paddingY={2}>
       <TextBody as="p" color="fgMuted">
-        {what}을 불러오는 중이에요
+        {what}
+        {eul(what)} 불러오는 중이에요
       </TextBody>
     </VStack>
   );
@@ -40,7 +44,10 @@ export function ErrorState({
 }) {
   return (
     <VStack gap={1} paddingY={2} role="alert">
-      <TextBody as="p">{what}을 불러오지 못했어요</TextBody>
+      <TextBody as="p">
+        {what}
+        {eul(what)} 불러오지 못했어요
+      </TextBody>
       <TextCaption as="span" color="fgMuted">
         {/* The likeliest cause, in the reader's terms — :8200 is v2's own backend and
             the only thing that serves this screen. */}

@@ -49,6 +49,9 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+/* ⚠ 제목 문구는 2026-09-15 에 바뀌었다 — 「3Y-10Y(으)로 이동」이라는 회피형이
+   낭독기에 「…(으)로」로 그대로 읽혔다. 이제 `lib/josa.euro` 가 앞말의 받침을
+   보고 「로/으로」를 정한다(「10Y」는 «십와이» 라 받침이 없어 「로」). */
 describe('하단 기준점 띠', () => {
   it('수준·기울기·포워드 하나씩을 든다', () => {
     expect(ANCHOR_IDS).toEqual(['10Y', '3Y-10Y', '1Yx1Y']);
@@ -67,7 +70,7 @@ describe('하단 기준점 띠', () => {
     render(
       <BottomStrip rows={ROWS} onPin={(r) => pinned.push(r)} collapsed={false} onCollapsed={() => {}} />,
     );
-    fireEvent.click(screen.getByTitle('3Y-10Y(으)로 이동'));
+    fireEvent.click(screen.getByTitle('3Y-10Y로 이동'));
     expect(pinned).toHaveLength(1);
     // 그룹이 실려 와야 호출부가 탭을 옮길 수 있다.
     expect(pinned[0].group).toBe('spread');

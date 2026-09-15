@@ -193,6 +193,20 @@ export default function Home() {
         ? (STRATEGY_ITEMS.find((i) => i.id === strategy)?.label ?? 'Strategy')
         : (SECTIONS.find((s) => s.id === section)?.label ?? 'Main');
 
+  /* 자료가 없을 때 무엇을 그리나 — **한 자리**에서 정한다 [2026-09-15 디자인 점검].
+   *
+   * 아래 삼항 사슬에서 `main` 과 `simulation` 은 `data` 가 없으면 `null` 로 떨어져
+   * **아무것도 안 그리고 있었다**. 백엔드가 죽은 화면이 여섯 중 넷은 「다시 시도」
+   * 버튼을 주고 둘은 빈 화면이었다는 뜻이고, 그건 `ui/DataState` 가 존재하는
+   * 이유("A failure looks different from a wait, and a failure is retryable in
+   * place")를 그 둘에서만 안 지킨 것이다. */
+  const dataFallback = () =>
+    error ? (
+      <ErrorState what="시장 데이터" detail={error} onRetry={() => void load()} retrying={retrying} />
+    ) : (
+      <LoadingState what="시장 데이터" />
+    );
+
   const load = useCallback(async () => {
     setError(undefined);
     setRetrying(true);
@@ -577,7 +591,9 @@ const BANNER_H = 34;
                 />
               </ErrorBoundary>
             </VStack>
-          ) : null
+          ) : (
+            dataFallback()
+          )
         ) : section === 'simulation' && !isGroupTab ? (
           /* 시뮬레이션은 **전체 화면**이다 — 설정 열 + 커브 미리보기(v1 형태).
              결과만 떠 있는 창으로 뜬다. */
@@ -592,7 +608,9 @@ const BANNER_H = 34;
                 setRuns={setSimRuns}
               />
             </ErrorBoundary>
-          ) : null
+          ) : (
+            dataFallback()
+          )
         ) : section === 'setting' && !isGroupTab ? (
           /* Setting — 다른 화면이 읽는 값을 정하는 자리 [OWNER, 2026-08-14].
              데이터가 없어도 선다: 저장은 브라우저 몫이고 서버는 출처만 답한다. */
@@ -649,10 +667,8 @@ const BANNER_H = 34;
               {NOT_BUILT[section]}
             </TextBody>
           </VStack>
-        ) : error ? (
-          <ErrorState what="시장 데이터" detail={error} onRetry={() => void load()} retrying={retrying} />
-        ) : !data ? (
-          <LoadingState what="시장 데이터" />
+        ) : !data || error ? (
+          dataFallback()
         ) : (
           <>
             {shown.length === 0 ? (

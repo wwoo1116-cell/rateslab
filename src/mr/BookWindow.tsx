@@ -115,7 +115,7 @@ function Num({ v, tone }: { v: string; tone?: 'up' | 'down' }) {
  */
 function LegTable({ legs, onPick }: { legs: MrBookSpanLeg[]; onPick?: (id: string) => void }) {
   return (
-    <Box style={{ position: 'relative', height: TABLE_H, overflow: 'auto' }} width="100%">
+    <Box position="relative" height={TABLE_H} overflow="auto" width="100%">
       <Table bordered={false}>
         <TableHeader sticky>
           <TableRow>
@@ -236,7 +236,7 @@ function bookRows(run: MrBookRun): MrBookTrade[] {
  *  수 없다. 2026-09-09 에 낱개 창에 생긴 「순Δ」도 같은 이유로 여기 없다. */
 function TradeTable({ run }: { run: MrBookRun }) {
   return (
-    <Box style={{ position: 'relative', height: TABLE_H, overflow: 'auto' }} width="100%">
+    <Box position="relative" height={TABLE_H} overflow="auto" width="100%">
       <Table bordered={false}>
         <TableHeader sticky>
           <TableRow>

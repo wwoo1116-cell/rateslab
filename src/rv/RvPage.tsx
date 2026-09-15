@@ -47,8 +47,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Select } from '@coinbase/cds-web/alpha/select';
 import { Collapsible as CdsCollapsible } from '@coinbase/cds-web/collapsible';
-import { Box, HStack, VStack } from '@coinbase/cds-web/layout';
-import { Divider } from '@coinbase/cds-web/layout/Divider';
+import { Box, Divider, HStack, VStack } from '@coinbase/cds-web/layout';
 import {
   Text,
   TextBody,

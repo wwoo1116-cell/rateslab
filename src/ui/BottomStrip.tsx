@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from 'react';
 
 import { dirClass, fmtDelta, fmtLevel } from '@/lib/format';
+import { euro } from '@/lib/josa';
 import type { Row } from '@/table/rows';
 
 /**
@@ -46,7 +47,7 @@ function Anchor({ row, onPin }: { row: Row; onPin: (row: Row) => void }) {
       type="button"
       className="sr-strip-anchor"
       onClick={() => onPin(row)}
-      title={`${row.label}(으)로 이동`}
+      title={`${row.label}${euro(row.label)} 이동`}
     >
       <span className="sr-strip-anchor-label">{row.label}</span>
       <span className="sr-strip-anchor-now">{fmtLevel(row.now, row.unit)}</span>

@@ -25,6 +25,7 @@ import { ENGINE_STATUS } from './assumptions';
 import type { PathSolution, Tenor } from './path';
 import type { Candidate, GapVector, TenorGap } from './trades';
 import type { RiskLine } from './risk';
+import { eul } from '@/lib/josa';
 
 export type HorizonId = 'mpc' | 'q1' | 'q4';
 
@@ -92,7 +93,8 @@ export function mpcDecision(dots: readonly number[]): string {
   const when = ENGINE_STATUS.next_event.date;
   const what = d === 0 ? '동결' : `${d > 0 ? '+' : '−'}${Math.abs(d)}bp`;
   const label = ENGINE_STATUS.next_event.label ?? '다음 회의';
-  return when ? `${when} ${label}에 ${what}을 보고 있어요.` : `${label}에 ${what}을 보고 있어요.`;
+  const tail = `${label}에 ${what}${eul(what)} 보고 있어요.`;
+  return when ? `${when} ${tail}` : tail;
 }
 
 function implicationLine(
