@@ -16,6 +16,11 @@ r"""등록 50/50 슬리브의 사전등록 수 — 제1안 [OWNER 2026-09-15].
 IRS 고시 달력 ∩ 평균회귀 장부 달력(1,646봉)** 이다. 추세 단독의 09-11 수
 (ΔCalmar +0.309 · P 0.040)가 여기서 +0.307 · P 0.048 로 옮겨 오는 것은 그 6봉이다.
 
+## `--structure books` (2026-09-15 밤)
+
+거시 다리를 논문 구조(테마별 부호 북 넷 · 위험선호 확장 평균, `momentum_irs_books`)로 세운
+판. 50/50 의 DV01 은 추세 북과 «네 북 평균»의 반씩 합이다. 산출은 `_books.json`.
+
 ## 50/50 의 포지션
 
 `legs()` 의 50/50 손익은 두 북 손익의 반씩 합이므로 DV01 도 두 북 포지션의
@@ -60,23 +65,36 @@ def _sized(m: np.ndarray, t: np.ndarray, w: float):
 
 
 def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--structure", choices=("composite", "books"), default="composite",
+                    help="composite = 09-08 등록 구조(부호 평균 → 북 하나) · books = 논문 구조(테마별 부호 북 넷 · 위험선호 확장 평균)")
+    a = ap.parse_args()
     # ── 슬리브 둘 ────────────────────────────────────────────────────────
     series = mie.load_irs_series()
     _s, _r, macro = me._inputs()
     if macro is None:
         raise SystemExit("매크로 신호가 없어서 50/50 을 못 세워요")
-    macro = dict(macro)
-    macro["macro_sign"] = mp.as_signal(mp.themes(mp._load(), paper=True, cycle="oecd"))
-    L = ml.legs(series, macro)
-    rets = {leg: iso(L[leg]["rets"]) for leg in ("trend", "macro", "blend")}
-    ext = {k: macro["macro_sign"] for k in series}
     t_book = ml._book(series, signal=mo.SIGNAL, vol_window=mo.VOL_WINDOW)
-    m_book = ml._book(series, signal=mo.SIGNAL, vol_window=mo.VOL_WINDOW, external=ext)
-    assert list(t_book["dates"]) == list(m_book["dates"])
+    if a.structure == "composite":
+        macro = dict(macro)
+        macro["macro_sign"] = mp.as_signal(mp.themes(mp._load(), paper=True, cycle="oecd"))
+        L = ml.legs(series, macro)
+        ext = {k: macro["macro_sign"] for k in series}
+        m_books = {"composite": ml._book(series, signal=mo.SIGNAL, vol_window=mo.VOL_WINDOW, external=ext)}
+    else:
+        from scripts import momentum_irs_books as mb
+        sig = mb.signals(mp.themes(mp._load(), paper=True, cycle="oecd"))
+        L = mb.legs(series, sig)
+        m_books = mb.macro_books(series, sig, mo.VOL_WINDOW)
+    rets = {leg: iso(L[leg]["rets"]) for leg in ("trend", "macro", "blend")}
+    for b in m_books.values():
+        assert list(t_book["dates"]) == list(b["dates"])
+    nb = len(m_books)
     dv = {}
     for k in t_book["pos"]:
         pt = np.asarray(t_book["pos"][k], dtype=float) / 100.0
-        pm = np.asarray(m_book["pos"][k], dtype=float) / 100.0
+        pm = sum(np.asarray(b["pos"][k], dtype=float) for b in m_books.values()) / nb / 100.0
         dv[k] = {"trend": pt, "blend": 0.5 * (pt + pm)}
     dates = [str(x)[:10] for x in t_book["dates"]]
     pv = sg.pv01_per_100m()
@@ -102,7 +120,7 @@ def main() -> int:
     out: dict = {"window": [idx[0], idx[-1], len(idx)], "mr": {"cal": base_cal, "mdd": base_mdd},
                  "sleeves": {}}
     print()
-    print(f"── 창 {idx[0]}~{idx[-1]} · {len(idx):,}봉 (IRS 달력 ∩ MR 달력) · "
+    print(f"── [{a.structure}] 창 {idx[0]}~{idx[-1]} · {len(idx):,}봉 (IRS 달력 ∩ MR 달력) · "
           f"MR 단독 Calmar {base_cal:.3f} MDD {base_mdd:.3f} ──")
     print(f"  슬리브 실현 연변동성(전체 창)  추세 {vol_full['trend']/1e4:,.0f}만 · 50/50 {vol_full['blend']/1e4:,.0f}만")
 
@@ -167,7 +185,8 @@ def main() -> int:
                      "over": int((r > 0.3).sum()), "n": int(len(r))},
         }
 
-    p = Path(__file__).resolve().parents[1] / "output" / "sleeve_prereg_5050.json"
+    p = Path(__file__).resolve().parents[1] / "output" / (
+        "sleeve_prereg_5050.json" if a.structure == "composite" else "sleeve_prereg_5050_books.json")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(out, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
     print(f"\n  → {p}")
