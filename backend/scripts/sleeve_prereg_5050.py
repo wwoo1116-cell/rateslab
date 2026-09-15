@@ -84,7 +84,7 @@ def main() -> int:
         m_books = {"composite": ml._book(series, signal=mo.SIGNAL, vol_window=mo.VOL_WINDOW, external=ext)}
     else:
         from scripts import momentum_irs_books as mb
-        sig = mb.signals(mp.themes(mp._load(), paper=True, cycle="oecd"))
+        sig = mb.registered_signals(series)      # ★IRS 달력 이월 포함 — 한 자리
         L = mb.legs(series, sig)
         m_books = mb.macro_books(series, sig, mo.VOL_WINDOW)
     rets = {leg: iso(L[leg]["rets"]) for leg in ("trend", "macro", "blend")}

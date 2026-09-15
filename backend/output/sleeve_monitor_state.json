@@ -1,0 +1,71 @@
+{
+ "log": [
+  {
+   "run": "2026-09-15",
+   "daily": {
+    "date": "2026-09-07",
+    "mr_margin": 4768745719.762973,
+    "sleeve_want": 174765676.25,
+    "headroom": 5231254280.237027,
+    "scale": 1.0,
+    "k_mr": 0.9537491439525946,
+    "k_tr": 0.3179163813175315,
+    "face_total": 3495313525.0,
+    "hist_hit_days": 27,
+    "hist_days": 1646
+   },
+   "quarterly": {
+    "gates": {
+     "trend": true,
+     "macro": true,
+     "blend": true
+    },
+    "corr_now": 0.0893631057105946,
+    "corr_min": -0.3337261180276279,
+    "corr_max": 0.15372820712425186,
+    "corr_over_run": 0,
+    "corr_alarm": false,
+    "scored_bars": 0,
+    "total_bars": 1646
+   },
+   "annual": {
+    "bars": 1646,
+    "c1_bars": false,
+    "p40": 0.075,
+    "c2_p": false,
+    "c3_gates": true,
+    "w2_go": false,
+    "dcal_40": 0.4419004058802116
+   }
+  },
+  {
+   "run": "2026-09-15",
+   "daily": {
+    "date": "2026-09-07",
+    "mr_margin": 4768745719.762973,
+    "sleeve_want": 174765676.25,
+    "headroom": 5231254280.237027,
+    "scale": 1.0,
+    "k_mr": 0.9537491439525946,
+    "k_tr": 0.3179163813175315,
+    "face_total": 3495313525.0,
+    "hist_hit_days": 28,
+    "hist_days": 1646
+   }
+  }
+ ],
+ "latest": {
+  "daily": {
+   "date": "2026-09-07",
+   "mr_margin": 4768745719.762973,
+   "sleeve_want": 174765676.25,
+   "headroom": 5231254280.237027,
+   "scale": 1.0,
+   "k_mr": 0.9537491439525946,
+   "k_tr": 0.3179163813175315,
+   "face_total": 3495313525.0,
+   "hist_hit_days": 28,
+   "hist_days": 1646
+  }
+ }
+}

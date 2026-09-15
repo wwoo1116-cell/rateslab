@@ -52,14 +52,44 @@ MIN_MEAN = 250          # 확장 평균 최소 관측 [OWNER 09-15: 지금 이�
 TAG = "-books-paper"
 
 
-def signals(th: pd.DataFrame) -> dict[str, pd.Series]:
-    """네 테마의 일별 부호. 위험선호만 확장 평균 대비."""
+def signals(th: pd.DataFrame, *, calendar: list[str] | None = None) -> dict[str, pd.Series]:
+    """네 테마의 일별 부호. 위험선호만 확장 평균 대비.
+
+    `calendar` 를 주면 **그 달력(IRS 고시일) 위로 전일 이월**한다 [OWNER 2026-09-15 「IRS 쪽에 맞추시고」].
+
+    왜 필요한가 — 테마 입력(NEER·통안2Y·KOSPI·콜)은 IRS 가 고시되는 날에도 안 나오는 날이
+    있다(연말·연초 등 **29일 / 2,388일**). 엔진은 신호가 없는 날 `ext.get(day, 0.0)` 으로 0 을
+    주므로 그날 거시 북 넷이 **조용히 무포지션**이 된다. 「신호가 안 바뀌었으면 자리를 지킨다」가
+    이 북의 규약이므로 전일 이월이 맞고, 0 으로 떨어뜨리는 것은 배관 인공물이다.
+
+    ⚠ 이월은 **뒤로만** 간다(ffill). 신호가 처음 서기 전은 안 채운다 — 채우면 룩어헤드다.
+    """
     full = th[["cycle_raw", "policy_raw", "trade_raw", "risk_raw"]].notna().all(axis=1)
     eq_ex = -th["risk_raw"]
     risk_dm = -(eq_ex - eq_ex.expanding(min_periods=MIN_MEAN).mean())
     sig = {"cycle": np.sign(th["cycle_raw"]), "policy": np.sign(th["policy_raw"]),
            "trade": np.sign(th["trade_raw"]), "risk": np.sign(risk_dm)}
-    return {k: v.where(full).dropna() for k, v in sig.items()}
+    out = {k: v.where(full).dropna() for k, v in sig.items()}
+    if calendar is None:
+        return out
+    cal = pd.DatetimeIndex(sorted(calendar))
+    filled = {}
+    for k, v in out.items():
+        idx = cal.union(v.index)
+        filled[k] = v.reindex(idx).ffill().reindex(cal).dropna()
+    return filled
+
+
+def registered_signals(series) -> dict[str, pd.Series]:
+    """**동결 등록서 W0 의 신호** — 이 한 자리가 정본이다 [OWNER 2026-09-15 「IRS 쪽에 맞추시고」].
+
+    테마 넷을 원논문 정의(`macro_paper_fix.themes(paper=True, cycle="oecd")`)로 만들고,
+    위험선호만 확장 평균 대비로 놓고, **IRS 고시 달력 위로 전일 이월**한다.
+    등록 수·집행표·배분 그림이 전부 이 함수를 불러야 서로 갈리지 않는다 —
+    호출부마다 `signals()` 를 따로 부르면 이월을 빠뜨린 자리가 생긴다(2026-09-15 실측).
+    """
+    cal = sorted(set(series[next(iter(series))][0]))
+    return signals(mp.themes(mp._load(), paper=True, cycle="oecd"), calendar=cal)
 
 
 def start_of(sig: dict[str, pd.Series]) -> str:
@@ -130,11 +160,13 @@ def sr(x: pd.Series) -> float:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-write", action="store_true", help="판정문을 안 쓴다")
+    ap.add_argument("--no-carry", action="store_true",
+                    help="IRS 달력 이월을 끈다 — 09-15 동결 직후의 판(대조용)")
     a = ap.parse_args()
 
     series = mie.load_irs_series()
-    th = mp.themes(mp._load(), paper=True, cycle="oecd")
-    sig = signals(th)
+    sig = (signals(mp.themes(mp._load(), paper=True, cycle="oecd")) if a.no_carry
+           else registered_signals(series))
     L = legs(series, sig)
     n = len(L["blend"]["mat"])
     print()
@@ -161,6 +193,9 @@ def main() -> int:
                 f"시행수 N = {mie.TRIALS} — `momentum_irs_legs` 와 같은 셈. 위약은 북 여럿을 같은 k 로 순환이동.",
                 f"칸 {mat.shape[1]}개 · {mat.shape[0]}봉 ({mat.index[0]}~{mat.index[-1]}). "
                 "첫 날이 등록 창(2017-01-06)보다 두 영업일 늦은 것은 확장 평균의 250일 때문이다.",
+                ("★신호는 **IRS 고시 달력 위로 전일 이월**한다 [OWNER 2026-09-15 「IRS 쪽에 맞추시고」] — "
+                 "테마 입력이 없는 IRS 영업일 29일에 거시 북이 0 으로 떨어지던 배관 인공물을 없앤다."
+                 if not a.no_carry else "⚠ 이월을 끈 대조판 — 신호 없는 29일에 거시 북이 0 이다."),
                 "09-14 판정문 `-legs-paper`(합성·부호 = 09-08 등록 구조)와 나란히 읽는다. 이 판이 논문이고 그 판이 등록이다.",
             ])
         g, r = out["gate"], out["ranking"]

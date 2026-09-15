@@ -88,7 +88,7 @@ def real_pv01() -> pd.DataFrame:
 def sleeve_dv01_path():
     """다섯 북의 만기별 DV01(₩/bp) 경로와 총위험 고정 배수."""
     series = mie.load_irs_series()
-    sig = mib.signals(mp.themes(mp._load(), paper=True, cycle="oecd"))
+    sig = mib.registered_signals(series)         # ★IRS 달력 이월 포함 — 한 자리
     t_book = ml._book(series, signal=mo.SIGNAL, vol_window=mo.VOL_WINDOW)
     m_books = mib.macro_books(series, sig, mo.VOL_WINDOW)
     books = {"trend": t_book, **m_books}

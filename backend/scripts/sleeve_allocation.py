@@ -49,7 +49,7 @@ BW = {"trend": 0.5, "cycle": 0.125, "policy": 0.125, "trade": 0.125, "risk": 0.1
 def main() -> int:
     # ── 슬리브 다섯 북 ──────────────────────────────────────────────────
     series = mie.load_irs_series()
-    sig = mib.signals(mp.themes(mp._load(), paper=True, cycle="oecd"))
+    sig = mib.registered_signals(series)         # ★IRS 달력 이월 포함 — 한 자리
     t_book = ml._book(series, signal=mo.SIGNAL, vol_window=mo.VOL_WINDOW)
     m_books = mib.macro_books(series, sig, mo.VOL_WINDOW)
     books = {"trend": t_book, **m_books}
