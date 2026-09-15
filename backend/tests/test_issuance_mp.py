@@ -37,6 +37,22 @@ from app.policy import MPC_DATES
 
 MPC = [d.isoformat() for d in MPC_DATES]
 
+def _issuing_days(back: int = 60) -> list[str]:
+    """발행이 실제로 있는 날. **자료에서 찾는다** — 날짜를 못 박으면 창이
+    굴러갈 때 시험이 조용히 낡는다(2026-09-15 실측)."""
+    stamp = issuance.data_stamp()
+    end = dt.date.fromisoformat(stamp[:10]) if isinstance(stamp, str) else dt.date.today()
+    out: list[str] = []
+    for i in range(back):
+        day = (end - dt.timedelta(days=i)).isoformat()
+        try:
+            if day_detail(day, MPC)["issuing"]:
+                out.append(day)
+        except Exception:  # noqa: BLE001 — 그날 자료가 없으면 그냥 넘어간다
+            continue
+    return out
+
+
 
 def _has_data() -> bool:
     try:
@@ -271,19 +287,39 @@ def test_the_auction_carries_its_distance_from_the_market():
 @needs_data
 @needs_mp
 def test_the_issue_carries_its_distance_from_the_market():
-    """2026-08-13 하나카드 307 이 실측 앵커다.
+    """등급이 커브와 다르면 **숫자는 내되 판정은 안 낸다.**
 
-    표면 4.356% · AA0 인데 잣대는 카드채 **AA+** 커브라 등급이 갈린다 — 숫자는
-    나오고 판정은 안 난다. 기준일은 제출일(8/12)이지 납입기일이 아니다.
+    원 앵커는 2026-08-13 하나카드 307 이었다: 표면 4.356% · AA0 인데 잣대는
+    카드채 **AA+** 커브라 등급이 갈리고, 그래서 bp 는 나오되 오버·언더는
+    안 부른다. 기준일은 제출일이지 납입기일이 아니다.
+
+    ⚠ 그 날짜를 못 박아 뒀더니 **시험이 낡았다** [2026-09-15]. 발행 자료는
+    굴러가는 창이고(지금 시작이 2026-08-21), 앵커가 창 밖으로 나가자 「그날
+    하나카드 발행이 없어요」로 떨어졌다 — 배선이 깨진 게 아니라 날짜가 샌 것이다.
+    그래서 이제 **자료에서 사례를 찾아** 성질을 잰다. 사례가 하나도 없으면
+    그것도 실패다(빈 표를 통과로 읽지 않는다).
     """
-    rows = [r for r in day_detail("2026-08-13", MPC)["issuing"] if r["issuer"] == "하나카드"]
-    assert rows, "그날 하나카드 발행이 없어요"
-    m = rows[0]["mp"]
-    assert m["curve"] == "카드채 AA+"
-    assert m["grade"] == "AA0"
-    assert m["match"] is False
-    assert m["side"] is None, "등급이 다른데 오버·언더라고 불렀어요"
-    assert m["asof"] == "2026-08-12", "기준일이 제출일이 아니에요"
+    days = sorted(day for day in _issuing_days())
+    assert days, "발행이 있는 날이 하나도 없어요 — 자료가 비었어요"
+
+    mismatched = [
+        (day, r)
+        for day in days
+        for r in day_detail(day, MPC)["issuing"]
+        if r.get("mp") and r["mp"].get("match") is False
+    ]
+    assert mismatched, "등급이 커브와 다른 발행이 창 안에 하나도 없어요"
+
+    for day, r in mismatched:
+        m = r["mp"]
+        who = f"{day} {r['issuer']}"
+        assert m["side"] is None, f"{who}: 등급이 다른데 오버·언더라고 불렀어요"
+        assert m["curve"] and m["grade"], f"{who}: 커브·등급을 안 적었어요"
+        assert m["curve"].split()[-1] != m["grade"], f"{who}: match=False 인데 등급이 같아요"
+        # 숫자는 낸다 — 판정만 안 내는 것이 이 규칙이다.
+        assert m["rate"] is not None, f"{who}: 숫자까지 지웠어요"
+        # 기준일은 **그날 이전**이다(제출일). 납입기일을 쓰면 미래를 보는 것이다.
+        assert m["asof"] < day, f"{who}: 기준일({m['asof']})이 발행일 이후예요"
 
 
 @needs_data

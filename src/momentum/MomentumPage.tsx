@@ -7,7 +7,11 @@
  * 크기·진입·손절을 말하지 않는다 — Credit RV 의 「랭킹이지 투자판단이 아니다」,
  * MR 의 「측정이지 신호가 아니다」와 같은 명구 의무.
  *
- * ## 구조는 «등록된 북» 그대로다 [OWNER 2026-09-09 — 「두 다리 나란히」]
+ * ## 구조는 «등록된 북» 그대로다 — **어느 등록인지 적는다** [OWNER 2026-09-09]
+ *
+ * ⚠ 이 데스크의 등록 북은 **둘**이다 — 이 면이 비추는 선물판과, 따로 동결된 IRS
+ * 모멘텀 슬리브(IRS 3Y·10Y · 테마별 부호 북 넷). 조건 바 첫 칸이 어느 쪽인지 적는다.
+ * 이름·날짜는 **서버가 낸다**(`registry`) — 클라이언트에 두 번째 진실을 두지 않는다.
  *
  *     추세 다리   계약 2 × 룩백 5 · 신호는 **macross 하나**
  *     매크로 다리 네 테마 부호 · 합성 `macro_sign`
@@ -154,6 +158,12 @@ export function MomentumPage() {
       {/* ── 조건 바 — 어떤 규약에서 나온 숫자인지가 카드보다 먼저 읽힌다 ──── */}
       <VStack className="sr-rv-bar" flexShrink={0} gap={0.5} width="100%">
         <HStack gap={1.5} alignItems="center" flexWrap="wrap">
+          {/* ★어느 «등록된 북» 인지를 먼저 적는다 [디자인 점검].
+              등록 북이 둘이 됐고(09-08 선물판 · 09-15 IRS 슬리브), 이름을 안 적으면
+              오늘 동결된 슬리브로 읽힌다 — 실제로 그 혼동이 났다.
+              ⚠ 동결일을 **여기 적지 않는다**: 클라이언트에 두 번째 진실이 생기고
+              `momentum-prereg-lock` 가드가 바로 그것을 막는다. 서버가 낸다. */}
+          <Cond k="등록" v={`${board.registry.freeze} (${board.registry.instrument})`} />
           <Cond k="기준일" v={board.asof} />
           <Cond k="신호" v={board.signal} />
           <Cond k="룩백" v={board.lookbacks.join(' · ')} />
@@ -166,6 +176,9 @@ export function MomentumPage() {
             </Text>
           </Box>
         </HStack>
+        <Text font="legal" as="span" color="fgMuted">
+          {board.registry.note}
+        </Text>
         <Text font="legal" as="span" color="fgMuted">
           룩백은 고르는 게 아니라 축이에요 — 다섯을 다 보여드려요. 왼쪽이 빠르고
           오른쪽이 느려요.

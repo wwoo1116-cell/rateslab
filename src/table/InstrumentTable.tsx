@@ -344,11 +344,15 @@ export function InstrumentTable({
     [display, selectedId],
   );
   const selectedPresent = selectedIndex >= 0;
+  /* 인덱스 자체는 deps 에 **없다**: 정렬·필터로 자리만 바뀔 때마다 재스크롤하면
+     화면이 끌려다닌다. 선택이 바뀌거나(탭 점프 직후) 그 행이 표에 나타나는
+     순간에만 간다.
+     ⚠ 억제 주석은 **deps 배열 바로 위**에 있어야 닿는다 — 설명문 위에 두면
+     「next line」이 주석을 가리켜 규칙이 그대로 울고 억제는 미사용이 된다
+     (경고 두 개가 그 자리였다, 2026-09-15). */
   useEffect(() => {
     if (selectedPresent) virtualizer.scrollToIndex(selectedIndex, { align: 'auto' });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 인덱스 자체는 deps 에
-    // 없다: 정렬·필터로 자리만 바뀔 때마다 재스크롤하면 화면이 끌려다닌다.
-    // 선택이 바뀌거나(탭 점프 직후) 그 행이 표에 나타나는 순간에만 간다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, selectedPresent]);
   // Only once a cell is actually on the page can the probe measure the face the cells
   // draw with. Before that `chPx` is 0 and the colgroup declares nothing.

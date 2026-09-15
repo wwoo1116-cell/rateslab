@@ -85,6 +85,8 @@ export interface MomentumBoard {
   macroNote: string | null;
   blend: { weight: number; note: string };
   lock: { freeze: string; note: string };
+  /** 어느 «등록된 북» 인지 — 서버가 낸다. 등록이 둘이라 이름이 필요하다. */
+  registry: { freeze: string; instrument: string; macroLeg: string; note: string };
 }
 
 export interface MomentumHistory {
