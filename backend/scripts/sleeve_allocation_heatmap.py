@@ -93,8 +93,8 @@ def main() -> int:
     for i in over:
         axes[0].plot(i, -0.75, marker="v", color=rs.CONTRAST, ms=4, clip_on=False)
     rs.exhibit(fig, 2, "증거금은 평균회귀가 채우고, 슬리브는 2억 안팎으로 얇게 얹힌다",
-               "위: 증거금 사용액(억, 월평균, 절대 눈금 · ▼ = 그 달 하루라도 합산이 100억 초과) · "
-               "아래: 슬리브 증거금·북별 총액면·순액면(월평균, 행마다 제 최대값 대비) · 오른쪽에 평균·최대(억)",
+               "위: 증거금 사용액(억, 월평균, 절대 눈금 · ▼ 합산 100억 초과 달) · "
+               "아래: 슬리브 항목(월평균, 행별 최대 대비 · 오른쪽에 평균·최대 억)",
                "자료: 자체 산출 (sleeve_allocation_heatmap.py · 2020-01~2026-09)")
     fig.savefig(OUT, dpi=rs.DPI)
     plt.close(fig)
