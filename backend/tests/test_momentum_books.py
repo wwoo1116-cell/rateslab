@@ -143,3 +143,26 @@ def test_reason_line_names_the_gross_placebo_when_that_is_what_fails():
     text = json.dumps(out["gate"], ensure_ascii=False) + json.dumps(out.get("notes", ""), ensure_ascii=False)
     assert out["gate"]["overall_pass"] is False
     assert "0.0842" in text            # 깨진 판(비용전)의 값이 적혀 있어야 한다
+
+
+# ── ⑥ 집행 pv01 단위 ─────────────────────────────────────────────────────
+
+def test_execution_pv01_is_won_per_bp_not_annuity():
+    """`app.dv01.pv01` 은 **애뉴이티(연)** 다. 집행 액면은 ₩/bp 라 명목 × 1e-4 를 곱해야 한다.
+
+    2026-09-15 에 실제로 이 자리를 한 번 빠뜨려 액면이 1만분의 1 로 나왔다.
+    """
+    from app.dv01 import pv01
+    from app.engine_port import bootstrap_zero_curve
+    from scripts import sleeve_execution as se
+    from scripts import sleeve_margin as sg
+
+    flat = [(t, 0.035) for t in (0.5, 1.0, 2.0, 3.0, 5.0, 7.0, 10.0)]
+    zc = bootstrap_zero_curve(flat)
+    for tenor, T in se.LEG_T.items():
+        ann = pv01(zc, T)
+        won_per_bp = ann * 1e8 * 1e-4
+        # 애뉴이티는 만기보다 작다(할인). 근사식은 만기를 그대로 쓴다.
+        assert 0.5 * T < ann < T
+        # ₩/bp 는 근사식과 같은 자릿수여야 한다 — 3Y 3만 · 10Y 10만 언저리
+        assert 0.5 * sg.pv01_per_100m()[tenor] < won_per_bp < sg.pv01_per_100m()[tenor]
