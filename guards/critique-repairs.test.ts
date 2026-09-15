@@ -41,9 +41,24 @@ describe('critique repairs, 2026-08-19', () => {
     expect(nav).not.toContain('sr-commandbar');
   });
 
-  it('정렬 헤더의 접근 이름은 사람 말이다 (PUA 글리프가 이름에 못 들어간다)', () => {
+  /* ⚠ 이 시험은 2026-09-15 에 «무엇을 재는지» 가 바뀌었다.
+   *
+   * 원래는 `<TableCell>` 의 `aria-label` 문자열을 찾았다. 그런데 그 라벨은
+   * `<th>` 로 가고, **누르는 것은 CDS 가 그 안에 그리는 `<button>`** 이다. 실제
+   * DOM 을 열어 보니 버튼 이름은 여전히 `"1D󰟃󰞷"` 였다 — 수리가 한 단계 위에
+   * 붙어 있었고, 시험은 그 잘못된 자리를 고정하고 있었다.
+   *
+   * 이제 재는 것은 두 가지다: 글리프가 `aria-hidden` 으로 이름에서 빠지는가,
+   * 그리고 사람 말이 **버튼 안에** 있는가(`.sr-a11y-only` 는 화면에서만 숨고
+   * 접근성 트리에는 남는 clip 수법이다). */
+  it('정렬 버튼의 접근 이름은 사람 말이다 (PUA 글리프가 이름에 못 들어간다)', () => {
     const table = read('src/table/InstrumentTable.tsx');
-    expect(table).toContain('aria-label={`${BASIS_LABEL[b]} 변화 — 눌러서 정렬`}');
+    // 글리프는 장식 — 이름 계산에서 빠진다
+    expect(table).toContain('end={<span aria-hidden="true">{end}</span>}');
+    // 사람 말은 버튼의 자식이라 이름이 된다
+    expect(table).toMatch(/<span className="sr-a11y-only">\s*변화 — 눌러서 정렬<\/span>/);
+    // 라벨을 다시 <th> 로 올리지 않는다 — 그러면 버튼 이름이 또 글리프가 된다
+    expect(table).not.toContain('aria-label={`${BASIS_LABEL[b]} 변화 — 눌러서 정렬`}');
   });
 
   it('확대 창 안에서는 pane 이 이름을 다시 그리지 않는다', () => {

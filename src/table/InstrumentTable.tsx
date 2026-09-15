@@ -573,13 +573,17 @@ export function InstrumentTable({
                   className="sr-num"
                   justifyContent="flex-end"
                   {...cell}
-                  end={end}
                   /* CDS 의 정렬 글리프는 아이콘 폰트의 사용자 영역(PUA) 문자라,
                      접근 이름이 "1D󰟃󰞷" 로 읽히고 있었다(전체 앱 크리틱 실측).
-                     이름은 사람 말로 따로 준다 — 글리프는 장식으로 남는다. */
-                  aria-label={`${BASIS_LABEL[b]} 변화 — 눌러서 정렬`}
+                     ⚠ 그때의 수리는 **한 단계 위에 붙었다** [2026-09-15 확인] —
+                     `aria-label` 이 `<th>` 로 갔는데 누르는 것은 CDS 가 그 안에
+                     그리는 `<button>` 이고, 그 버튼 이름은 여전히 "1D󰟃󰞷" 였다.
+                     이제 이름을 **버튼 안에서** 만든다: 글리프는 `aria-hidden` 으로
+                     장식이 되고, 사람 말은 눈에 안 보이는 span 이 잇는다. */
+                  end={<span aria-hidden="true">{end}</span>}
                 >
                   <TextCaption as="span" color="fgMuted">{BASIS_LABEL[b]}</TextCaption>
+                  <span className="sr-a11y-only"> 변화 — 눌러서 정렬</span>
                 </TableCell>
               );
             })}
