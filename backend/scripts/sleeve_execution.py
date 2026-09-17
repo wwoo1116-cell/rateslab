@@ -86,8 +86,22 @@ def real_pv01() -> pd.DataFrame:
 
 
 def sleeve_dv01_path():
-    """다섯 북의 만기별 DV01(₩/bp) 경로와 총위험 고정 배수."""
-    series = mie.load_irs_series()
+    """다섯 북의 만기별 DV01(₩/bp) 경로와 총위험 고정 배수.
+
+    ★두 창이 **다른 물음**이라 다른 끝을 쓴다 [2026-09-17].
+
+        신호·DV01 경로   `end=None` — 자료가 있는 마지막 봉까지. 오늘 세울 북을 묻는다.
+        크기(vol·배수)   `mo.FREEZE` 까지 — 동결 창. **규칙을 만든 자료**를 묻는다.
+
+    둘을 한 끝으로 묶으면 둘 중 하나가 틀린다. 09-16 까지는 신호 쪽이 09-08 에 묶여
+    있어서 슬리브가 채점 봉을 한 개도 못 쌓았다.
+
+    ★배수는 `sleeve_monitor` 의 **등록 상수**를 쓴다. 여기서 다시 계산한 값은 버리지
+    않고 `meta["mult_live"]` 로 같이 돌려준다 — 갈리면 표에 보인다.
+    """
+    from scripts import sleeve_monitor as sm_    # noqa: PLC0415  순환 import 회피
+
+    series = mie.load_irs_series(end=None)
     sig = mib.registered_signals(series)         # ★IRS 달력 이월 포함 — 한 자리
     t_book = ml._book(series, signal=mo.SIGNAL, vol_window=mo.VOL_WINDOW)
     m_books = mib.macro_books(series, sig, mo.VOL_WINDOW)
@@ -108,7 +122,9 @@ def sleeve_dv01_path():
     t = ht.unit_vol(blend.loc[idx]).to_numpy()
     s_mix = float(((1 - W) * m + W * t).std(ddof=1) * math.sqrt(ANN))
     k_mr, k_tr = (1 - W) / s_mix, W / s_mix
-    mult = (k_tr * mr_vol_krw) / vol_sleeve
+    #: 오늘 자료로 다시 세면 이것 — **쓰지 않는다.** 대조로만 들고 간다.
+    mult_live = (k_tr * mr_vol_krw) / vol_sleeve
+    mult = sm_.MULT_REGISTERED
 
     per = {}
     for b in BOOKS:
@@ -119,9 +135,23 @@ def sleeve_dv01_path():
     #: 엔진에서 조용히 0 이 된다(`ext.get(day, 0.0)`). 룩어헤드는 아니지만 **집행표를 그날로 찍으면
     #: 거시 다리가 없는 북을 세우게 된다.** 신호가 선 마지막 날을 같이 돌려준다.
     live = sorted(set().union(*(set(v.index.strftime("%Y-%m-%d")) for v in sig.values())))
-    return per, net_dv, {"mult": mult, "k_mr": k_mr, "k_tr": k_tr, "s_mix": s_mix,
+    return per, net_dv, {"mult": mult, "mult_live": mult_live,
+                         "k_mr": sm_.K_MR_REGISTERED, "k_tr": sm_.K_TR_REGISTERED,
+                         "k_mr_live": k_mr, "k_tr_live": k_tr, "s_mix": s_mix,
                          "vol_sleeve": vol_sleeve, "mr_vol_krw": mr_vol_krw, "mb": mb,
                          "signal_last": live[-1]}
+
+
+def asof_for(ix: list[str], meta: dict) -> str:
+    """집행표·주문표가 **같이 쓰는** 기준일 — 신호가 선 마지막 날 [§10-10].
+
+    매크로 신호는 IRS 종가보다 하루 늦게 끝난다(테마 입력이 T−1 까지). 그 하루로
+    표를 찍으면 거시 북 넷이 엔진에서 조용히 0 이 되고(`ext.get(day, 0.0)`), 추세
+    한 다리만 선 북을 「오늘의 목표」로 내놓게 된다. 09-16 까지는 두 표가 다 09-08
+    에 묶여 있어서 이 자리가 안 보였다 — 라이브로 풀리는 순간부터 매일 걸린다.
+    """
+    sl = meta["signal_last"]
+    return sl if sl in ix else ix[-1]
 
 
 def main() -> int:
@@ -189,7 +219,7 @@ def main() -> int:
 
     # ── ② 집행표 ────────────────────────────────────────────────────────
     sl = meta["signal_last"]
-    d = sl if sl in ix else ix[-1]
+    d = asof_for(ix, meta)
     print()
     print(f"── ② 집행표 · 기준일 {d} (채점 시작 2026-09-16 에 세울 북) ──")
     if ix[-1] != d:

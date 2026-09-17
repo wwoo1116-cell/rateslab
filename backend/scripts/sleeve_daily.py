@@ -55,7 +55,9 @@ def main() -> int:
     rp = se.real_pv01()
     per, net_dv, meta = se.sleeve_dv01_path()
     ix = [d for d in net_dv.index if d in rp.index]
-    d = ix[-1]
+    #: ★집행표와 **같은 함수**로 기준일을 고른다 [§10-10] — 매크로 신호가 IRS 종가보다
+    #:  하루 늦게 끝나는 날 거시 북 넷이 0 인 북을 오늘의 목표로 내놓지 않기 위해서다.
+    d = se.asof_for(ix, meta)
     tgt = {}
     for k in se.LEG_T:
         dv = float(net_dv.at[d, k]); p = float(rp.at[d, k])
@@ -107,6 +109,14 @@ def main() -> int:
     if src["asof"] != d:
         print(f"  ⚠ **여력은 {src['asof']} 것이고 이 주문표는 {d} 것이다** — 평균회귀가 그 사이에"
               f" 다리를 더 넣었으면 여력은 이보다 적다. 그날 것으로 다시 받고 치는 것이 맞다.")
+    #: ★★위 여력은 **평균회귀 장부를 k_mr 로 줄여 세운다**는 총위험 고정의 가정 위에 있다.
+    #:   그 레인은 그 축소를 안 한다(등록서 「평균회귀 쪽은 안 건드린다」). 축소를 지시하지
+    #:   않았으면 아래 줄이 실물이고, 그것이 0 이면 **오늘 슬리브는 못 선다.**
+    if w4["headroom_no_shrink"] < w4["headroom"] - 1e6:
+        print(f"  ★★평균회귀를 **실제로 안 줄이면** 여력 {w4['headroom_no_shrink']/1e8:.2f}억 · "
+              f"배율 {w4['scale_no_shrink']:.3f}"
+              + ("  ← **오늘 슬리브는 못 선다**" if w4["scale_no_shrink"] <= 0.0 else "")
+              + f"  (위 수는 k_mr={w4['k_mr']:.3f} 축소 **가정** 위에 있다)")
     print(f"  ⚠ 부호: 계열이 −bp 라 DV01 이 양(+)이면 **리시브**다. 표의 「주문」은 어제와의 차이다.")
     print(f"  ⚠ {MIN_TICKET/1e8:.0f}억 미만 차이는 «—» 로 두고 안 친다.")
     if not scored:

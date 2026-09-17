@@ -91,15 +91,37 @@ _SERIES: dict = {}
 
 # --- IRS 계열 ----------------------------------------------------------
 
-def load_irs_series(start: str = START) -> dict[str, tuple[list[str], list[float]]]:
+def load_irs_series(start: str = START,
+                    end: str | None = mo.FREEZE) -> dict[str, tuple[list[str], list[float]]]:
     """`mkt_irs_close` par 금리를 **-bp** 로 — `momentum_irs.load_irs_bp` 와 같은 계열.
 
     부호를 뒤집는 이유는 하나다: 엔진은 「값이 오르면 롱이 번다」로 회계하는데 IRS 는
     금리가 내려야 리시브가 번다. 뒤집으면 +1 이 리시브가 되고 그 뒤로는 선물 북과
     같은 문장을 쓴다. 합성가(채권 가격식)를 안 만든다 — 이 데스크의 IRS 회계는
     bp × 명목이다.
+
+    ## `end` — 동결 벽을 **두 등록이 공유하지 않게** 하는 자리 [2026-09-17]
+
+    기본값은 `mo.FREEZE`(2026-09-08)이고 **그 기본값은 09-08 매크로 등록의 벽이다**.
+    호출부를 하나도 안 고치면 이 함수는 예전과 **비트 동일**이다(2,389행 · 끝 09-08).
+
+    바꾼 이유는 하나다. IRS 슬리브는 **09-15 에 동결돼 09-16 부터 채점**인데
+    (`PREREG_sleeve_5050_2026-09-15.md`), 그 집행 경로가 이 함수를 지나면서 09-08 에서
+    잘리고 있었다. `sleeve_daily` 의 `scored = d > sm.FREEZE_DATE` 는 `d` 가 09-08 을
+    못 넘으니 **영원히 거짓**이었다 — 자료를 다시 적재해도 안 풀리는 자리였다.
+    ⚠ 고칠 것은 `mo.FREEZE` 가 **아니다.** 그 상수를 옮기면 09-08 등록 북의 채점 구간
+    손익이 화면과 리포트로 샌다(`app/momentum.py:71` 의 그 주석). 갈래를 여기서 낸다.
+
+    end
+        ``mo.FREEZE``  기본 — 09-08 등록의 창. 그 등록을 읽는 모든 호출부가 이것이다.
+        ``None``       라이브 — 자료가 있는 마지막 봉까지. **슬리브 집행 경로만** 이것이다.
+        그 밖의 날짜    그 날까지. 시험이 창을 못 박을 때 쓴다.
+
+    ★캐시 키에 `end` 가 **들어간다.** 안 넣으면 먼저 부른 쪽의 창이 뒤에 부른 쪽에
+    그대로 나간다 — `_RUNS` 캐시 키가 원천을 안 봐서 다른 북이 재사용됐던 그 결함과
+    같은 자리다(인계문 §8).
     """
-    key = ("series", start)
+    key = ("series", start, end)
     if key in _SERIES:
         return _SERIES[key]
     with engine().connect() as conn:
@@ -111,7 +133,7 @@ def load_irs_series(start: str = START) -> dict[str, tuple[list[str], list[float
     for r in rows:
         d = r[0]
         day = (d.date() if hasattr(d, "date") else d).isoformat()
-        if not (start <= day <= mo.FREEZE):
+        if day < start or (end is not None and day > end):
             continue
         days.append(day)
         r3.append(-float(r[1]) * 100.0)

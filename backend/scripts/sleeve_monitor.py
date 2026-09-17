@@ -67,6 +67,23 @@ CORR_PERSIST = 126                  # 6개월 지속
 ROLL = 250
 GATES = {"dsr": 0.95, "pbo": 0.50, "placebo": 0.05}
 
+#: ★크기 상수 셋 — **동결일에 선 값을 그대로 못 박는다** [OWNER 2026-09-17].
+#:
+#: 09-16 까지는 이 셋을 매 실행마다 다시 계산했다. 그런데 재료가 **평균회귀 레인의
+#: 수익 이력**(`crs_evaluate.net_returns`)이라, 그 레인의 적재가 복구되자 같은 코드가
+#: 다른 수를 냈다 — 09-17 실측으로 배수 11.889 → 11.92, 그 배수가 전 행에 곱해져
+#: `sleeve_execution_daily.csv` **2,318행 전부가 +0.279%** 옮겨갔다(pv01 열은 불변 =
+#: 커브가 아니라 배수다). 즉 **옆 레인의 적재 상태가 이 레인의 동결 표를 바꾸고 있었다.**
+#: 크기는 동결 등록서가 정한 수이지 오늘 다시 고를 수가 아니다.
+#:
+#: 값의 출처는 **동결일에 실제로 기록된 것**이다(반올림한 등록서 표기가 아니다):
+#:   mult   `output/sleeve_daily_ledger.json`  run 2026-09-15 · 등록서 §3 「11.89배」
+#:   k_mr·k_tr `output/sleeve_monitor_state.json` log[0] run 2026-09-15 · 등록서 0.954/0.318
+#: ⚠ 재계산판을 버리지 않는다 — 집행표·주문표가 **둘을 나란히** 찍어서 갈리면 보이게 한다.
+MULT_REGISTERED = 11.889136764356689    # 총위험 고정 배수
+K_MR_REGISTERED = 0.9537491439525946    # 평균회귀 다리 배수 (W4 여력의 분모에 걸린다)
+K_TR_REGISTERED = 0.3179163813175315    # 슬리브 다리 배수
+
 STATE = BACKEND / "output" / "sleeve_monitor_state.json"
 
 #: ⑨ 「평균회귀가 그날 쓴 증거금」을 **어디서 받나** — W4 여력의 분모다.
@@ -152,8 +169,10 @@ def daily(verbose: bool = True, source: str = MARGIN_SOURCE) -> dict:
                       index=[str(t)[:10] for t in L["blend"]["rets"].index])
     mb, mr, u_resim, mr_vol, _f = _mr()
     idx = sorted(set(mr.index) & set(blend.index))
-    k_mr, k_tr, _s = _sizing(ht.unit_vol(mr.loc[idx]).to_numpy(),
-                             ht.unit_vol(blend.loc[idx]).to_numpy(), W_REGISTERED)
+    #: 오늘 자료로 다시 센 값 — **여력에 안 건다.** 등록 상수와 갈리면 그 사실을 찍는다.
+    k_mr_live, k_tr_live, _s = _sizing(ht.unit_vol(mr.loc[idx]).to_numpy(),
+                                       ht.unit_vol(blend.loc[idx]).to_numpy(), W_REGISTERED)
+    k_mr, k_tr = K_MR_REGISTERED, K_TR_REGISTERED
 
     margin, src = mr_margin_path(source)
     ex = pd.read_csv(BACKEND / "output" / "sleeve_execution_daily.csv",
@@ -187,6 +206,7 @@ def daily(verbose: bool = True, source: str = MARGIN_SOURCE) -> dict:
     raw_headroom = max(CAP - float(margin.at[d]), 0.0)
     out = {"date": d, "mr_margin": mr_margin, "sleeve_want": want, "headroom": head,
            "scale": scale, "k_mr": k_mr, "k_tr": k_tr,
+           "k_mr_live": k_mr_live, "k_tr_live": k_tr_live,
            "face_total": float(ex.at[d, "face_total"]),
            "hist_hit_days": hit, "hist_days": len(both),
            "margin_source": src, "contrast": other,
@@ -205,7 +225,10 @@ def daily(verbose: bool = True, source: str = MARGIN_SOURCE) -> dict:
         if src["stale"]:
             print(f"  ⚠ 적재 지연 {len(src['stale'])}다리 "
                   f"({' · '.join(src['stale'])}) · 그중 증거금 묶고 있는 것 {src['stale_held']}")
-        print(f"  평균회귀 증거금   {mr_margin/1e8:7.2f}억  (배수 k_mr {k_mr:.3f})")
+        print(f"  평균회귀 증거금   {mr_margin/1e8:7.2f}억  (배수 k_mr {k_mr:.3f} · **등록값**)")
+        if abs(k_mr_live - k_mr) > 5e-5:
+            print(f"  ⚠ 오늘 자료로 다시 세면 k_mr {k_mr_live:.4f} 다 (등록 {k_mr:.4f}) — "
+                  f"평균회귀 이력이 움직였다는 뜻이고, **등록값을 쓴다**")
         print(f"  여력             {head/1e8:7.2f}억")
         print(f"  슬리브 원한 증거금 {want/1e8:7.2f}억  (실측 액면 {ex.at[d,'face_total']/1e8:.1f}억 × {RATE:.0%})")
         print(f"  → **배율 {scale:.3f}**" + ("  (축소 없음)" if scale >= 0.999 else "  ★오늘 액면을 이만큼으로 줄인다"))
