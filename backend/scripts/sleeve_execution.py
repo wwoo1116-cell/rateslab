@@ -172,6 +172,20 @@ def main() -> int:
         tot_ap = u.loc[both].to_numpy() * CAP * meta["k_mr"] + face_ap.loc[both].to_numpy() * RATE
         print(f"  합산 증거금이 100억을 넘는 날 실측 **{int((tot > CAP).sum())}일** · 근사 {int((tot_ap > CAP).sum())}일"
               f" / {len(both):,}일 — W4 가 그날을 비례 축소한다")
+        #: ★위 수는 **규칙 A 재시뮬**(`margin_budget_book`)의 평균회귀 증거금으로 센 것이고,
+        #: 등록서 §4.1 이 인용한 그 수라 **재현되도록 그대로 둔다**. 2026-09-16 부터 W4 집행은
+        #: 그 레인의 배분기(규칙 B · 라이브)에서 받으므로, 같은 축을 두 표가 다른 함수로 지나면
+        #: 안 된다 — 아래에 **같은 함수로** 한 줄 더 찍는다(`docs/RESULT_margin_source_2026-09-16.md`).
+        try:
+            from scripts import sleeve_monitor as sm_            # noqa: PLC0415
+            alloc, src_ = sm_.mr_margin_path("allocator")
+            both_a = [d_ for d_ in both if d_ in alloc.index]
+            tot_a = (alloc.loc[both_a].to_numpy() * meta["k_mr"]
+                     + face_rl.loc[both_a].to_numpy() * RATE)
+            print(f"  같은 셈을 **배분기**(「{src_['rule']}」 · {src_['convention']})로 하면 "
+                  f"**{int((tot_a > CAP).sum())}일** / {len(both_a):,}일 — 집행이 쓰는 것은 이쪽이다")
+        except SystemExit as e:
+            print(f"  ⚠ 배분기 쪽은 못 쟀다 — {e}")
 
     # ── ② 집행표 ────────────────────────────────────────────────────────
     sl = meta["signal_last"]

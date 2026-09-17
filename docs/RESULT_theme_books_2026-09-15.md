@@ -5,6 +5,12 @@
 스크립트 `backend/scripts/momentum_theme_books.py` · 산출 `backend/output/momentum_theme_books_oecd.json`
 원문 대조 `docs/BROOKS2017_appendix_BC.md`
 
+> **[2026-09-16 정정]** §4 의 「**못 고치는 것** — 성장률 자리의 수출. 월별 빈티지 GDP
+> 전망(컨센서스)이 국내에 없다」를 **철회한다.** 전망치가 없다는 사실은 그대로지만,
+> 논문 부록 B 가 전망치 없을 때의 대체 정의(OECD 실현 GDP · 한 분기 지연)를 적어 두었고
+> 그 계열은 이 레인이 쓰는 OECD 빈티지 흐름 안에 있다(`B1GQ_Q` · 에디션 197개).
+> 아래 본문의 수치는 **안 고친다** — 정본은 `docs/RESULT_growth_axis_sources_2026-09-16.md`.
+
 ## 0. 지위 — 먼저 읽을 것
 
 **표본내 탐색이다.** 09-08 등록서는 거시 신호를 「네 부호의 산술평균 → 북 하나」로 얼렸고,

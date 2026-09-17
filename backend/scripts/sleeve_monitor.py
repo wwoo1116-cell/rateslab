@@ -69,6 +69,58 @@ GATES = {"dsr": 0.95, "pbo": 0.50, "placebo": 0.05}
 
 STATE = BACKEND / "output" / "sleeve_monitor_state.json"
 
+#: ⑨ 「평균회귀가 그날 쓴 증거금」을 **어디서 받나** — W4 여력의 분모다.
+#:
+#:   allocator  그 레인의 배분기를 그대로 부른다. 규칙 B(효율가중 · `PREREG_03` §3.3) ·
+#:              라이브 규약(적재가 멈춘 다리의 증거금은 안 푼다).
+#:              자리: `data/krw-crs/src/margin_headroom.py`
+#:   resim      이 리포가 다시 시뮬레이션한 규칙 **A**(균등 로트) 경로. 2026-09-15 까지
+#:              쓰던 자리이고, 그 레인이 굴리는 규칙이 아니다. 대조로만 남긴다.
+#:
+#: ⚠ 이것은 등록서를 고치는 것이 아니다. W4 가 등록한 것은 «평균회귀가 그날 쓴 증거금»
+#:   이라는 **말**이고, 그 말이 가리키는 자리는 처음부터 그 레인의 배분기였다.
+MARGIN_SOURCE = "allocator"
+MARGIN_SOURCES = ("allocator", "resim")
+
+
+def _allocator():
+    """그 레인의 배분기 모듈 — 없으면 None 을 주고 **조용히 넘어가지 않는다**."""
+    src = ce.LANE / "src"
+    if not (src / "margin_headroom.py").exists():
+        return None
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    import margin_headroom as mh                            # noqa: PLC0415
+    return mh
+
+
+def mr_margin_path(source: str = MARGIN_SOURCE) -> tuple[pd.Series, dict]:
+    """평균회귀가 날마다 묶어 둔 증거금(₩) — **총위험 고정 배수 k_mr 적용 전**.
+
+    돌려주는 둘째 값이 「이 수가 어디서 왔나」다. 출처를 못 적는 수는 W4 에 못 쓴다.
+    """
+    if source not in MARGIN_SOURCES:
+        raise ValueError(f"출처는 {MARGIN_SOURCES} 중 하나여야 해요 — {source!r}")
+    if source == "allocator":
+        mh = _allocator()
+        if mh is None:
+            raise SystemExit(
+                f"배분기를 못 찾았어요 — {ce.LANE / 'src' / 'margin_headroom.py'} 가 "
+                f"없습니다. 그 레인이 다른 자리면 KRW_CRS_DIR 로 알려 주시고, "
+                f"대조판으로 가려면 --margin-source resim 을 쓰세요.")
+        P, Z, meta, asof = mh.panel()
+        path = mh.replay(P, Z, meta, "live", mh.LOT_UK)
+        book_asof = max(asof.values())
+        return path["used"], {
+            "source": "allocator", "rule": "B 효율가중 (PREREG_03 §3.3)",
+            "convention": "live", "asof": book_asof, "lot_uk": mh.LOT_UK,
+            "stale": {t: a for t, a in asof.items() if a != book_asof},
+            "stale_held": int(path.iloc[-1]["stale_held"])}
+    _mb, _mr, u, _v, _f = _mr()
+    return u * CAP, {"source": "resim", "rule": "A 균등 로트", "convention": "n/a",
+                     "asof": str(u.index[-1]), "lot_uk": ce.REGISTERED_LOT_UK,
+                     "stale": {}, "stale_held": 0}
+
 
 def _series_and_books():
     series = mie.load_irs_series()
@@ -94,45 +146,89 @@ def _sizing(mr_u: np.ndarray, sl_u: np.ndarray, w: float):
 
 # ── ③ 매일 ────────────────────────────────────────────────────────────────
 
-def daily(verbose: bool = True) -> dict:
+def daily(verbose: bool = True, source: str = MARGIN_SOURCE) -> dict:
     series, sig, L = _series_and_books()
     blend = pd.Series(L["blend"]["rets"].values.astype(float),
                       index=[str(t)[:10] for t in L["blend"]["rets"].index])
-    mb, mr, u, mr_vol, _f = _mr()
+    mb, mr, u_resim, mr_vol, _f = _mr()
     idx = sorted(set(mr.index) & set(blend.index))
     k_mr, k_tr, _s = _sizing(ht.unit_vol(mr.loc[idx]).to_numpy(),
                              ht.unit_vol(blend.loc[idx]).to_numpy(), W_REGISTERED)
 
+    margin, src = mr_margin_path(source)
     ex = pd.read_csv(BACKEND / "output" / "sleeve_execution_daily.csv",
                      encoding="utf-8-sig", index_col=0)
     ex.index = [str(t)[:10] for t in ex.index]
-    both = [d for d in ex.index if d in u.index]
+    both = [d for d in ex.index if d in margin.index]
+    if not both:
+        raise SystemExit("슬리브 집행표와 평균회귀 경로가 겹치는 날이 없어요 — "
+                         "`python -m scripts.sleeve_execution` 를 먼저 돌리세요")
     d = both[-1]
     want = float(ex.at[d, "face_total"]) * RATE
-    mr_margin = float(u.at[d]) * CAP * k_mr
+    mr_margin = float(margin.at[d]) * k_mr
     head = max(CAP - mr_margin, 0.0)
     scale = 1.0 if want <= 0 else min(1.0, head / want)
 
     hist_want = ex.loc[both, "face_total"].to_numpy() * RATE
-    hist_head = np.maximum(CAP - u.loc[both].to_numpy() * CAP * k_mr, 0.0)
+    hist_head = np.maximum(CAP - margin.loc[both].to_numpy() * k_mr, 0.0)
     hist_scale = np.where(hist_want > 0, np.minimum(1.0, hist_head / np.maximum(hist_want, 1e-9)), 1.0)
     #: 발동 판정은 **원한값이 여력을 넘는가** 하나다. 배율에 문턱(0.999)을 걸면 0.9995 같은
     #: 아슬아슬한 날을 놓쳐 `sleeve_execution` 의 「상한 초과일」과 하루씩 갈린다(2026-09-15 실측).
     hit = int((hist_want > hist_head).sum())
 
+    #: 대조 — 09-15 까지 쓰던 재시뮬 경로가 같은 날 뭐라고 하나. 둘이 갈리면 그 사실을 찍는다.
+    other = None
+    if source == "allocator" and d in u_resim.index:
+        o_margin = float(u_resim.at[d]) * CAP * k_mr
+        o_head = max(CAP - o_margin, 0.0)
+        other = {"source": "resim", "mr_margin": o_margin, "headroom": o_head,
+                 "scale": 1.0 if want <= 0 else min(1.0, o_head / want)}
+
+    raw_headroom = max(CAP - float(margin.at[d]), 0.0)
     out = {"date": d, "mr_margin": mr_margin, "sleeve_want": want, "headroom": head,
            "scale": scale, "k_mr": k_mr, "k_tr": k_tr,
            "face_total": float(ex.at[d, "face_total"]),
-           "hist_hit_days": hit, "hist_days": len(both)}
+           "hist_hit_days": hit, "hist_days": len(both),
+           "margin_source": src, "contrast": other,
+           "headroom_no_shrink": raw_headroom,
+           "scale_no_shrink": 1.0 if want <= 0 else min(1.0, raw_headroom / want)}
     if verbose:
         print()
         print(f"── ③ W4 배율 · 기준일 {d} ──")
+        if src["source"] == "allocator":
+            print(f"  출처             배분기 「{src['rule']}」 · {src['convention']} 규약 · "
+                  f"로트 {src['lot_uk']}억")
+        else:
+            print(f"  출처             재시뮬 「{src['rule']}」 ★대조판 — 그 레인이 굴리는 규칙이 아니다")
+        if src["asof"] != d:
+            print(f"  ⚠ 배분기 기준일 {src['asof']} · 이 표의 기준일 {d} — **하루 이상 갈린다**")
+        if src["stale"]:
+            print(f"  ⚠ 적재 지연 {len(src['stale'])}다리 "
+                  f"({' · '.join(src['stale'])}) · 그중 증거금 묶고 있는 것 {src['stale_held']}")
         print(f"  평균회귀 증거금   {mr_margin/1e8:7.2f}억  (배수 k_mr {k_mr:.3f})")
         print(f"  여력             {head/1e8:7.2f}억")
         print(f"  슬리브 원한 증거금 {want/1e8:7.2f}억  (실측 액면 {ex.at[d,'face_total']/1e8:.1f}억 × {RATE:.0%})")
         print(f"  → **배율 {scale:.3f}**" + ("  (축소 없음)" if scale >= 0.999 else "  ★오늘 액면을 이만큼으로 줄인다"))
+        #: ★ k_mr 은 「평균회귀 장부를 95.4% 로 줄여 세운다」는 **총위험 고정의 가정**이다.
+        #:   그 레인은 그 축소를 하지 않는다(등록서 「평균회귀 쪽은 안 건드린다」). 그러면
+        #:   여력은 이 줄이 말하는 값이고, 그것이 실제로 증권사에 남아 있는 돈이다.
+        raw_head = raw_headroom
+        if raw_head < head - 1e6:
+            raw_scale = 1.0 if want <= 0 else min(1.0, raw_head / want)
+            print(f"  ★★평균회귀를 실제로 안 줄이면 여력은 {raw_head/1e8:.2f}억 · "
+                  f"배율 {raw_scale:.3f} 이다. 위 수는 그 장부를 k_mr={k_mr:.3f} 로 "
+                  f"줄여 세운다는 **가정 위**에 있다 — 그 축소를 그 레인에 지시하지 않았으면 "
+                  f"아래 줄이 실물이다.")
+        if other is not None and abs(other["headroom"] - head) > 1e6:
+            print(f"  ★대조: 09-15 까지 쓰던 재시뮬(규칙 A)은 같은 날 여력을 "
+                  f"{other['headroom']/1e8:.2f}억 · 배율 {other['scale']:.3f} 이라고 한다 "
+                  f"— 여력 {other['headroom']/1e8:.2f}억 → {head/1e8:.2f}억.")
+            if want > 0:
+                print(f"     원한({want/1e8:.2f}억) 대비 방석이 "
+                      f"{other['headroom']/want:.1f}배 → {head/want:.1f}배로 얇아진다.")
         print(f"  ⚠ 손익에는 **전일 배율**을 건다. 평균회귀 쪽은 안 건드린다.")
-        print(f"  참고: 지난 {len(both):,}일 중 축소 발동 {hit}일 ({hit/len(both):.1%})")
+        print(f"  참고: 지난 {len(both):,}일 중 축소 발동 {hit}일 ({hit/len(both):.1%}) · "
+              f"최저 배율 {hist_scale.min():.3f}")
     return out
 
 
@@ -235,12 +331,15 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     for f in ("daily", "quarterly", "annual"):
         ap.add_argument(f"--{f}", action="store_true")
+    ap.add_argument("--margin-source", choices=MARGIN_SOURCES, default=MARGIN_SOURCE,
+                    help="W4 여력의 분모를 어디서 받나 (기본 allocator = 그 레인의 배분기)")
     a = ap.parse_args()
     todo = [f for f, on in (("daily", a.daily), ("quarterly", a.quarterly), ("annual", a.annual)) if on]
     todo = todo or ["daily", "quarterly", "annual"]
     res = {}
     for f in todo:
-        res[f] = {"daily": daily, "quarterly": quarterly, "annual": annual}[f]()
+        res[f] = (daily(source=a.margin_source) if f == "daily"
+                  else {"quarterly": quarterly, "annual": annual}[f]())
     STATE.parent.mkdir(parents=True, exist_ok=True)
     prev = json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {"log": []}
     prev["log"].append({"run": date.today().isoformat(), **res})

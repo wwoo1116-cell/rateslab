@@ -52,20 +52,111 @@
     "hist_hit_days": 28,
     "hist_days": 1646
    }
+  },
+  {
+   "run": "2026-09-16",
+   "daily": {
+    "date": "2026-09-07",
+    "mr_margin": 9537491439.525946,
+    "sleeve_want": 174765676.25,
+    "headroom": 462508560.47405434,
+    "scale": 1.0,
+    "k_mr": 0.9537491439525946,
+    "k_tr": 0.3179163813175315,
+    "face_total": 3495313525.0,
+    "hist_hit_days": 24,
+    "hist_days": 1646,
+    "margin_source": {
+     "source": "allocator",
+     "rule": "B 효율가중 (PREREG_03 §3.3)",
+     "convention": "live",
+     "asof": "2026-09-07",
+     "lot_uk": 50,
+     "stale": {
+      "6M": "2026-08-24",
+      "9M": "2026-08-24",
+      "1.5Y": "2026-08-24"
+     },
+     "stale_held": 1
+    },
+    "contrast": {
+     "source": "resim",
+     "mr_margin": 4768745719.762973,
+     "headroom": 5231254280.237027,
+     "scale": 1.0
+    }
+   }
+  },
+  {
+   "run": "2026-09-16",
+   "daily": {
+    "date": "2026-09-07",
+    "mr_margin": 9537491439.525946,
+    "sleeve_want": 174765676.25,
+    "headroom": 462508560.47405434,
+    "scale": 1.0,
+    "k_mr": 0.9537491439525946,
+    "k_tr": 0.3179163813175315,
+    "face_total": 3495313525.0,
+    "hist_hit_days": 24,
+    "hist_days": 1646,
+    "margin_source": {
+     "source": "allocator",
+     "rule": "B 효율가중 (PREREG_03 §3.3)",
+     "convention": "live",
+     "asof": "2026-09-07",
+     "lot_uk": 50,
+     "stale": {
+      "6M": "2026-08-24",
+      "9M": "2026-08-24",
+      "1.5Y": "2026-08-24"
+     },
+     "stale_held": 1
+    },
+    "contrast": {
+     "source": "resim",
+     "mr_margin": 4768745719.762973,
+     "headroom": 5231254280.237027,
+     "scale": 1.0
+    },
+    "headroom_no_shrink": 0.0,
+    "scale_no_shrink": 0.0
+   }
   }
  ],
  "latest": {
   "daily": {
    "date": "2026-09-07",
-   "mr_margin": 4768745719.762973,
+   "mr_margin": 9537491439.525946,
    "sleeve_want": 174765676.25,
-   "headroom": 5231254280.237027,
+   "headroom": 462508560.47405434,
    "scale": 1.0,
    "k_mr": 0.9537491439525946,
    "k_tr": 0.3179163813175315,
    "face_total": 3495313525.0,
-   "hist_hit_days": 28,
-   "hist_days": 1646
+   "hist_hit_days": 24,
+   "hist_days": 1646,
+   "margin_source": {
+    "source": "allocator",
+    "rule": "B 효율가중 (PREREG_03 §3.3)",
+    "convention": "live",
+    "asof": "2026-09-07",
+    "lot_uk": 50,
+    "stale": {
+     "6M": "2026-08-24",
+     "9M": "2026-08-24",
+     "1.5Y": "2026-08-24"
+    },
+    "stale_held": 1
+   },
+   "contrast": {
+    "source": "resim",
+    "mr_margin": 4768745719.762973,
+    "headroom": 5231254280.237027,
+    "scale": 1.0
+   },
+   "headroom_no_shrink": 0.0,
+   "scale_no_shrink": 0.0
   }
  }
 }

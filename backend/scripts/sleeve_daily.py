@@ -100,7 +100,13 @@ def main() -> int:
     print(f"  {'합':5s} {'':10s} {face_total/1e8:10,.1f}억 {face_total*scale/1e8:10,.1f}억 {'':6s} {'':11s} "
           f"{'회전 ' + format(order_total/1e8, ',.1f') + '억':>13s}")
     print()
+    src = w4["margin_source"]
     print(f"  증거금 소요 {face_total*scale*RATE/1e8:.2f}억  (평균회귀 {w4['mr_margin']/1e8:.2f}억 · 여력 {w4['headroom']/1e8:.2f}억)")
+    print(f"  평균회귀 증거금 출처 — {src['source']} 「{src['rule']}」 · 기준일 {src['asof']}"
+          + (f" · ⚠적재 지연 {len(src['stale'])}다리(증거금 묶은 것 {src['stale_held']})" if src["stale"] else ""))
+    if src["asof"] != d:
+        print(f"  ⚠ **여력은 {src['asof']} 것이고 이 주문표는 {d} 것이다** — 평균회귀가 그 사이에"
+              f" 다리를 더 넣었으면 여력은 이보다 적다. 그날 것으로 다시 받고 치는 것이 맞다.")
     print(f"  ⚠ 부호: 계열이 −bp 라 DV01 이 양(+)이면 **리시브**다. 표의 「주문」은 어제와의 차이다.")
     print(f"  ⚠ {MIN_TICKET/1e8:.0f}억 미만 차이는 «—» 로 두고 안 친다.")
     if not scored:
@@ -111,6 +117,7 @@ def main() -> int:
                             "mult": meta["mult"], "face_total": face_total,
                             "face_after": face_total * scale, "margin": face_total * scale * RATE,
                             "mr_margin": w4["mr_margin"], "headroom": w4["headroom"],
+                            "margin_source": w4["margin_source"],
                             "scored": scored, "legs": rows})
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
         LEDGER.write_text(json.dumps(led, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
