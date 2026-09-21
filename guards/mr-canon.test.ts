@@ -701,9 +701,13 @@ describe('소스 표기는 화면에 안 샌다 — 주석의 문법과 문장�
 
      화면의 강조는 「」 다(이 리포의 렌더 텍스트가 이미 쓰는 것). 별표는 없다. */
 
+  /* `MrPage`·`planText` 는 2026-09-21 에 들어왔다 [감사]. 특히 `planText` 는
+     **렌더 문장을 짓는 것이 유일한 일**인 파일이라, 이 목록 밖에 두면 가드가
+     제일 필요한 자리를 안 재게 된다. */
   const FILES = [
     'src/mr/BookWindow.tsx', 'src/mr/StrategyWindow.tsx', 'src/mr/OptimizePane.tsx',
     'src/mr/parts.tsx', 'src/mr/KnobBar.tsx', 'src/mr/api.ts',
+    'src/mr/MrPage.tsx', 'src/mr/planText.ts',
   ];
 
   it.each(FILES)('%s — 주석을 걷고 나면 소스 표기가 없다', (f) => {

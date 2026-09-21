@@ -40,14 +40,14 @@ export function fmtZ(z: number | null): string {
   return z > 0 ? `+${s}σ` : `${MINUS}${s}σ`;
 }
 
-/** 레벨 한 수 — 계열의 자기 단위로. */
-const lvl = (v: number | null | undefined, unit: string): string =>
+/** 레벨 한 수 — 계열의 자기 단위로. **앱에 한 벌**(상세 카드도 이것을 쓴다). */
+export const lvl = (v: number | null | undefined, unit: string): string =>
   `${fmtLevel(v ?? null, unit as Unit)}${unitSuffix(unit as Unit)}`;
 
 /** 거리 한 수 — 늘 **bp** 다(서버가 그렇게 끝낸다). 부호는 안 적는다: 「얼마나
  *  더 가야 하나」라서 방향은 낱말이 진다. */
-const gap = (v: number, dUnit: string): string =>
-  `${fmtLevel(Math.abs(v), dUnit as Unit)}${unitSuffix(dUnit as Unit)}`;
+export const gap = (v: number | null | undefined, dUnit: string): string =>
+  v == null ? '—' : `${fmtLevel(Math.abs(v), dUnit as Unit)}${unitSuffix(dUnit as Unit)}`;
 
 /** 히어로·표가 적을 **한 방향** — 지난 것이 먼저, 없으면 가까운 것.
  *
@@ -55,7 +55,7 @@ const gap = (v: number, dUnit: string): string =>
  *  지난 문턱이 곧 「지금 할 수 있는 것」이라 그쪽이 먼저이고, 둘 다 멀면 더 가까운
  *  쪽이 다음에 닿을 문턱이다. 둘 다 보여 주는 자리는 상세 카드의 「트리거」 칸이다.
  *  (보드의 `heroTrigger` 와 같은 규칙 — 두 화면이 다른 다리를 앞세우지 않는다.) */
-export function pickLevel(r: MrPlanRow): MrPlanLevel | undefined {
+function pickLevel(r: MrPlanRow): MrPlanLevel | undefined {
   const ls = r.levels ?? [];
   return ls.find((l) => l.entryReached) ?? [...ls].sort((a, b) => a.entryGap - b.entryGap)[0];
 }
@@ -65,8 +65,13 @@ export interface PlanLines {
   lead: string;
   /** 둘째 줄 — 그래서 얼마면 무엇을 하나. */
   sub: string;
-  /** 첫 줄의 방향색(평가손익이 있을 때만). 없으면 잉크 그대로. */
-  tone?: 'up' | 'down';
+  /** 첫 줄이 인쇄하는 **돈**(평가손익) — 색은 여기서 정하지 않는다.
+   *
+   *  ⚠ 종전 판은 `'up'|'down'` 을 넘겼는데 그건 `table/tint.ts::directionClass`
+   *  의 재구현이었고 **0 에서 갈렸다**(캐논은 `sr-flat` 뮤트, 이 판은 맨 잉크).
+   *  같은 행의 1년 손익 칸이 캐논을 쓰므로 평가손익 0 인 줄에서 한 행에 두 기제가
+   *  섰다. 숫자만 넘기고 색은 캐논 한 곳이 정한다. */
+  pnl?: number;
 }
 
 /** 한 계열의 두 줄.
@@ -87,7 +92,9 @@ export function planLines(r: MrPlanRow): PlanLines {
   if (r.z == null || r.levels.length === 0) {
     return {
       lead: '아직 못 재요',
-      sub: `${r.cond.lookback}일 창이 차야 밴드가 서요`,
+      /* z 가 없는 이유는 둘이다 — 창 미달 **또는 σ=0**(값이 창 안에서 한 번도
+         안 움직인 계열). 창 탓으로만 적으면 평평한 계열에서 거짓이 된다. */
+      sub: `밴드가 아직 못 서요 (${r.cond.lookback}일 창)`,
     };
   }
 
@@ -98,14 +105,14 @@ export function planLines(r: MrPlanRow): PlanLines {
     const lead = `${p.bars}일째 들고 있어요 · ${won}`;
     if (p.exit == null || p.stop == null) {
       return { lead, sub: `${p.legs} · 밴드가 못 서서 청산·손절 레벨이 없어요`,
-               tone: p.pnl > 0 ? 'up' : p.pnl < 0 ? 'down' : undefined };
+               pnl: p.pnl };
     }
     // 방향 낱말은 **지금 값이 중심선의 어느 쪽인가**가 정한다(서버의 그 규약) —
     // 위쪽이면 내려와야 청산이고 더 올라야 손절이다.
     const above = (p.z ?? 0) >= 0;
     const sub = `청산 ${lvl(p.exit, unit)} ${above ? '이하' : '이상'}`
       + ` · 손절 ${lvl(p.stop, unit)} ${above ? '이상' : '이하'}`;
-    return { lead, sub, tone: p.pnl > 0 ? 'up' : p.pnl < 0 ? 'down' : undefined };
+    return { lead, sub, pnl: p.pnl };
   }
 
   // ③ 비어 있는 줄 — 진입 문턱 하나와 남은 거리.
@@ -158,7 +165,13 @@ export function stateText(s: MrPlanRow['state']): string {
  *  조건은 전체 표본, 성과는 1년]. */
 export function perfNote(r: MrPlanRow): string {
   const n = r.perf1y.numTrades;
-  if (!n) return '1년 거래 없어요';
+  if (!n) {
+    /* ★거래가 없는데 돈이 있는 줄이 실제로 선다 — 그 해가 **들고 있는 다리의
+       평가**이기 때문이다(실측 2026-09-21: IRS 3Y-10Y 가 −336만원·0건, 442일째
+       보유 중). 「1년 거래 없어요」만 적으면 읽는 사람이 「거래가 없는데 왜
+       손익이 있나」에서 멈춘다 — 그 답을 이 줄이 적는다. */
+    return r.perf1y.totalPnl === 0 ? '1년 거래 없어요' : '미청산 평가만 · 1년 거래 없어요';
+  }
   const wr = r.perf1y.winRate;
   return `1년 ${n}건${wr == null ? '' : ` · 승률 ${Math.round(wr * 100)}%`}`;
 }

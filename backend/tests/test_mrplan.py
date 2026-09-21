@@ -307,7 +307,8 @@ class TestBuildSeries:
         그래서 격자용 실행만 `accounting=False` 다."""
         out, calls, seen, _d, _v = self._built()
         assert [c["accounting"] for c in calls] == [False, True]
-        assert seen[0]["span"] == "all"                 # 조건은 전체 표본에서 고른다
+        # 조건을 고르는 창 — **성과를 잰 창과 같다** [OWNER 2026-09-21 오후].
+        assert seen[0]["span"] == mrp.PLAN_SPAN
         assert calls[0]["knobs"] == mrp.BASE_KNOBS      # 격자는 기준 노브에서 출발
         # 실행은 **고른 칸**의 노브로 돈다.
         assert calls[1]["knobs"]["entryZ"] == 2.5
@@ -318,7 +319,7 @@ class TestBuildSeries:
         out, _c, _s, _d, _v = self._built()
         cond = out["cond"]
         assert cond["lookback"] == 60 and cond["entryZ"] == 2.5
-        assert cond["basis"] == "cdarRatio" and cond["span"] == "all"
+        assert cond["basis"] == "cdarRatio" and cond["span"] == mrp.PLAN_SPAN
         assert cond["cells"] == 3 and cond["fallback"] is None
 
     def test_격자가_순위를_못_매기면_기본_조건으로_떨어지고_사유를_적는다(self):
@@ -474,12 +475,22 @@ class TestBuildPlan:
         assert got["watch"]["n"] == 1                   # BSS 만 묶는다
         assert got["watch"]["kind"] == "book"
 
+    def test_고른_창과_잰_창이_같다는_것이_결정이다(self):
+        """[OWNER 2026-09-21 오후 — "이것도 그냥 표본도 1년으로 하죠?"]
+
+        오전 결정은 「조건은 전체 표본」이었고 근거는 거래 수였다(1년 창은 계열당
+        0~5건). 오너가 그 답을 듣고 1년으로 바꿨다 — **선택과 채점이 같은 창**이
+        됐다는 뜻이고, 그래서 화면의 1년 손익은 162칸 중 1등의 값이다. 이 등식이
+        조용히 갈리면 화면 각주가 거짓이 되므로 여기서 박는다.
+        """
+        assert mrp.GRID_SPAN == mrp.PLAN_SPAN == "1y"
+
     def test_기준값이_페이로드에_적힌다(self):
         """화면이 「무엇을 잰 수인가」를 지어내지 않게."""
         got = mrp.build_plan([], total=25, excluded=[], building=True)
         p = got["params"]
         assert p["span"] == "1y" and p["months"] == 12
-        assert p["rankKey"] == "cdarRatio" and p["gridSpan"] == "all"
+        assert p["rankKey"] == "cdarRatio" and p["gridSpan"] == p["span"]
         assert p["costBp"] == 0.5 and p["notional"] == 1_000_000.0
         assert got["rows"] == [] and got["watch"] is None
 
@@ -514,3 +525,134 @@ class TestPeek:
         assert len(calls) == 1
         blob = json.loads((tmp_path / "k.json").read_text(encoding="utf-8"))
         assert blob["hash"] == "h"
+
+
+# ── ⑥ 배관 — 배경 빌더와 라우트 [감사 2026-09-21] ────────────────────────────
+#
+# 이 절이 늦게 붙었다. 첫 판은 `mrplan` 의 산술만 재고 `main` 의 배관(스레드·공유
+# 사전·캐시 키)은 **한 줄도 안 쟀는데**, 그 사이 `_mr_plan_build` 의 머리 주석은
+# 「스레드를 안 만든다 — 시험이 이것을 동기로 부른다」고 적고 있었다. 그 시험이
+# 없었다. 감사가 그 빈칸에서 실제 경쟁 조건 하나(락 밖 `start()`)와 사전 동시
+# 변경 하나를 찾아냈다 — 아래가 그 둘을 박는 자리다.
+class TestWorker:
+    """워커와 시작 문 — **SQL 을 안 탄다**(계열 하나 굽는 자리를 주입한다)."""
+
+    @pytest.fixture()
+    def m(self, monkeypatch, tmp_path):
+        from app import main as m
+
+        # 상태를 시험마다 깨끗이 — 모듈 전역이라 안 하면 앞 시험이 샌다.
+        monkeypatch.setattr(m, "_mr_plan_thread", None, raising=False)
+        monkeypatch.setattr(m, "_mr_plan_key", None, raising=False)
+        m._mr_plan_excluded.clear()
+        return m
+
+    def test_워커가_계열마다_따로_잡고_사유를_적는다(self, m, monkeypatch):
+        """하나가 터져도 나머지는 구워진다 — `/api/mr/book` 의 그 규율."""
+        baked: list[str] = []
+        bad = mr_mod.SERIES[1][0]
+
+        def fake_one(sid):
+            if sid == bad:
+                raise ValueError("이력이 룩백보다 짧아요")
+            baked.append(sid)
+
+        monkeypatch.setattr(m, "peek", lambda *a, **k: None)
+        monkeypatch.setattr(m, "_mr_plan_one", fake_one)
+        monkeypatch.setattr(m, "_mr_plan_key", "K", raising=False)
+        m._mr_plan_build("K")                       # ← 동기로 부른다(주석의 그 계약)
+        assert len(baked) == len(mr_mod.SERIES) - 1
+        assert list(m._mr_plan_excluded) == [bad]
+        assert m._mr_plan_excluded[bad]["reason"] == "이력이 룩백보다 짧아요"
+
+    def test_이미_구운_계열은_다시_안_굽는다(self, m, monkeypatch):
+        """재기동을 견디는 자리 — 디스크에 있으면 그냥 지나간다."""
+        calls: list[str] = []
+        monkeypatch.setattr(m, "peek", lambda *a, **k: {"v": 1})
+        monkeypatch.setattr(m, "_mr_plan_one", lambda sid: calls.append(sid))
+        monkeypatch.setattr(m, "_mr_plan_key", "K", raising=False)
+        m._mr_plan_build("K")
+        assert calls == []
+
+    def test_자료가_갈리면_스스로_멈춘다(self, m, monkeypatch):
+        monkeypatch.setattr(m, "peek", lambda *a, **k: None)
+        monkeypatch.setattr(m, "_mr_plan_one", lambda sid: None)
+        monkeypatch.setattr(m, "_mr_plan_key", "다른키", raising=False)
+        m._mr_plan_build("K")                       # 키가 안 맞으면 첫 계열에서 반환
+        assert m._mr_plan_excluded == {}
+
+    def test_같은_키로_스레드가_둘_뜨지_않는다(self, m, monkeypatch):
+        """★감사가 잡은 경쟁 조건 — `start()` 가 자물쇠 **밖**에 있으면 A 가
+        시작하기 전의 틈에 B 가 `is_alive()` 거짓을 보고 두 번째 빌더를 띄웠다.
+
+        그 틈을 재현한다: 스레드를 **안 돌리는** 가짜로 바꿔 `is_alive()` 가 늘
+        거짓이게 만들고, 두 번 부른다. 자물쇠 안에서 시작하면 두 번째 호출은
+        「지금 굽고 있다」로 돌아서야 한다.
+        """
+        started: list[object] = []
+
+        class FakeThread:
+            def __init__(self, *a, **k):
+                self.alive = False
+
+            def start(self):
+                started.append(self)
+                self.alive = True          # 자물쇠 안에서 시작 → 곧바로 살아 있다
+
+            def is_alive(self):
+                return self.alive
+
+        monkeypatch.setattr(m.threading, "Thread", FakeThread)
+        assert m._mr_plan_start("K") is True
+        assert m._mr_plan_start("K") is True
+        assert len(started) == 1
+
+    def test_실패_기록을_읽는_동안_워커가_넣어도_안_터진다(self, m, monkeypatch):
+        """★감사가 잡은 둘째 — 라우트가 `values()` 를 순회하는 동안 워커가 넣으면
+        CPython 이 `RuntimeError: dictionary changed size` 를 낸다. 두 쪽이 같은
+        자물쇠를 쓰는지를 **자물쇠를 잡고** 확인한다."""
+        import threading as th
+
+        m._mr_plan_fail("X", "X", "why")
+        hit = []
+
+        def writer():
+            try:
+                m._mr_plan_fail("Y", "Y", "why2")
+            except Exception as exc:                 # noqa: BLE001
+                hit.append(exc)
+
+        with m._mr_plan_lock:                        # 라우트가 베끼는 그 구간
+            t = th.Thread(target=writer)
+            t.start()
+            t.join(timeout=0.3)
+            assert t.is_alive(), "워커가 자물쇠를 안 기다렸다 — 읽기 중 변경이 가능하다"
+            snapshot = list(m._mr_plan_excluded.values())
+        t.join(timeout=2)
+        assert hit == [] and len(snapshot) == 1
+        assert len(m._mr_plan_excluded) == 2
+
+    def test_캐시_이름에_격자_창이_박혀_있다(self, m):
+        """창을 바꾼 날 옛 조건이 조용히 나가면 안 된다(`mrplan.cache_name` 머리)."""
+        assert mrp.cache_name("BSS-3Y") == f"mr-plan-{mrp.GRID_SPAN}-BSS-3Y"
+        assert mrp.GRID_SPAN in mrp.cache_name("X")
+
+
+def test_격자는_엔진_결과를_볼_수_없다():
+    """「회계가 격자의 칸을 안 바꾼다」의 **진짜 근거는 서명**이다.
+
+    앞의 `TestBuildSeries` 는 `accounting` 플래그의 **차례**만 잰다(가짜 `leg_of`
+    가 그 값을 `real` 에만 쓴다) — 회계가 칸을 바꾸는 회귀가 나도 그 시험은
+    통과한다. 못 바꾸는 이유는 `_mr_optimize` 가 **엔진 결과를 아예 안 받는다**는
+    것이고, 그건 인자 목록에 적혀 있다. 그 자리를 여기서 박는다.
+    """
+    import inspect
+
+    from app import main as m
+
+    params = set(inspect.signature(m._mr_optimize).parameters)
+    assert "leg" not in params and "r" not in params
+    # 봉·거래는 자기가 다시 시뮬한다 — 받는 것은 날짜·값과 노브뿐이다.
+    assert {"dates", "vals", "base", "allow"} <= params
+    src = inspect.getsource(m._mr_optimize)
+    assert 'leg["r"]' not in src and "leg['r']" not in src

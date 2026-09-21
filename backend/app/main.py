@@ -2570,14 +2570,15 @@ def mr_optimize(id: str, span: str = "all",
 # ## 왜 배경에서 굽나 — 실측
 #
 # 계열 하나가 «격자 162칸 + 회계 붙인 실행» 이라 라이브에서 2~3초, 퓨처스왑은
-# 9초다(2026-09-21 실측 `/api/mr/strategy?id=FSW-3Y`). 25계열이면 2~3분이라
+# 9초다(2026-09-21 실측 `/api/mr/strategy?id=FSW-3Y`). 25계열이면 **약 1분**이라
+# (같은 날 실측: 빈 캐시에서 66초)
 # 한 요청 안에서 못 끝낸다. 그래서 라우트는 **구워진 것만** 내주고 나머지는
 # 배경 스레드가 채운다 — 화면이 「채점 중 12/25」를 적고 몇 초마다 다시 묻는다.
 #
 # ## 기동·임포트에서 시작하지 않는다
 #
 # 백엔드 시험은 `TestClient(app)` 로 lifespan 을 탄다. 거기서 빌더가 뜨면 시험이
-# 돌 때마다 2~3분짜리 SQL 작업이 붙는다. **첫 요청이 깨운다** — 아침에는
+# 돌 때마다 1분짜리 SQL 작업이 붙는다. **첫 요청이 깨운다** — 아침에는
 # `refresh.ps1` 이 재기동 확인 뒤 한 번 찔러서 트레이더보다 먼저 굽는다.
 
 #: 빌더의 상태 — 한 프로세스에 하나. `_mr_plan_key` 는 굽고 있는 자료의 캐시
@@ -2624,16 +2625,33 @@ def _mr_plan_one(sid: str) -> dict:
     ⚠ 이 페이로드의 **모양**을 바꾸면 `cache.SCHEMA_VERSION` 을 올려야 한다
     (안 올리면 옛 모양이 계속 나간다 — 이 리포가 세 번 밟은 함정).
     """
-    return cached(f"mr-plan-{sid}", _dataset.data_key,
+    return cached(mrp.cache_name(sid), _dataset.data_key,
                   lambda: mrp.build_series(sid, leg_of=_mr_plan_leg,
                                            grid_of=_mr_plan_grid))
 
 
+def _mr_plan_fail(sid: str, label: str, why: str) -> None:
+    """못 구운 계열을 적는다 — **락 안에서**.
+
+    라우트가 `list(_mr_plan_excluded.values())` 로 이 사전을 읽는데, 워커가 그
+    순회 도중에 넣으면 CPython 이 `RuntimeError: dictionary changed size` 를 낸다
+    (라우트가 500 이 된다). 쓰는 쪽과 읽는 쪽이 같은 자물쇠를 쓴다.
+    """
+    with _mr_plan_lock:
+        _mr_plan_excluded[sid] = {"id": sid, "label": label, "reason": why}
+
+
 def _mr_plan_build(key: str) -> None:
-    """배경 빌더의 **몸통** — 스레드를 안 만든다(시험이 이것을 동기로 부른다).
+    """배경 빌더의 **몸통** — 스레드를 안 만든다(시험이 이것을 동기로 부른다:
+    `tests/test_mrplan.py::TestWorker`).
 
     계열마다 따로 잡아 `excluded` 로 적는다. 하나가 터져도 나머지는 구워져야
     한다 — 첫 판에서 `/api/mr/book` 이 이미 그 규율을 쓴다.
+
+    키 검사는 **방어**다 — 지금 이 프로세스에서는 `_dataset` 이 기동 때 한 번만
+    읽히므로(`refresh.ps1` 이 그래서 재기동한다) `data_key` 가 도중에 갈리지
+    않는다. 자료를 다시 읽는 날이 오면 이 검사가 그때의 문이고, 그 전까지는
+    **안 도는 길**이다 — 안 적어 두면 다음 사람이 이 분기를 산 길로 읽는다.
     """
     global _mr_plan_thread
     log = logging.getLogger("sauron.mrplan")
@@ -2642,17 +2660,17 @@ def _mr_plan_build(key: str) -> None:
             if _mr_plan_key != key:
                 log.info("[mrplan] 자료가 갈려서 멈춰요 (%s)", sid)
                 return
-            if peek(f"mr-plan-{sid}", key) is not None:
+            if peek(mrp.cache_name(sid), key) is not None:
                 continue
             try:
                 _mr_plan_one(sid)
-                _mr_plan_excluded.pop(sid, None)
+                with _mr_plan_lock:
+                    _mr_plan_excluded.pop(sid, None)
             except Exception as exc:                       # noqa: BLE001
                 # HTTPException 도 여기 든다(룩백보다 짧은 이력이 422 로 난다).
                 why = getattr(exc, "detail", None) or str(exc)
                 log.warning("[mrplan] %s 를 못 구웠어요: %s", sid, why)
-                _mr_plan_excluded[sid] = {"id": sid, "label": label,
-                                          "reason": str(why)}
+                _mr_plan_fail(sid, label, str(why))
     finally:
         with _mr_plan_lock:
             if _mr_plan_key == key:
@@ -2660,7 +2678,15 @@ def _mr_plan_build(key: str) -> None:
 
 
 def _mr_plan_start(key: str) -> bool:
-    """빌더가 안 돌고 있으면 깨운다. 반환 = 「지금 굽고 있나」."""
+    """빌더가 안 돌고 있으면 깨운다. 반환 = 「지금 굽고 있나」.
+
+    ⚠ **`start()` 가 자물쇠 안이다.** 밖에 두면 스레드 둘이 뜬다: A 가 자물쇠를
+    놓고 `start()` 를 부르기 전의 틈에 B 가 들어오면 `is_alive()` 가 아직 거짓이라
+    (시작 전) B 가 조기 반환을 통과하고, 같은 키로 두 번째 빌더를 띄운 뒤
+    `excluded` 까지 지운다. 화면이 3초마다 묻고 sync 라우트가 스레드풀에서 도는
+    이 배관에서 그 틈은 실재한다(감사 2026-09-21). `start()` 는 안 막히므로
+    자물쇠를 오래 쥐지 않는다.
+    """
     global _mr_plan_thread, _mr_plan_key
     with _mr_plan_lock:
         if _mr_plan_thread is not None and _mr_plan_thread.is_alive():
@@ -2672,7 +2698,7 @@ def _mr_plan_start(key: str) -> bool:
         t = threading.Thread(target=_mr_plan_build, args=(key,),
                              name="mr-plan-build", daemon=True)
         _mr_plan_thread = t
-    t.start()
+        t.start()
     return True
 
 
@@ -2689,19 +2715,25 @@ def mr_plan() -> dict:
     고른 줄 하나만 그린다(`/api/mr/plan/history/{id}` 가 그 몫).
     """
     key = _dataset.data_key
+    # 워커가 쓰는 동안 읽지 않는다(`_mr_plan_fail` 머리) — 한 번 베껴 쓰고 논다.
+    with _mr_plan_lock:
+        excluded = list(_mr_plan_excluded.values())
+    failed = {x["id"] for x in excluded}
     rows: list[dict] = []
     missing = False
     for sid, _label, _kind in mr_mod.SERIES:
-        got = peek(f"mr-plan-{sid}", key)
+        got = peek(mrp.cache_name(sid), key)
         if got is None:
-            if sid not in _mr_plan_excluded:
+            if sid not in failed:
                 missing = True
             continue
-        rows.append({k: v for k, v in got.items() if k != "history"})
+        rows.append({k: v for k, v in got.items()
+                     # 이력은 여기서 뺀다(위 머리) · `exitsNow` 는 `position` 이
+                     # 같은 수를 지므로 안 싣는다(한 행에 같은 산술 두 벌 금지).
+                     if k not in ("history", "exitsNow")})
     building = _mr_plan_start(key) if missing else False
     return mrp.build_plan(rows, total=len(mr_mod.SERIES),
-                          excluded=list(_mr_plan_excluded.values()),
-                          building=building)
+                          excluded=excluded, building=building)
 
 
 @router.get("/api/mr/plan/history/{series_id:path}")
@@ -2711,7 +2743,7 @@ def mr_plan_history(series_id: str) -> dict:
     보드의 `/api/mr/history` 와 같은 이유로 갈라져 있다: 무겁고 행마다 필요하지
     않다. 아직 안 구워졌으면 404 이고 화면은 「이력을 불러오는 중이에요」로 둔다.
     """
-    got = peek(f"mr-plan-{series_id}", _dataset.data_key)
+    got = peek(mrp.cache_name(series_id), _dataset.data_key)
     if got is None or "history" not in got:
         raise HTTPException(
             status_code=404,

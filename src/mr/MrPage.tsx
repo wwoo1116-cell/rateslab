@@ -33,9 +33,9 @@
  *
  * ## 부분 결과가 정상이다
  *
- * 25계열의 격자+실행이 2~3분이라(실측: 계열당 1.5~9초) 첫 응답에는 구워진 것만
- * 있다. 화면은 못 구운 수를 **적고** 몇 초 뒤 다시 묻는다 — 빈 표를 조용히
- * 내거나 2~3분짜리 로딩 화면을 세우지 않는다.
+ * 25계열의 격자+실행이 **약 1분**이라(실측 2026-09-21: 처음부터 66초 · 계열당
+ * 1.5~9초) 첫 응답에는 구워진 것만 있다. 화면은 못 구운 수를 **적고** 몇 초 뒤
+ * 다시 묻는다 — 빈 표를 조용히 내거나 1분짜리 로딩 화면을 세우지 않는다.
  *
  * ── 배치: 조건 바 + 히어로 + [랭킹 표 | 상세] 2열, 페이지는 스크롤하지 않는다 ──
  */
@@ -69,7 +69,7 @@ import {
 import { BandChart } from './BandChart';
 import { BookWindow } from './BookWindow';
 import { condWord, SplitColumn } from './parts';
-import { fmtZ, perfNote, planLines, stateText } from './planText';
+import { fmtZ, gap, lvl, perfNote, planLines, stateText } from './planText';
 import { StrategyWindow } from './StrategyWindow';
 
 /* `Cond`(조건 바 한 칸)와 `ThHelp`(열 머리 뜻풀이)는 공용이다(`ui/Cond`·
@@ -110,18 +110,22 @@ function HeroDelta({ d, unit }: { d: number; unit: string }) {
 
 /** 상태 칸 — **두 줄 문장**이다 [OWNER 2026-09-21 — "토스스타일의 문장으로"].
  *
- *  문법은 이름 칸(`sr-name-stack`)의 그것이다(label1 + legal 뮤트): 이 앱이 한
- *  칸에 두 사실을 세울 때 쓰는 유일한 스택이라, 새 모양을 만들지 않는다.
- *  문장은 `planText` 한 벌이 짓는다 — 히어로·상세도 같은 줄을 쓴다. */
+ *  스택은 이름 칸의 그것이다(`sr-name-stack`) — 이 앱이 한 칸에 두 사실을 세울
+ *  때 쓰는 유일한 문법이라 새 모양을 만들지 않는다. **활자만 이탈한다**: 이름
+ *  칸은 label1(14/600)인데 여기는 **label2**(14/500)다. 이 칸은 이름이 아니라
+ *  문장이고, 같은 행의 계열 이름과 같은 굵기로 세우면 둘이 서로 제목처럼 다툰다
+ *  (캐논 규칙 3 — 이탈은 사유를 적는다). 문장 자체는 `planText` 한 벌이 짓는다. */
 function PlanCell({ r }: { r: MrPlanRow }) {
-  const { lead, sub, tone } = planLines(r);
+  const { lead, sub, pnl } = planLines(r);
   return (
     <VStack as="span" className="sr-name-stack">
+      {/* 색은 **캐논 한 곳**이 정한다(`table/tint.ts`) — 손으로 매기면 0 에서
+          갈린다(캐논은 `sr-flat`, 손 판은 맨 잉크). 돈이 없는 줄은 색도 없다. */}
       <Text
         font="label2"
         as="span"
         noWrap
-        className={tone === 'up' ? 'sr-up' : tone === 'down' ? 'sr-down' : undefined}
+        className={pnl == null ? undefined : directionClass(pnl)}
       >
         {lead}
       </Text>
@@ -214,32 +218,56 @@ function BookDetail({ watch }: { watch: MrWatch }) {
  *  "손익에서도 내가 클릭따로 안해도 바로 캐리, 롤다운, 평가 등으로 분해"].
  *  종전에는 전략 실험 창을 열어야 보이던 카드이고, 부품은 그쪽과 **같은 한 벌**
  *  이다(`parts.SplitColumn`) — 두 화면이 「롤다운」을 같은 뜻으로 쓴다. */
-function PlanStats({ r }: { r: MrPlanRow }) {
+function PlanStats({ r, place }: { r: MrPlanRow; place: 'strip' | 'card' }) {
   const unit = r.unit as Unit;
   const dUnit = r.dUnit as Unit;
+  /* 레벨·거리 포맷은 **문장과 같은 한 벌**이다(`planText`) — 표의 문장과 이
+     카드가 같은 수를 다른 자릿수로 적으면 한 화면이 스스로를 반박한다. */
   const money = (v: number) => fmtKrw(v);
-  const lv = (v: number | null | undefined) =>
-    `${fmtLevel(v ?? null, unit)}${unitSuffix(unit)}`;
-  const gp = (v: number | null | undefined) =>
-    v == null ? '—' : `${fmtLevel(Math.abs(v), dUnit)}${unitSuffix(dUnit)}`;
+  const lv = (v: number | null | undefined) => lvl(v, unit);
+  const gp = (v: number | null | undefined) => gap(v, dUnit);
   const p = r.position;
+  /* **셋은 아래(페이지 폭), 둘은 카드 안** [실측 2026-09-21].
+     다섯을 다 페이지 폭에 세우면 스트립이 두 줄(220px)이 되고, 855px 화면에서
+     표 카드가 268px 로 눌려 **표(360px)가 카드를 넘는다**. 트레이더가 달라고 한
+     셋(트리거·포지션·분해)만 아래에 두면 스트립이 한 줄이라 표가 제 키를 지킨다.
+     조건·지난 1년은 참고라 카드 안에서 굴러도 된다(1년 손익은 표에도 있다). */
+  if (place === 'card') {
+    return (
+      <HStack className="sr-stats" width="100%" flexWrap="wrap">
+        <StatColumn title="조건">
+          {/* 문장은 `parts.condWord` 한 벌 — 최적화 표·전략 창과 같은 줄이다. */}
+          <Stat label="격자 1등" value={condWord(r.cond)} />
+          <Stat
+            label="고른 기준"
+            value={`CDaR 비 · ${r.cond.cells}칸`}
+            note={r.cond.fallback ?? '성과를 잰 그 1년에서 골랐어요'}
+          />
+          <Stat
+            label="회계"
+            value={r.real ? '실가격' : '엔진 근사'}
+            note={r.real ? '자산스왑 대사' : '롤다운·조달이 없어요'}
+          />
+        </StatColumn>
+        <StatColumn title="지난 1년">
+          <Stat
+            label="손익"
+            value={money(r.perf1y.totalPnl)}
+            tone={r.perf1y.totalPnl > 0 ? 'up' : r.perf1y.totalPnl < 0 ? 'down' : undefined}
+            note={`${r.perf1y.from ?? '—'} 부터`}
+          />
+          <Stat label="거래" value={`${r.perf1y.numTrades}건`} note={perfNote(r)} />
+          <Stat label="최대 낙폭" value={fmtKrw(-r.perf1y.maxDrawdown)} />
+        </StatColumn>
+      </HStack>
+    );
+  }
   return (
     <HStack className="sr-stats" width="100%" flexWrap="wrap">
-      <StatColumn title="조건">
-        {/* 문장은 `parts.condWord` 한 벌 — 최적화 표·전략 창과 같은 줄이다. */}
-        <Stat label="격자 1등" value={condWord(r.cond)} />
-        <Stat
-          label="고른 기준"
-          value={`CDaR 비 · ${r.cond.cells}칸`}
-          note={r.cond.fallback ?? '전체 표본에서 골랐어요'}
-        />
-        <Stat
-          label="회계"
-          value={r.real ? '실가격' : '엔진 근사'}
-          note={r.real ? '자산스왑 대사' : '롤다운·조달이 없어요'}
-        />
-      </StatColumn>
-
+      {/* 차례가 곧 「먼저 보는 것」이다 [실측 2026-09-21: 다섯 칸이 접히면서
+          지난 1년·누적 분해가 접힌 아래(988px)로 내려가 「클릭 없이 바로」가
+          안 지켜졌다]. 트리거·포지션·분해를 앞에 세우고 조건·지난 1년을 뒤로
+          보낸다 — 조건은 참고이고 1년 손익은 표에 이미 서 있다. */}
       {/* 트리거 — 방향마다 「여기서 들어가면 저기서 나온다」. 막힌 방향은 칸을
           안 만들고 사유를 적는다(rv exclusions 문법). */}
       <StatColumn title="트리거">
@@ -300,17 +328,6 @@ function PlanStats({ r }: { r: MrPlanRow }) {
         )}
       </StatColumn>
 
-      <StatColumn title="지난 1년">
-        <Stat
-          label="손익"
-          value={money(r.perf1y.totalPnl)}
-          tone={r.perf1y.totalPnl > 0 ? 'up' : r.perf1y.totalPnl < 0 ? 'down' : undefined}
-          note={`${r.perf1y.from ?? '—'} 부터`}
-        />
-        <Stat label="거래" value={`${r.perf1y.numTrades}건`} note={perfNote(r)} />
-        <Stat label="최대 낙폭" value={fmtKrw(-r.perf1y.maxDrawdown)} />
-      </StatColumn>
-
       <SplitColumn split={r.perf1y.split} />
     </HStack>
   );
@@ -354,7 +371,7 @@ export function MrPage() {
   }, [load]);
 
   /* ── 채점이 끝날 때까지 다시 묻는다 ──────────────────────────────────────
-     25계열이 2~3분이라 첫 응답은 부분이다. `pending` 이 0 이 되면 **멈춘다** —
+     25계열이 약 1분이라 첫 응답은 부분이다. `pending` 이 0 이 되면 **멈춘다** —
      끝난 뒤에도 도는 폴링은 서버를 계속 깨우고, 화면은 그 사실을 말하지 않는다. */
   useEffect(() => {
     if (!plan || plan.pending <= 0) return;
@@ -448,8 +465,9 @@ export function MrPage() {
           {/* 종전에는 룩백·밴드 폭 알약이 섰던 자리 — 이제 **읽기 칸**이다.
               고를 수 없는 값을 고르개로 두면 화면이 없는 손잡이를 약속한다. */}
           <Cond k="조건" v="계열마다 격자 1등 · CDaR 비" />
-          <Cond k="격자 표본" v="전체" />
-          <Cond k="성과·트리거" v="지난 1년" />
+          {/* 고른 창과 잰 창이 **같다** — 한 칸으로 적는다 [OWNER 2026-09-21 오후].
+              두 칸으로 적으면 둘이 다른 창인 것처럼 읽힌다. */}
+          <Cond k="격자·성과 창" v="지난 1년" strong />
           <Cond k="비용" v={`편도 ${plan.params.costBp}bp`} />
           <Cond k="Delta" v={`${(plan.params.notional / 10_000).toLocaleString()}만원/bp`} />
           {plan.pending > 0 ? (
@@ -479,9 +497,10 @@ export function MrPage() {
             읽는 사람이 이 레벨을 「추천 진입가」로 읽는데, 그것은 격자가 표본
             안에서 고른 조건의 밴드 경계일 뿐이다. 명구 의무와 한 몸이다. */}
         <Text font="legal" as="span" color="fgMuted">
-          트리거는 계열마다 격자가 고른 조건의 밴드 경계예요 — 조건은 전체 표본에서
-          골라서 표본내 과적합이 붙고, 성과는 지난 1년이에요. 진입·청산·손절 레벨은
-          오늘 밴드라 매일 바뀌고, 명목은 안 말해요.
+          트리거는 계열마다 격자가 고른 조건의 밴드 경계예요 — 조건을 고른 창과 성과를
+          잰 창이 같아서(둘 다 지난 1년) 표본내 과적합이 붙어요. 옆의 1년 손익은 162칸
+          중 1등의 값이라 성과가 아니라 고른 결과예요. 진입·청산·손절 레벨은 오늘
+          밴드라 매일 바뀌고, 명목은 안 말해요.
         </Text>
         {plan.pending > 0 ? (
           <Text font="legal" as="span" color="fgMuted">
@@ -538,16 +557,22 @@ export function MrPage() {
       <HStack gap={2} alignItems="stretch" width="100%" flexGrow={1} minHeight={0}>
         <VStack
           className="sr-card"
-          /* 820 → 1000 [2026-09-21 · 브라우저 실측]. 상태 칸이 문장 둘이 되고
-             「1년 손익」 열이 붙으면서 표가 994px 을 쓴다 — 종전 폭에서는
-             마지막 열이 잘렸고 그건 「말줄임 금지」의 그 자리다. 「위치」 트랙을
-             내린 뒤의 실측값이 **표 994 · 카드 안쪽 여백 17** 이라 1,012 다
-             (1,000 으로 잡았더니 11px 이 넘쳐 가로 스크롤이 섰다 — 상자 폭이
-             아니라 «안쪽 폭»으로 재야 하는 그 자리). */
-          flexBasis={1012}
+          /* 820 → **1,060** [2026-09-21 · 브라우저 실측 세 번]. 상태 칸이 문장
+             둘이 되고 「1년 손익」 열이 붙으면서 표가 카드보다 넓어졌고, 그건
+             「말줄임 금지」의 그 자리다.
+
+             폭을 «오늘 데이터» 로 잡으면 내일 또 넘친다 — 조건이 계열마다 매일
+             다시 골라지므로 문장 길이가 **자료에 달렸다**(실측: 격자 표본을
+             전체에서 1년으로 바꾸자 25계열의 조건이 전부 갈리고 표가 994 →
+             1,027 이 됐다). 그래서 **어휘의 최장**을 캔버스로 재서 잡았다:
+             「-99.9bp 이상 · 123.4bp 지났어요 → 긴 쪽 리시브 · 짧은 쪽 페이」
+             = 334px(커브 다리 이름이 가장 길다) + 나머지 여섯 열 693 + 카드
+             안쪽 여백 → **1,060**. 그보다 긴 조합이 나오면 카드 안에서
+             가로로 굴린다(글자를 자르지 않는다). */
+          flexBasis={1060}
           flexGrow={0}
           flexShrink={1}
-          maxWidth={1012}
+          maxWidth={1060}
           minHeight={0}
         >
           <HStack
@@ -862,38 +887,6 @@ export function MrPage() {
                   </Text>
                 </HStack>
                 <BookDetail watch={watch} />
-                <HStack className="sr-stats" width="100%" flexWrap="wrap">
-                  <StatColumn title="묶음">
-                    <Stat label="만기" value={`${watch.n}개`} />
-                    <Stat label="밴드 밖" value={`${watch.outLow + watch.outHigh}개`}
-                      note={`아래 ${watch.outLow} · 위 ${watch.outHigh}`} />
-                    <Stat label="재진입" value={`${watch.reentry}개`} />
-                    <Stat label="밴드 안" value={`${watch.inside}개`} />
-                  </StatColumn>
-                  <StatColumn title="지금">
-                    <Stat label="평균 |z|"
-                      value={watch.meanAbsZ == null ? '—' : `${watch.meanAbsZ.toFixed(2)}σ`} />
-                    <Stat
-                      label="가장 늘어난 곳"
-                      value={watch.peak == null ? '—' : watch.peak.label}
-                      note={watch.peak == null ? undefined : fmtZ(watch.peak.z)}
-                    />
-                    {/* 종가가 만기마다 갈릴 수 있다 — 민평×IRS 교집합이라 한
-                        만기가 하루 안 찍히면 그 다리만 뒤처진다. */}
-                    <Stat
-                      label="종가"
-                      value={watch.asof ?? '—'}
-                      note={
-                        watch.stale > 0
-                          ? `${watch.stale}만기는 ${watch.asofMin}`
-                          : `${watch.n}만기 모두`
-                      }
-                    />
-                  </StatColumn>
-                  {/* 통합 줄에는 **계획 카드가 없다** — 만기마다 조건이 달라
-                      「이 묶음의 진입 레벨」이라는 수가 성립하지 않는다.
-                      그 답은 통합 장부 창이 자기 노브로 낸다. */}
-                </HStack>
               </>
             ) : sel ? (
               <>
@@ -921,13 +914,15 @@ export function MrPage() {
                     이력을 불러오는 중이에요…
                   </Text>
                 )}
-                {/* 사실 줄은 **차트 아래**, 그리고 이 앱의 유일한 스트립 문법이다
-                    (`ui/Stat.tsx`). 분해까지 다섯 칸이 클릭 없이 선다. */}
-                <PlanStats r={sel} />
+                {/* 참고 둘 — 캐논대로 **차트 아래**다. 트레이더가 달라고 한
+                    셋(트리거·포지션·분해)은 카드 밖 페이지 폭에 선다. */}
+                <PlanStats r={sel} place="card" />
               </>
             ) : (
               <Text font="body" as="span" color="fgMuted">
-                채점이 끝나는 대로 계열이 여기 서요.
+                {plan.excluded.length === plan.total
+                  ? '계열을 하나도 못 구웠어요 — 위의 사유를 보세요.'
+                  : '채점이 끝나는 대로 계열이 여기 서요.'}
               </Text>
             )}
              </VStack>
@@ -936,6 +931,52 @@ export function MrPage() {
           </VStack>
         </VStack>
       </HStack>
+
+      {/* ── 사실 스트립 — **카드 밖 · 페이지 폭** [실측 2026-09-21] ──────────
+          캐논 그대로 차트 **아래**이고(`ui/Stat.tsx`), 다른 것은 **어느 상자
+          안인가**뿐이다. 상세 카드 안에 두면 카드가 796px 이라 다섯 칸이 다섯
+          줄로 접혀 428px 이 스크롤 뒤로 내려갔다 — 하필 트레이더가 달라고 한
+          「클릭 없이 바로 보이는 분해」가 거기였다. 페이지 폭(1,856)에서는 다섯
+          칸이 **한 줄**에 선다. 카드 둘이 세로로 준 자리만큼 표가 짧아지지만
+          그 표는 원래 안쪽에서 구르는 표다. */}
+      <Box flexShrink={0} width="100%">
+        {isBook && watch ? (
+          <HStack className="sr-stats" width="100%" flexWrap="wrap">
+            <StatColumn title="묶음">
+              <Stat label="만기" value={`${watch.n}개`} />
+              <Stat label="밴드 밖" value={`${watch.outLow + watch.outHigh}개`}
+                note={`아래 ${watch.outLow} · 위 ${watch.outHigh}`} />
+              <Stat label="재진입" value={`${watch.reentry}개`} />
+              <Stat label="밴드 안" value={`${watch.inside}개`} />
+            </StatColumn>
+            <StatColumn title="지금">
+              <Stat label="평균 |z|"
+                value={watch.meanAbsZ == null ? '—' : `${watch.meanAbsZ.toFixed(2)}σ`} />
+              <Stat
+                label="가장 늘어난 곳"
+                value={watch.peak == null ? '—' : watch.peak.label}
+                note={watch.peak == null ? undefined : fmtZ(watch.peak.z)}
+              />
+              {/* 종가가 만기마다 갈릴 수 있다 — 민평×IRS 교집합이라 한 만기가
+                  하루 안 찍히면 그 다리만 뒤처진다. */}
+              <Stat
+                label="종가"
+                value={watch.asof ?? '—'}
+                note={
+                  watch.stale > 0
+                    ? `${watch.stale}만기는 ${watch.asofMin}`
+                    : `${watch.n}만기 모두`
+                }
+              />
+            </StatColumn>
+            {/* 통합 줄에는 **계획 카드가 없다** — 만기마다 조건이 달라
+                「이 묶음의 진입 레벨」이라는 수가 성립하지 않는다. 그 답은
+                통합 장부 창이 자기 노브로 낸다. */}
+          </HStack>
+        ) : sel ? (
+          <PlanStats r={sel} place="strip" />
+        ) : null}
+      </Box>
 
       {/* 창은 고른 줄이 정한다 — 통합이면 아홉을 한 장부로, 아니면 그 계열
           하나를 재현한다. 만기 줄을 누르면 보드의 선택이 그 만기로 옮겨 가고

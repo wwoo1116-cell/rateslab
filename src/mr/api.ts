@@ -1306,27 +1306,10 @@ export function fetchMrHistory(id: string, p: MrParams): Promise<MrHistory> {
  * useTermData.ts`), 두 물음은 다른 물음이다.
  */
 
-/** 오늘 밴드의 **나가는 문 둘** — 청산·손절.
- *
- *  엔진의 두 문은 `|z|` 위에 있어서 **방향을 안 본다**: 문턱은 지금 값이 중심선의
- *  어느 쪽인가가 정한다. 들고 있는 다리가 중심선을 지나 반대쪽에 서 있을 수 있고
- *  (실측 2026-09-21 FUT-KTB3), 그때 진입 쪽 선을 청산선이라 적으면 화면이 「이미
- *  지난 선」을 가리킨다 — 그래서 이 값이 따로 있다. */
-export interface MrExitsNow {
-  side: 'above' | 'below';
-  z: number;
-  /** 청산 레벨(계열 자기 단위) — 중심선 쪽으로 `exitGap` bp 오면 청산이다. */
-  exit: number;
-  /** 손절 레벨 — `stopGap` bp 더 벌어지면 손절이다. */
-  stop: number;
-  exitGap: number;
-  stopGap: number;
-}
-
 /** 한 방향의 **들어가기 전 이야기** — 「이쪽으로 들어가면 저기서 나온다」.
  *
  *  거리는 `entryGap` 하나뿐이다(bp). 청산·손절의 «거리» 는 들어가 있을 때만 뜻이
- *  있어서 `MrExitsNow`·`MrPlanPosition` 이 진다. 못 하는 방향은 **안 온다**
+ *  있어서 `MrPlanPosition` 이 진다. 못 하는 방향은 **안 온다**
  *  (BSS 의 하단은 국고 매도다 — 사유는 행의 `triggerBlocked`). */
 export interface MrPlanLevel {
   dir: number;
@@ -1385,22 +1368,27 @@ export interface MrPlanCond {
   exitZ: number;
   stopZ: number;
   entryMode: MrEntryMode;
-  basis: MrRankKey;
-  span: 'all';
+  /** 격자를 돌린 창 — **성과를 잰 창과 같다**(둘 다 지난 1년)
+   *  [OWNER 2026-09-21 오후 — "이것도 그냥 표본도 1년으로 하죠?"]. 그래서 이 행의
+   *  1년 손익은 162칸 중 1등의 값이고, 표본밖 기대값이 아니다. */
+  span: MrSpan;
   cells: number;
   fallback: string | null;
 }
 
-/** 계획면의 행 — **보드 행의 열쇠를 다 갖는다**(`MrRow`) + 계획의 다섯.
+/** 계획면의 행 — **보드 행의 열쇠를 다 갖는다**(`MrRow`) + 계획의 넷.
  *
- *  같은 열쇠를 갖는 것이 설계다: 통합 줄(`mrbook.watch`)과 화면 부품
- *  (`stateText`·`BandTrack`·`heroTrigger`)이 그것을 읽으므로, 다른 모양이면 그
- *  부품들을 두 벌로 만들게 된다(캐논 얼라인 8). */
+ *  같은 열쇠를 갖는 것이 설계다: 통합 줄(`mrbook.watch`)이 이 모양을 그대로 먹고,
+ *  상태 어휘(`planText.stateText`)도 보드와 한 벌이다 — 다른 모양이면 그 둘을 두
+ *  벌로 만들게 된다(캐논 얼라인 8).
+ *
+ *  ⚠ **`triggers` 와 `levels` 는 같은 밴드의 두 표현이다.** 화면이 읽는 것은
+ *  `levels`(진입에 딸린 청산·손절까지 있다)이고, `triggers` 는 보드가 쓰던 그
+ *  필드라 **모양을 맞추려고** 남아 있다 — 서버 시험이 둘의 진입 레벨이 같은
+ *  수인지를 잰다(`test_mrplan.py`). 새 코드는 `levels` 를 쓴다. */
 export interface MrPlanRow extends MrRow {
   cond: MrPlanCond;
   levels: MrPlanLevel[];
-  /** 포지션이 없어도 선다 — 「들어가 있었다면 어디서 나오나」의 수. */
-  exitsNow: MrExitsNow | null;
   /** 지금 들고 있는 다리. 없으면 null — 「없다」와 「못 잰다」는 다른 말이다. */
   position: MrPlanPosition | null;
   /** 지난 1년의 성적과 **분해**. 클릭 없이 화면에 선다 [OWNER 2026-09-21]. */
@@ -1413,7 +1401,8 @@ export interface MrPlanRow extends MrRow {
 
 /** 계획면 전체.
  *
- *  **부분 결과가 정상이다**: 25계열의 격자+실행이 2~3분이라 첫 응답에는 구워진
+ *  **부분 결과가 정상이다**: 25계열의 격자+실행이 약 1분이라(실측 2026-09-21: 66초)
+ *  첫 응답에는 구워진
  *  것만 있다. `pending` 이 0 이 될 때까지 화면이 몇 초마다 다시 묻고, 그동안
  *  순위는 **구워진 것들 안에서**의 순위다(화면이 그 사실을 적는다). */
 export interface MrPlan {
@@ -1422,7 +1411,7 @@ export interface MrPlan {
     span: MrSpan;
     months: number;
     rankKey: MrRankKey;
-    gridSpan: 'all';
+    gridSpan: MrSpan;
     costBp: number;
     notional: number;
     carry: boolean;
