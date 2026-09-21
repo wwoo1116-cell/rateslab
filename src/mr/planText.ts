@@ -103,17 +103,9 @@ export interface PlanLines {
  */
 export function planLines(r: MrPlanRow): PlanLines {
   const unit = r.unit;
-  const dUnit = r.dUnit;
 
   // ① 밴드가 못 선다 — 「없다」가 아니라 「못 잰다」라고 적는다.
-  if (r.z == null || r.levels.length === 0) {
-    return {
-      lead: '산출 불가',
-      /* z 가 없는 이유는 둘이다 — 창 미달 **또는 σ=0**(값이 창 안에서 한 번도
-         안 움직인 계열). 창 탓으로만 적으면 평평한 계열에서 거짓이 된다. */
-      sub: `표본 부족 — ${r.cond.lookback}일 창`,
-    };
-  }
+  if (r.z == null || r.levels.length === 0) return entryLines(r);
 
   // ② 들고 있는 다리 — 나가는 문 둘이 오늘 레벨로 선다.
   const p = r.position;
@@ -133,6 +125,31 @@ export function planLines(r: MrPlanRow): PlanLines {
   }
 
   // ③ 비어 있는 줄 — 진입 문턱 하나와 남은 거리.
+  return entryLines(r);
+}
+
+/** **진입만** 말하는 두 줄 — 들고 있든 아니든 같은 문장.
+ *
+ *  패널 분리(2026-09-21 오후) [OWNER — "손절 청산은 아예 패널 분리해버리죠?
+ *  … 화면에서 정보는 MECE하게 나와야 함"] 뒤로 **순위 패널의 시그널 열은 언제나
+ *  이것**이다. 나가는 문은 그 패널의 사실이 아니라 청산·손절 패널의 사실이고,
+ *  한 화면에서 같은 사실이 두 번 서면 그게 곧 MECE 위반이다.
+ *
+ *  그래서 이 함수는 `position` 을 **안 본다**. 들고 있는 줄에서도 「얼마면 더
+ *  실나」를 적고(그게 그 줄의 매력도다 — 오너가 정정한 그 정의), 나갈 자리는
+ *  아래 패널이 진다. */
+export function entryLines(r: MrPlanRow): PlanLines {
+  const unit = r.unit;
+  const dUnit = r.dUnit;
+
+  if (r.z == null || r.levels.length === 0) {
+    return {
+      lead: '산출 불가',
+      /* z 가 없는 이유는 둘이다 — 창 미달 **또는 σ=0**(값이 창 안에서 한 번도
+         안 움직인 계열). 창 탓으로만 적으면 평평한 계열에서 거짓이 된다. */
+      sub: `표본 부족 — ${r.cond.lookback}일 창`,
+    };
+  }
   const l = pickLevel(r);
   if (!l) {
     // 문턱이 아예 없다 = 이 데스크가 할 수 있는 방향이 없다는 뜻이고, 사유는
@@ -161,24 +178,6 @@ export function planLines(r: MrPlanRow): PlanLines {
         sub: `${lvl(l.entry, unit)} ${word} · ${gap(l.entryGap, dUnit)} 돌파 → ${l.legs}` }
     : { lead: `${head} · 진입까지 ${gap(l.entryGap, dUnit)}`,
         sub: `${lvl(l.entry, unit)} ${word} 시 ${l.legs}` };
-}
-
-/** 보유 포지션의 **매력도 한 줄** [OWNER 2026-09-21 오후 — "원래 진입하는 조건이
- *  매력도고 그 위치에 대한 순위를 유지해주면 됨"].
- *
- *  새 척도를 만들지 않는다. 델타를 더 열지 말지는 **그 계열을 애초에 사게 한 그
- *  조건**이 지금도 서 있느냐로 판단한다 — 진입선을 아직 넘어 있으면 더 실을 자리,
- *  밴드로 돌아왔으면 더 실을 이유가 없다. 순위(|z|)도 진입 후보와 **같은 한 줄**을
- *  쓴다. 그래서 이 함수가 보는 것은 `levels` 이지 포지션이 아니다. */
-export function entryNote(r: MrPlanRow): string {
-  const l = pickLevel(r);
-  if (!l) return r.triggerBlocked ?? '진입선 없음';
-  const d = gap(l.entryGap, r.dUnit);
-  if (r.cond.entryMode === 'touch') {
-    const out = r.state.kind === 'above' || r.state.kind === 'below';
-    return out ? '밴드 복귀 시 추가' : `진입선까지 ${d}`;
-  }
-  return l.entryReached ? `진입선 ${d} 돌파 · 추가 가능` : `진입선까지 ${d}`;
 }
 
 /** 청산·손절선에 붙는 **부등호 낱말** — 지금 값이 중심선의 어느 쪽인가가 정한다.

@@ -761,6 +761,108 @@ describe('미청산은 거래 표의 줄이다 — 승률은 안 건드린다', 
   });
 });
 
+/* 패널 둘은 **MECE** 다 [OWNER 2026-09-21 오후].
+ *
+ * > "손절 청산은 아예 패널 분리해버리죠? 그러니까 25개 포지션에 대한 괴리도
+ * >  순위가 한 개, 그리고 그 중 현재 시점에서 과거에 진입했을 거라고 예상되는
+ * >  포지션에 대한 청산 및 손절 bp(업데이트 지속되는 것) + 화면에서 정보는
+ * >  MECE하게 나와야 함."
+ *
+ * ## 왜 가드가 필요한가 — 이건 조용히 썩는다
+ *
+ * 첫 판은 표 둘을 **한 카드 안**에 넣었고, 그래서 순위·계열·값·1D·괴리도
+ * **다섯 열이 그대로 겹쳤다**. 겹친 열은 정보가 아니라 잉크다 — 읽는 사람이
+ * 「이 둘이 같은 수인가」를 매번 확인하게 된다.
+ *
+ * 그리고 이 결함은 **고장으로 안 보인다**. 열 하나를 「편하니까」 도로 넣는 것은
+ * 언제나 그럴듯하고, 넣은 순간 아무 시험도 안 빨개진다. 그래서 여기서 잰다.
+ */
+describe('패널 둘은 MECE 다 — 겹치는 것은 계열 이름뿐', () => {
+  const page = () => src('src/mr/MrPage.tsx');
+
+  /** `ExitPanel` 함수 본문만 자른다 — 파일 전체에서 찾으면 순위표의 열에 걸린다.
+   *
+   *  ⚠ **주석을 걷고 본다.** 첫 판은 안 걷었고, 그래서 이 패널이 「순위도 괴리도도
+   *  안 적는다」고 **설명하는 주석**에 가드가 걸려 빨개졌다(2026-09-21). 재는
+   *  것은 화면이 그리는 것이지 우리가 적어 둔 말이 아니다. */
+  const exitBody = () => {
+    const p = stripComments(page());
+    const a = p.indexOf('function ExitPanel(');
+    expect(a, 'function ExitPanel(').toBeGreaterThan(0);
+    const b = p.indexOf('\nfunction ', a + 1);
+    return p.slice(a, b > 0 ? b : undefined);
+  };
+
+  /** 순위 표의 머리 — `<TableHeader sticky>` 부터 `</TableHeader>` 까지. */
+  const rankHead = () => {
+    const p = stripComments(page());
+    const a = p.indexOf('<TableHeader sticky>', p.indexOf('괴리도 순위'));
+    expect(a, '<TableHeader sticky>').toBeGreaterThan(0);
+    return p.slice(a, p.indexOf('</TableHeader>', a));
+  };
+
+  it('순위 패널이 **25계열 전부**를 세운다 — 거르지 않는다', () => {
+    /* [OWNER — "25개 포지션에 대한 괴리도 순위가 한 개"]. 들고 있는 계열을 빼면
+       순위가 군데군데 비고, 그러면 그 한 줄이 더 이상 «전체 순위»가 아니다. */
+    const p = page();
+    expect(p).toMatch(/\{rows\.map\(\(r\) => \(/);
+    expect(p).not.toMatch(/rows\.filter\(\(r\) => !r\.position\)/);
+  });
+
+  it('순위 패널은 **나가는 문을 안 적는다**', () => {
+    const h = rankHead();
+    for (const w of ['청산선', '손절선', '평가손익', '진입가']) {
+      expect(h, w).not.toContain(w);
+    }
+  });
+
+  it('청산·손절 패널은 **순위·괴리도·오늘 값을 안 적는다**', () => {
+    const b = exitBody();
+    /* 재는 것은 **열**이지 낱말이 아니다. 첫 판은 '순위' 를 통째로 금지했고,
+       그래서 빈 상태의 「위 순위표의 조건으로는」이라는 **정당한 안내문**에
+       걸려 빨개졌다(2026-09-21). 옆 패널을 가리키는 문장은 중복이 아니라
+       길잡이다 — 금지할 것은 그 사실을 **다시 그리는 것**이다. */
+    for (const w of ['순위', '괴리도']) {
+      expect(b, `열 ${w}`).not.toMatch(new RegExp(`label="${w}"|fgMuted">${w}<`));
+    }
+    for (const w of ['levelHeadText', 'BASIS_LABEL', 'tintStyle']) {
+      expect(b, w).not.toContain(w);
+    }
+    /* `r.rank`·z 를 조용히 끼워 넣는 길도 막는다. */
+    expect(b).not.toMatch(/r\.rank/);
+    expect(b).not.toMatch(/fmtZ\(/);
+  });
+
+  it('두 패널의 열 이름이 **계열 하나만** 겹친다', () => {
+    /* 조인 키는 중복이 아니다 — 두 표를 눈으로 잇는 유일한 고리다. */
+    const heads = (s: string) =>
+      new Set([...s.matchAll(/label="([^"]+)"|color="fgMuted">([^<]+)</g)]
+        .map((m) => (m[1] ?? m[2] ?? '').trim())
+        .filter((x) => x && !x.includes('{')));
+    const a = heads(rankHead());
+    const b = heads(exitBody());
+    const both = [...a].filter((x) => b.has(x));
+    expect(both).toEqual(['계열']);
+  });
+
+  it('청산·손절선은 **남은 거리**를 같이 적는다 — 「업데이트 지속되는 것」', () => {
+    /* 레벨만 적으면 「얼마나 가까운가」를 읽는 사람이 매번 뺄셈해야 한다.
+       그리고 두 선은 오늘 밴드에서 나오므로 어제 수가 아니라는 것도 말해야 한다. */
+    const b = exitBody();
+    expect(b).toMatch(/gap\(p\.exitGap, r\.dUnit\)/);
+    expect(b).toMatch(/gap\(p\.stopGap, r\.dUnit\)/);
+    expect(b).toMatch(/오늘 밴드라 매일 바뀝니다/);
+  });
+
+  it('부등호는 `exitWords` **한 벌**이 정한다', () => {
+    /* 손으로 적으면 중심선을 넘어가 있는 줄에서 청산과 손절이 뒤집힌다 —
+       서버가 `|z|` 로 재는 그 자리(계획면 감사가 실제로 밟았다). */
+    const b = exitBody();
+    expect(b).toContain('exitWords(p)');
+    expect(b).not.toMatch(/\?\s*'이하'\s*:\s*'이상'/);
+  });
+});
+
 describe('1순위를 바로 띄운다 — rv 히어로의 문법으로', () => {
   const page = () => src('src/mr/MrPage.tsx');
 
