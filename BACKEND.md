@@ -144,6 +144,89 @@ powershell -ExecutionPolicy Bypass -File backend\serve.ps1 -Local   # 개발·�
 수집 단계 에러**로 거절한다. 테스트가 말을 걸 주소는 `SAURON_TEST_BASE` 로
 바꾼다 — 하드코딩된 포트는 더 이상 없다.
 
+### 아침 데이터 갱신 — 스냅샷 백엔드의 하루 [2026-09-22]
+
+`app/main.py` 는 **모듈 import 때 데이터셋을 한 번 읽고** `_bases`·`_curves`·
+`_events`·`_volatility`·`_forwards`·`_surface` 를 전역에 붙든다. 다시 읽는 자리가
+없다. 그래서 백엔드가 뜬 뒤에 도착한 종가는 **재기동 전까지 화면에 안 나온다**.
+
+증상이 화면마다 다르다는 것이 이 병의 얼굴이다:
+
+| 화면 | 읽는 방식 | 늦는가 |
+|---|---|---|
+| Main · Backtest | 기동 스냅샷(`_dataset`) | **늦는다** |
+| Strategy 계열 | 요청마다 SQL 라이브 | 안 늦는다 |
+
+그래서 「rateslab 이 이상하다」가 접속 문제로 오독되기 쉽다 — 접속은 멀쩡하고
+한 화면만 하루 늦는다.
+
+#### 무엇이 열흘을 먹었는가
+
+`refresh.ps1` 은 「SQL 이 백엔드보다 새로울 때만 재기동」한다. 아침 순서가 이렇다:
+
+    07:37  PC 부팅 → SauronV2Backend 가 **그때의** SQL 을 읽는다
+    07:42  refresh → SQL 과 서버가 같다 → 「이미 최신이에요」로 종료
+    그 뒤   전영업일 종가가 SQL 에 도착 → 아무도 다시 안 본다
+
+둘이 같은 것은 참이었다. 거짓은 그 상태를 **«최신»이라 부른 것**이다 — SQL 자신이
+기대 전영업일을 안 들고 있었다. `refresh.log` 에 그 한 줄이 **2026-09-10 부터
+09-22 까지 열 번의 아침** 연속으로 찍혀 있다. 부수로 확인된 것 둘:
+
+- `-WaitMinutes 60` 의 대기 루프는 **한 번도 돈 적이 없다.** 판정 두 줄이 ISO
+  날짜 문자열에 대해 완전하고 배타적이라 첫 바퀴에서 늘 exit/break 했다 —
+  `Start-Sleep 300` 은 도달 불가능한 코드였다.
+- 비교에 쓰던 `irs_close_rows()[-1]` 은 테이블 raw MAX 라서 **전일종가 컷과 엑셀
+  병합을 안 지난다.** 서버가 서빙하는 asof 와 다를 수 있다.
+
+#### 지금의 설계
+
+판정은 `scripts/check_close.py` 가 한다(파이썬엔 시험이 있다 —
+`tests/test_refresh_decide.py`). 다섯 상태고, 새로 생긴 것은 **`waiting`** 이다.
+
+| verdict | 뜻 | exit |
+|---|---|---|
+| `error` | 서빙될 날짜를 못 구했다(DB·엑셀 둘 다) — 재기동 금지 | 1 |
+| `start` | 백엔드가 안 떠 있다 | – |
+| `restart` | 재기동하면 날짜가 앞선다 | – |
+| `waiting` | 서버는 SQL 만큼 최신인데 **SQL 이 기대 전영업일을 안 들고 있다** | 2 |
+| `current` | 기대 전영업일까지 서빙 중 | 0 |
+
+비교하는 두 수는 같은 계산에서 뽑는다 — `wouldServe` 는 서버가 부팅 때 지나는
+그 로더(`load_dataset_merged`)의 asof 다. 기다림은 스크립트가 아니라 **스케줄러의
+반복 트리거**가 한다(`refresh_schedule.ps1`). `refresh.ps1` 은 단발이다 —
+`MultipleInstances=IgnoreNew` 아래서 오래 도는 인스턴스는 다음 회차를 막는다.
+
+    powershell -File backend/refresh_schedule.ps1            # 지금 상태만
+    powershell -File backend/refresh_schedule.ps1 -Apply     # 30분마다 12시간
+    powershell -File backend/refresh.ps1 -DryRun             # 판정만, 안 죽인다
+
+#### ⚠ PowerShell 5.1 함정 다섯 (전부 실측으로 밟았다)
+
+1. **`.ps1` 은 BOM 있는 UTF-8 이어야 한다.** 없으면 5.1 이 ANSI(cp949)로 읽어
+   한글 문자열의 인용이 깨지고, `refresh_schedule.ps1` 에서는 그 탓에 `-Apply`
+   **가드 블록이 통째로 무력화됐다**(본문이 코드가 아니라 텍스트로 출력되고 실행이
+   아래로 흘렀다). 그래서 바꾸는 코드를 `if ($Apply)` **안쪽**에 둔다 — 가드가
+   깨지면 변경도 같이 죽는다.
+2. **`Parser::ParseFile` 의 «parse OK» 는 헛초록일 수 있다.** `(if (...) {...}
+   else {...})` 는 5.1 에 없는 if-식인데 파서가 그걸 **명령 이름 `if`** 로 읽어
+   통과시킨다. 런타임에 CommandNotFound 로 죽는다.
+3. **`$ErrorActionPreference="Stop"` + 네이티브 exe 의 stderr = 종료 오류.** 5.1 은
+   리다이렉트한 stderr 의 각 줄을 ErrorRecord 로 싸므로, 파이썬 로거가 `[dataset] …`
+   경고를 쓰는 것만으로 호출이 **던진다**. `Get-Verdict` 안에서 `Continue` 로 가린다.
+   옛 `Get-SqlAsof` 가 안 밟은 것은 `python -c` 가 stderr 를 안 썼기 때문이다.
+4. **`--served "$x"` 가 아니라 `--served=$x`.** `$x` 가 빈 문자열이면 5.1 이
+   네이티브 exe 에 넘기는 **빈 인자를 떨어뜨려** argparse 가 usage 로 죽는다.
+   하필 「백엔드가 안 떠 있다」가 그 경로였다.
+5. **네이티브 stdout 의 한글은 `[Console]::OutputEncoding` 으로 디코드된다**(기본
+   cp949). 그래서 **손으로 돌리면 멀쩡하고 스케줄러가 돌리면 깨진다** — 태스크는
+   `conhost --headless` 밑이라 콘솔 인코딩이 다르다. 첫 자동 회차(08:30)의 판정
+   문장이 `湲곕? ?꾩쁺?낆씪源뚯? …` 로 찍혀서 잡았다. `Get-Verdict` 가 호출 전후로
+   UTF-8 을 걸고 되돌린다. ★JSON 키·날짜·verdict 는 ASCII 라 **판정 자체는 맞았다**
+   — 「기계가 읽는 것을 ASCII 로, 사람이 읽는 문장을 따로」 둔 설계가 그걸 버텼다.
+
+그리고 `Stop-ScheduledTask` 로는 uvicorn 이 안 죽는다 — 리스너 PID 를 직접 잡는다
+(`refresh.ps1` 머리에 실측 근거).
+
 ### 환경변수
 
 | 이름 | 읽는 곳 | 없으면 |
