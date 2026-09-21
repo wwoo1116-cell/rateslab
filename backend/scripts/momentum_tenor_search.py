@@ -557,7 +557,7 @@ def write_report(rows, ranked, top, reg, ctl, base_vol, gates, legs_sum, freq,
       f"연 SR **{hurdle_search:.3f}**, 레인 N 까지 곱하면 **{hurdle_full:.3f}**. "
       f"「아무 실력이 없어도 이만큼은 나온다」는 뜻이다.")
     w("")
-    w("## ★ 폭이 없는 이유 — 원화 IRS 커브는 **한 인자**다")
+    w("## ★ 왜 폭이 반만 오나 — 원화 IRS 커브는 **한 인자**다")
     w("")
     w("테너를 늘리는 것이 폭이 되려면 다리들이 서로 달라야 한다. 일별 변화 상관을 "
       "재면 그렇지 않다:")
