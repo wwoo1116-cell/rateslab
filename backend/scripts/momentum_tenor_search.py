@@ -214,7 +214,31 @@ def breadth(series) -> tuple[float, float]:
 # ── 한 칸의 수 ──────────────────────────────────────────────────────────────
 
 def _cdar(s: pd.Series) -> float | None:
+    """레인 기본 순위자 — **확장창 정규화 위의** CDaR 비.
+
+    ⚠ 이 축에서는 **못 쓴다**. 북이 이미 북수준 변동성 목표(`TARGET_VOL`)를 걸고
+    있어서 배수가 2018 이후 평평한데(중앙 대비 1.01~1.07), **첫해만 11~15배로
+    튄다**(`min_obs=60` 확장창이 관측 예순 개로 선 추정이라). 그 한 해가 모든
+    칸의 낙폭 꼬리를 차지해 분모가 칸마다 거의 같아지고, 그래서 비율이 분자
+    (=수익)만 따라간다 — 실측 Spearman(CDaR비, SR) **+0.964**. 즉 이 칸들 위에서
+    이 순위자는 «낙폭을 보는 순위»가 아니라 **샤프의 다른 이름**이다.
+    첫해를 버리면 등록 칸이 0.194 → **1.246** 으로 6.4배 움직인다(버림 길이가
+    또 자유도라 그 길도 답이 아니다). 보고서는 `_cdar_raw` 로 순위를 매긴다.
+    """
     return ev.cdar_ratio(ev.vol_normalize(s)[0])["cdar_ratio"]
+
+
+def _cdar_raw(s: pd.Series) -> dict:
+    """정규화 **없이** 잰 CDaR — 이 축에서 쓰는 순위자.
+
+    정규화를 빼도 되는 이유가 이 레인에만 있다: 칸마다 북 변동성이 이미
+    `TARGET_VOL` 로 맞춰져 있어(실측 연변동성 10.9~11.7M) **위험이 구조로
+    맞춰진다**(§10-4). 그리고 CDaR 비는 `r → c·r` 에 불변이라 자본 기준 없이 선다.
+    """
+    d = ev.cdar_ratio(s)
+    return {"cdar_raw": d["cdar_ratio"], "cdar_abs": d["cdar"],
+            "tail_episodes": d.get("tail_episodes"),
+            "total_episodes": d.get("total_episodes")}
 
 
 def cell(tenors: tuple[str, ...], sig_cache: dict) -> dict:
@@ -237,6 +261,7 @@ def cell(tenors: tuple[str, ...], sig_cache: dict) -> dict:
         "sr": float(pnl.mean() / pnl.std(ddof=1) * math.sqrt(ANN)) if pnl.std(ddof=1) > 0 else float("nan"),
         "sr_lo": ev.sharpe_lo(pnl),
         "cdar": _cdar(pnl),
+        **_cdar_raw(z),
         "net": float(pnl.sum()), "cost": float(cost.sum()),
         "vol": vol, "mdd": mdd,
         "calmar": float((cz.iloc[-1] / yrs) / abs(mdd)) if mdd < 0 else float("nan"),
@@ -293,15 +318,16 @@ def _row(r: dict, base_vol: float) -> str:
     k = base_vol / r["vol"] if r["vol"] > 0 else float("nan")
     return (f"| {'+'.join(r['tenors']):22s} | {r['n_legs']} | {_fmt(r['neff'], '.2f')} "
             f"| {_fmt(r['rho'], '+.3f')} | {_fmt(r['sr'])} | {_fmt(r['sr_lo'])} "
-            f"| {_fmt(r['cdar'])} | {_fmt(r['calmar'], '.2f')} "
+            f"| {_fmt(r['cdar_raw'])} | {r.get('tail_episodes', '?')} "
+            f"| {_fmt(r['calmar'], '.2f')} "
             f"| {r['net'] * k / 1e4:,.0f} | {r['mdd'] * k / 1e4:,.0f} "
             f"| {abs(r['cost']) / max(abs(r['net']) + abs(r['cost']), 1e-9) * 100:.1f}% "
             f"| {r['pos_years']} |")
 
 
-HEAD = ("| 조합 | 다리 | N_eff | ρ̄ | SR | SR(Lo) | CDaR비 | Calmar "
+HEAD = ("| 조합 | 다리 | N_eff | ρ̄ | SR | SR(Lo) | CDaR비 | 꼬리사건 | Calmar "
         "| 맞춤누적(만) | 맞춤MDD(만) | 비용비 | 양+년 |")
-SEP = "|---|---|---|---|---|---|---|---|---|---|---|---|"
+SEP = "|---|---|---|---|---|---|---|---|---|---|---|---|---|"
 
 
 def main() -> int:
@@ -322,8 +348,11 @@ def main() -> int:
     cached = {}
     if CACHE.exists() and not a.no_cache:
         try:
+            #: `cdar_raw` 가 없는 칸은 **버린다** — 순위자를 바꾼 뒤의 캐시는
+            #: 낡은 칸과 섞이면 안 된다(그 칸만 조용히 옛 수로 남는다).
             cached = {tuple(k.split("+")): v
-                      for k, v in json.loads(CACHE.read_text(encoding="utf-8")).items()}
+                      for k, v in json.loads(CACHE.read_text(encoding="utf-8")).items()
+                      if v.get("cdar_raw") is not None}
         except (OSError, ValueError):
             cached = {}
 
@@ -350,7 +379,7 @@ def main() -> int:
     base_vol = reg["vol"]
 
     search = [r for r in rows if tuple(r["tenors"]) != control]
-    ranked = sorted(search, key=lambda r: (r["cdar"] is None, -(r["cdar"] or -9e9)))
+    ranked = sorted(search, key=lambda r: (r["cdar_raw"] is None, -(r["cdar_raw"] or -9e9)))
     top = ranked[:15]
 
     #: 허들 — **실제 231칸의 SR 분산**으로(그 함수 머리의 그 지시).
@@ -363,11 +392,11 @@ def main() -> int:
     print()
     print(f"── 순위 상위 5 (CDaR 비) ──")
     for r in ranked[:5]:
-        print(f"  {'+'.join(r['tenors']):20s} CDaR {_fmt(r['cdar'])} · SR {_fmt(r['sr'])} "
+        print(f"  {'+'.join(r['tenors']):20s} CDaR {_fmt(r['cdar_raw'])} · SR {_fmt(r['sr'])} "
               f"· N_eff {_fmt(r['neff'], '.2f')}")
-    print(f"  {'등록 3Y+10Y':20s} CDaR {_fmt(reg['cdar'])} · SR {_fmt(reg['sr'])} "
+    print(f"  {'등록 3Y+10Y':20s} CDaR {_fmt(reg['cdar_raw'])} · SR {_fmt(reg['sr'])} "
           f"· 순위 {ranked.index(reg) + 1}/{n_search}")
-    print(f"  {'대조 전 테너':20s} CDaR {_fmt(ctl['cdar'])} · SR {_fmt(ctl['sr'])} "
+    print(f"  {'대조 전 테너':20s} CDaR {_fmt(ctl['cdar_raw'])} · SR {_fmt(ctl['sr'])} "
           f"· N_eff {_fmt(ctl['neff'], '.2f')}")
 
     # ── 관문 (계단식) ──────────────────────────────────────────────────────
@@ -389,7 +418,7 @@ def main() -> int:
     legs_sum = []
     for k in range(1, max_legs + 1):
         g = [r for r in search if r["n_legs"] == k]
-        cd = np.array([r["cdar"] for r in g if r["cdar"] is not None], dtype=float)
+        cd = np.array([r["cdar_raw"] for r in g if r["cdar_raw"] is not None], dtype=float)
         sr = np.array([r["sr"] for r in g if np.isfinite(r["sr"])], dtype=float)
         ne = np.array([r["neff"] for r in g if np.isfinite(r["neff"])], dtype=float)
         legs_sum.append({"k": k, "n": len(g), "cdar_max": float(cd.max()),
@@ -426,16 +455,53 @@ def write_report(rows, ranked, top, reg, ctl, base_vol, gates, legs_sum, freq,
     w("")
     rank_reg = ranked.index(reg) + 1
     best = ranked[0]
-    ctl_rank = sum(1 for r in ranked if (r["cdar"] or -9e9) > (ctl["cdar"] or -9e9)) + 1
-    w(f"**고르는 것이 이기지 않는다 — 폭이 이긴다.** 전 테너 등가중 대조군이 "
-      f"CDaR 비 {_fmt(ctl['cdar'])} 로 {n_search}조합 중 **{ctl_rank}위**에 해당하고, "
-      f"고른 최고 칸({'+'.join(best['tenors'])}, {_fmt(best['cdar'])})과의 차이가 "
-      f"{abs((best['cdar'] or 0) - (ctl['cdar'] or 0)):.3f} 다. 등록된 3Y+10Y 는 "
-      f"{rank_reg}위({_fmt(reg['cdar'])})다."
-      if ctl_rank <= 3 else
-      f"고른 최고 칸은 **{'+'.join(best['tenors'])}** (CDaR 비 {_fmt(best['cdar'])})이고, "
-      f"전 테너 등가중 대조군은 {_fmt(ctl['cdar'])} 로 {ctl_rank}위에 해당한다. "
-      f"등록된 3Y+10Y 는 {rank_reg}위({_fmt(reg['cdar'])})다.")
+    rank_reg_cm = sorted(ranked, key=lambda r: -r["calmar"]).index(reg) + 1
+    _cmh = corr_matrix()
+    _nh = len(TENORS)
+    rho_all_hdr = float(np.mean(_cmh.to_numpy()[np.triu_indices(_nh, k=1)]))
+    ctl_rank = sum(1 for r in ranked if (r["cdar_raw"] or -9e9) > (ctl["cdar_raw"] or -9e9)) + 1
+    #: 순위자끼리 얼마나 같은 말을 하나 — 이게 판정의 핵심이라 먼저 잰다.
+    from scipy.stats import spearmanr
+    _cr = np.array([r["cdar_raw"] for r in ranked], dtype=float)
+    _sr = np.array([r["sr"] for r in ranked], dtype=float)
+    _cm = np.array([r["calmar"] for r in ranked], dtype=float)
+    _cn = np.array([r["cdar"] for r in ranked], dtype=float)
+    rho_cr_sr = float(spearmanr(_cr, _sr).statistic)
+    rho_cm_sr = float(spearmanr(_cm, _sr).statistic)
+    rho_cn_sr = float(spearmanr(_cn, _sr).statistic)
+    rho_cm_cr = float(spearmanr(_cm, _cr).statistic)
+    best_sr = max(ranked, key=lambda r: r["sr"])
+    best_cm = max(ranked, key=lambda r: r["calmar"])
+
+    med = {k: float(np.median([r["cdar_raw"] for r in ranked if r["n_legs"] == k]))
+           for k in (1, 2, 3)}
+    mx = {k: float(max(r["cdar_raw"] for r in ranked if r["n_legs"] == k)) for k in (1, 2, 3)}
+
+    w("**폭이 이긴다 — 다만 「AQR 의 폭」이 아니라 「고르지 않아서」 이긴다.**")
+    w("")
+    w(f"1. **고르지 않는 규칙이 등록 칸을 이긴다.** 전 테너 등가중 대조군이 "
+      f"CDaR 비 {_fmt(ctl['cdar_raw'])} 로 **{ctl_rank}/{n_search + 1}위** — 고른 "
+      f"{n_search}조합 중 {n_search + 1 - ctl_rank}개를 이긴다. 등록 3Y+10Y 는 "
+      f"{_fmt(reg['cdar_raw'])}({rank_reg}위)다. 대조군은 **자유도를 하나도 안 쓰고** "
+      f"그 자리에 선다.")
+    w(f"2. **다리를 늘리면 중앙값이 오른다 — 천장은 안 오른다.** 다리 1·2·3 의 "
+      f"CDaR 비 중앙값이 {med[1]:.3f} → {med[2]:.3f} → {med[3]:.3f} 로 단조 상승하는데, "
+      f"최고값은 {mx[1]:.3f} → {mx[2]:.3f} → {mx[3]:.3f} 로 **안 오른다**. "
+      f"분산 투자의 전형적 자국이다 — 다리를 더하는 것은 바닥을 올리지 천장을 안 올린다.")
+    w(f"3. **그런데 그 「폭」은 독립적인 베팅이 아니다.** 평균 쌍상관 {rho_all_hdr:.3f}, "
+      f"유효 다리 수는 둘에서 열하나로 가도 {reg['neff']:.2f} → {ctl['neff']:.2f} 다. "
+      f"좋아지는 폭도 그만큼 작다({_fmt(reg['cdar_raw'])} → {_fmt(ctl['cdar_raw'])}, "
+      f"꼬리사건 {reg['tail_episodes']}·{ctl['tail_episodes']}건 위에 선 수라 "
+      f"**이 차이 하나만으로는 유의하지 않다**). 샤프 천장이 열린다고 읽으면 안 된다.")
+    w(f"4. **고르는 것은 안 선다.** 1등은 **{'+'.join(best['tenors'])}** "
+      f"({_fmt(best['cdar_raw'])})이지만 상위 열 칸이 "
+      f"{min(r['cdar_raw'] for r in ranked[:10]):.3f}~{max(r['cdar_raw'] for r in ranked[:10]):.3f} "
+      f"에 몰려 있고, 그 한 칸은 {n_search}칸에서 **표본내로** 고른 것이다.")
+    w("")
+    w(f"> ⚠ **이 순위는 레인 기본 순위자로 재면 통째로 뒤집힌다.** `vol_normalize` 위의 "
+      f"CDaR 비로는 등록 칸이 132위·1Y 단독이 1위였다. 그 순위자가 이 축에서 "
+      f"**샤프로 축퇴**하기 때문이고(Spearman {rho_cn_sr:+.3f}), 고친 순위자는 Calmar 와 "
+      f"{rho_cm_cr:+.3f} 로 맞는다. 아래 «순위자가 무너진 자리».")
     w("")
     w("## 세 줄 — 등록 · 최고 · 대조군")
     w("")
@@ -447,7 +513,10 @@ def write_report(rows, ranked, top, reg, ctl, base_vol, gates, legs_sum, freq,
     w(f"맞춤누적·맞춤MDD 는 등록 북의 실현 연변동성({base_vol / 1e4:,.0f}만원)으로 "
       f"맞춘 뒤의 수다(§10-4 Man 2016 Figure 7 규약). 비용비는 |비용|/(|순손익|+|비용|).")
     w("")
-    w(f"## 상위 15 (순위 기준 = 변동성 정규화 CDaR 비)")
+    w("## 상위 15 (순위 기준 = **정규화 없이** 잰 CDaR 비)")
+    w("")
+    w("정규화를 뺀 이유는 아래 «순위자가 무너진 자리». 꼬리사건 = 이 비율이 "
+      "몇 개의 낙폭 사건 위에 서 있나 — **1이면 한 사건짜리 수라 믿지 말 것**.")
     w("")
     w(HEAD)
     w(SEP)
@@ -465,7 +534,7 @@ def write_report(rows, ranked, top, reg, ctl, base_vol, gates, legs_sum, freq,
         w(f"| {s['k']} | {s['n']} | {s['cdar_max']:.3f} | {s['cdar_med']:.3f} "
           f"| {s['sr_max']:.3f} | {s['sr_med']:.3f} | {s['neff_med']:.2f} |")
     w("")
-    w(f"대조군(11다리)은 N_eff {_fmt(ctl['neff'], '.2f')} · CDaR {_fmt(ctl['cdar'])} · "
+    w(f"대조군(11다리)은 N_eff {_fmt(ctl['neff'], '.2f')} · CDaR {_fmt(ctl['cdar_raw'])} · "
       f"SR {_fmt(ctl['sr'])} 다. **중앙값이 다리 수를 따라 오르면 폭이 값을 하는 것**이고, "
       f"최고값만 오르면 그건 고르기다.")
     w("")
@@ -507,16 +576,27 @@ def write_report(rows, ranked, top, reg, ctl, base_vol, gates, legs_sum, freq,
       f"가장 먼 쌍조차 {lo_pair[0]}–{lo_pair[1]} **{cm.at[lo_pair[0], lo_pair[1]]:.3f}** 이고, "
       f"등록 3Y–10Y 는 {cm.at['3Y', '10Y']:.3f} 다.")
     w("")
-    w(f"**그래서 「스왑으로 와서 폭이 생겼다」가 이 축에서는 성립하지 않는다.** 다리를 둘에서 "
-      f"열하나로 늘려도 유효 다리 수는 {reg['neff']:.2f} → {ctl['neff']:.2f} 이다. "
-      "AQR 의 N=30 은 **서로 다른 시장**"
-      "(자산군 넷 × 나라 여럿)이지 한 커브 위의 점 서른 개가 아니다 — §10-2 의 「N=2 라 "
-      "Sharpe 상한 0.6대」는 선물 시절의 제약처럼 보였지만, 실은 **원화 금리라는 인자 하나**의 "
-      "제약이었다. 계기를 IRS 로 바꾼 것만으로는 안 풀린다.")
+    w(f"**그래서 「스왑으로 와서 폭이 생겼다」는 절반만 맞다.** 다리를 둘에서 열하나로 "
+      f"늘려도 유효 다리 수는 {reg['neff']:.2f} → {ctl['neff']:.2f} 다. AQR 의 N=30 은 "
+      "**서로 다른 시장**(자산군 넷 × 나라 여럿)이지 한 커브 위의 점 서른 개가 아니다 — "
+      "§10-2 의 「N=2 라 Sharpe 상한 0.6대」는 선물 시절의 제약처럼 보였지만, 실은 "
+      "**원화 금리라는 인자 하나**의 제약이었다. 계기를 IRS 로 바꾼 것만으로는 안 풀린다.")
     w("")
-    w("폭이 실제로 열리는 자리는 **아웃라이트가 아닌 축**이다(커브·플라이처럼 레벨 인자에 "
-      "직교하는 것, 또는 금리 밖 자산군). 이 표는 그 자리를 «열어 보자»고 말하지 않는다 — "
-      "여기서 잰 것은 아웃라이트 조합뿐이고, 그 결론은 「여기엔 없다」까지다.")
+    w("그런데 **재 보면 다리를 늘리는 것이 그래도 낫다** — 위 «판정» 2번의 그 중앙값 "
+      "상승이다. 모순이 아니다. 유효 다리 수가 안 늘어도, 같은 인자를 여러 점에서 "
+      "잡으면 **점마다의 잡음**(호가·신호 타이밍·그 테너만의 수급)이 평균으로 씻긴다. "
+      "그건 인자를 더 얻는 것이 아니라 **같은 인자를 덜 시끄럽게 잡는 것**이라, "
+      "바닥은 올라가도 천장은 그대로다. 실제로 최고값은 다리 수에 안 움직였다.")
+    w("")
+    w("정리하면 폭에는 두 종류가 있고 이 축에는 **싼 쪽만** 있다:")
+    w("")
+    w("    ✔ 측정 잡음을 씻는 폭  — 여기 있다. 중앙값을 올린다. 공짜다.")
+    w("    ✘ 베팅을 늘리는 폭      — 여기 없다(ρ̄ %.3f · N_eff %.2f). 샤프 천장을 못 연다."
+      % (rho_all, ctl["neff"]))
+    w("")
+    w("폭이 **두 번째 뜻으로** 열리는 자리는 아웃라이트가 아닌 축이다(커브·플라이처럼 "
+      "레벨 인자에 직교하는 것, 또는 금리 밖 자산군). 이 표는 그 자리를 «열어 보자»고 "
+      "말하지 않는다 — 여기서 잰 것은 아웃라이트 조합뿐이고, 그 결론은 「여기엔 없다」까지다.")
     w("")
     w("## 어느 테너가 상위를 채우나")
     w("")
@@ -528,17 +608,54 @@ def write_report(rows, ranked, top, reg, ctl, base_vol, gates, legs_sum, freq,
     w("한 테너가 상위를 독점하면 그것이 신호인지 그 테너의 변동성·캐리 인공물인지 "
       "갈라야 한다 — 위 N_eff 열이 그 첫 단서다(독점 + 낮은 N_eff = 폭이 아니다).")
     w("")
+    w("## ★ 순위자가 무너진 자리 — 왜 정규화를 뺐나")
+    w("")
+    w("처음엔 레인 기본대로 `vol_normalize` 위에서 CDaR 비를 쟀다. 그 순위는 "
+      "**버렸다**. 무너지는 방식이 조용해서 여기 적어 둔다.")
+    w("")
+    w(f"`vol_normalize` 는 확장창(`min_obs=60`)이라 배수가 **첫해에만 튄다**. "
+      f"이 북은 이미 북수준 변동성 목표를 걸고 있어서 2018 이후 배수가 중앙 대비 "
+      f"1.01~1.07 로 평평한데, **2017 만 11~15배**다. 그 한 해가 모든 칸의 낙폭 "
+      f"꼬리(최악 5% = 116봉)를 통째로 차지한다.")
+    w("")
+    w("| | 정규화 CDaR 비 | 첫해 버리면 | 2년 버리면 | 원계열 MDD/연변동성 |")
+    w("|---|---|---|---|---|")
+    w("| 등록 3Y+10Y | 0.194 | **1.246** | 1.400 | 1.03 |")
+    w("| 1Y 단독 | 0.473 | 0.326 | 1.978 | 3.24 |")
+    w("")
+    w("등록 칸이 첫해를 버리는 것만으로 **6.4배** 움직인다. 버림 길이가 또 자유도라 "
+      "«얼마나 버리나»로는 못 닫는다. 그리고 분모가 칸마다 같아지니 비율이 분자만 "
+      f"따라가서, 231칸 위에서 **Spearman(정규화 CDaR 비, SR) = {rho_cn_sr:+.3f}** 가 된다 — "
+      "낙폭을 보는 순위자인 줄 알았던 것이 **샤프의 다른 이름**이었다.")
+    w("")
+    w("정규화를 빼도 되는 이유는 이 레인에만 있다: 칸마다 북 변동성이 이미 "
+      f"`TARGET_VOL` 로 맞춰져 있어(실측 연변동성 "
+      f"{min(r['vol'] for r in rows) / 1e6:.1f}~{max(r['vol'] for r in rows) / 1e6:.1f}M) "
+      "**위험이 구조로 맞춰지고**(§10-4), CDaR 비는 `r → c·r` 에 불변이라 자본 기준 "
+      "없이 선다. **다른 레인에 그대로 옮기지 말 것** — 거긴 북이 안 맞춰져 있을 수 있다.")
+    w("")
     w("## 말할 수 있는 것 / 없는 것")
     w("")
-    w("    ✔ 이 창에서 조합마다의 순위 (같은 위험·같은 비용·같은 신호 정의 위에서)")
-    w("    ✔ 다리를 늘리는 것이 중앙값을 올리나 (폭의 효과)")
-    w("    ✘ 「이 조합을 쓰자」 — 표본내 순위다. 위약도 안 쟀고 표본밖도 없다")
+    w("    ✔ 테너를 늘려도 **유효 다리 수가 안 는다** (쌍상관·N_eff — 신호와 무관한 "
+      "자료의 성질이라 순위자 선택에 안 흔들린다)")
+    w("    ✔ 그런데도 다리를 늘리면 **중앙값이 오른다** (잡음 평균화 — 천장은 안 오른다)")
+    w("    ✔ 같은 위험·같은 비용·같은 신호 정의 위에서 조합마다의 수")
+    w(f"    ✔ 레인 기본 순위자가 이 축에서 **샤프로 축퇴한다** (Spearman {rho_cn_sr:+.3f})")
+    w("    ✘ 「이 조합이 최고다」 — **순위자를 바꾸면 1등이 바뀐다**(Calmar·SR 이 "
+      f"Spearman {rho_cm_sr:+.3f} 로 무관). 표본내이고 위약도 안 쟀다")
+    w("    ✘ 「등록 칸이 몇 위다」를 단독으로 인용하는 것 — 순위는 순위자에 딸려 있다")
     w("    ✘ 등록을 바꾼다 — 3Y·10Y 는 09-15 동결·09-16 채점 중이다")
+    w("    ✘ 아웃라이트 **밖**(커브·플라이·타 자산군) — 여기서 안 쟀다")
     w("")
     w("## 움직이려면 사전등록에 무엇이 필요한가")
     w("")
+    w("0. **먼저 순위자를 못 박는다** — 이 측정의 제일 큰 교훈이다. 무엇으로 재는지를 "
+      "먼저 정하지 않으면 표를 보고 순위자를 고르게 되고, 그게 조합을 고르는 것보다 "
+      "자유도가 크다(Calmar 1등과 SR 1등이 서로 다른 칸이다).")
     w("1. **조합을 하나로 못 박는다** — 이 표를 보고 고르면 그 순간 표본내 선택이다. "
-      "폭이 이기면 「전 테너 등가중」처럼 **고르지 않는 규칙**이 자유도를 안 쓴다.")
+      "가장 방어하기 쉬운 문안은 **「전 테너 등가중」**이다: 자유도를 하나도 안 쓰고, "
+      f"그런데도 {ctl_rank}/{n_search + 1}위이며, 고를 것이 없다는 것 자체가 "
+      "사전등록의 내용이 된다. 「최고 칸」을 적으면 그 순간 시행수가 붙는다.")
     w("2. **위약(순환이동)** 을 그 조합으로 돌린다 — 레인 게이트 셋 중 하나가 비어 있다.")
     w("3. **시행수 N 을 다시 센다** — 테너 축이 열리면 N 에 그 가짓수가 곱해진다.")
     w("4. **집행 배관** — `sleeve_execution.LEG_T` 가 3Y·10Y 두 다리로 박혀 있고, "
