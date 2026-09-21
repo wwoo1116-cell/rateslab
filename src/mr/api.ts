@@ -16,6 +16,8 @@ import {
   mrBookUrl,
   mrHistoryUrl,
   mrOptimizeUrl,
+  mrPlanHistoryUrl,
+  mrPlanUrl,
   mrReconUrl,
   mrStrategyUrl,
 } from '@/lib/staticPaths';
@@ -1291,4 +1293,156 @@ export function fetchMrBoard(p: MrParams): Promise<MrBoard> {
 
 export function fetchMrHistory(id: string, p: MrParams): Promise<MrHistory> {
   return get<MrHistory>(mrHistoryUrl(id, qs(p)), 'mr history');
+}
+
+/* ── MR 계획면 [OWNER 2026-09-21 · 시니어 트레이더 피드백] ────────────────────
+ *
+ * 보드(`/api/mr/board`)가 답하던 물음은 「지금 어디가 늘어났나」였다. 계획면이
+ * 답하는 물음은 **「그래서 얼마면 무엇을 하나」**다 — 계열마다 격자가 고른 조건,
+ * 그 조건의 진입·청산·손절 레벨, 그 조건이 지금 들고 있는 다리, 지난 1년의
+ * 성적과 분해. 산술은 전부 서버가 끝낸다(§16, `backend/app/mrplan.py`).
+ *
+ * **보드는 그대로 산다** — 터미널 화면이 그 라우트를 읽고(`src/terminal/
+ * useTermData.ts`), 두 물음은 다른 물음이다.
+ */
+
+/** 오늘 밴드의 **나가는 문 둘** — 청산·손절.
+ *
+ *  엔진의 두 문은 `|z|` 위에 있어서 **방향을 안 본다**: 문턱은 지금 값이 중심선의
+ *  어느 쪽인가가 정한다. 들고 있는 다리가 중심선을 지나 반대쪽에 서 있을 수 있고
+ *  (실측 2026-09-21 FUT-KTB3), 그때 진입 쪽 선을 청산선이라 적으면 화면이 「이미
+ *  지난 선」을 가리킨다 — 그래서 이 값이 따로 있다. */
+export interface MrExitsNow {
+  side: 'above' | 'below';
+  z: number;
+  /** 청산 레벨(계열 자기 단위) — 중심선 쪽으로 `exitGap` bp 오면 청산이다. */
+  exit: number;
+  /** 손절 레벨 — `stopGap` bp 더 벌어지면 손절이다. */
+  stop: number;
+  exitGap: number;
+  stopGap: number;
+}
+
+/** 한 방향의 **들어가기 전 이야기** — 「이쪽으로 들어가면 저기서 나온다」.
+ *
+ *  거리는 `entryGap` 하나뿐이다(bp). 청산·손절의 «거리» 는 들어가 있을 때만 뜻이
+ *  있어서 `MrExitsNow`·`MrPlanPosition` 이 진다. 못 하는 방향은 **안 온다**
+ *  (BSS 의 하단은 국고 매도다 — 사유는 행의 `triggerBlocked`). */
+export interface MrPlanLevel {
+  dir: number;
+  side: 'above' | 'below';
+  short: string;
+  legs: string;
+  entry: number;
+  exit: number;
+  stop: number;
+  entryGap: number;
+  entryReached: boolean;
+}
+
+/** **이미 진입했다고 가정한 포지션** [OWNER 2026-09-21 — "이미 진입했다고 가정한
+ *  포지션이 존재한다면 청산 시점과 손절 시점을"].
+ *
+ *  그 「가정」의 정체는 같은 조건으로 표본을 끝까지 돌렸을 때 아직 안 닫힌 다리다
+ *  (엔진의 `open`). 원본 규약대로 거래 수·승률에는 안 들어가고 총손익·낙폭에는
+ *  이미 들어가 있다.
+ *
+ *  `crossed` 는 **중심선을 넘어가 있는가**다 — 참이면 청산선이 진입한 쪽이 아니라
+ *  지금 쪽에 있다. 성분은 회계를 따라간다: 실가격은 다섯, 엔진 근사는 셋이고
+ *  없는 항은 `undefined` 다(0 이 아니다). */
+export interface MrPlanPosition {
+  dir: number;
+  short: string;
+  legs: string;
+  entryT: string;
+  entryV: number;
+  entryZ: number | null;
+  bars: number;
+  pnl: number;
+  mtm: number;
+  carry: number;
+  rolldown?: number;
+  funding?: number;
+  cost: number;
+  /** 오늘의 나가는 문 — 밴드가 못 서면 null 이고 화면이 그 사실을 적는다. */
+  exit: number | null;
+  stop: number | null;
+  exitGap: number | null;
+  stopGap: number | null;
+  z: number | null;
+  crossed: boolean | null;
+}
+
+/** 이 계열이 어떤 조건으로 돌고 있나 — **격자가 고른 것**이다.
+ *
+ *  `span: 'all'` 이 이 카드의 경고이기도 하다: 조건은 **전체 표본**에서 골랐고
+ *  (1년 창은 계열당 거래가 한 줌이라 162칸 순위가 잡음이 된다) 성과·트리거만
+ *  지난 1년이다 [OWNER 2026-09-21]. `fallback` 이 서면 격자가 순위를 못 매겨
+ *  기본 조건으로 떨어진 것이고, 그 문장이 사유다(「최적」이 아니다). */
+export interface MrPlanCond {
+  lookback: number;
+  entryZ: number;
+  exitZ: number;
+  stopZ: number;
+  entryMode: MrEntryMode;
+  basis: MrRankKey;
+  span: 'all';
+  cells: number;
+  fallback: string | null;
+}
+
+/** 계획면의 행 — **보드 행의 열쇠를 다 갖는다**(`MrRow`) + 계획의 다섯.
+ *
+ *  같은 열쇠를 갖는 것이 설계다: 통합 줄(`mrbook.watch`)과 화면 부품
+ *  (`stateText`·`BandTrack`·`heroTrigger`)이 그것을 읽으므로, 다른 모양이면 그
+ *  부품들을 두 벌로 만들게 된다(캐논 얼라인 8). */
+export interface MrPlanRow extends MrRow {
+  cond: MrPlanCond;
+  levels: MrPlanLevel[];
+  /** 포지션이 없어도 선다 — 「들어가 있었다면 어디서 나오나」의 수. */
+  exitsNow: MrExitsNow | null;
+  /** 지금 들고 있는 다리. 없으면 null — 「없다」와 「못 잰다」는 다른 말이다. */
+  position: MrPlanPosition | null;
+  /** 지난 1년의 성적과 **분해**. 클릭 없이 화면에 선다 [OWNER 2026-09-21]. */
+  perf1y: Pick<MrPerf,
+    'from' | 'to' | 'days' | 'totalPnl' | 'maxDrawdown' | 'winRate'
+    | 'numTrades' | 'cdarRatio' | 'split'>;
+  /** 이 계열의 돈이 실가격 회계인가 엔진 근사인가 — 분해의 «—» 가 그 값이다. */
+  real: boolean;
+}
+
+/** 계획면 전체.
+ *
+ *  **부분 결과가 정상이다**: 25계열의 격자+실행이 2~3분이라 첫 응답에는 구워진
+ *  것만 있다. `pending` 이 0 이 될 때까지 화면이 몇 초마다 다시 묻고, 그동안
+ *  순위는 **구워진 것들 안에서**의 순위다(화면이 그 사실을 적는다). */
+export interface MrPlan {
+  asof: { bss: string | null; fut: string | null; irs: string | null };
+  params: {
+    span: MrSpan;
+    months: number;
+    rankKey: MrRankKey;
+    gridSpan: 'all';
+    costBp: number;
+    notional: number;
+    carry: boolean;
+  };
+  total: number;
+  done: number;
+  pending: number;
+  building: boolean;
+  rows: MrPlanRow[];
+  /** BSS 통합 줄 — 보드와 **같은 산술**이다(행 모양이 같아서 그냥 선다). */
+  watch: MrWatch | null;
+  excluded: { id: string; label: string; reason: string }[];
+}
+
+export function fetchMrPlan(): Promise<MrPlan> {
+  return get<MrPlan>(mrPlanUrl(), 'mr plan');
+}
+
+/** 그 계열의 값+밴드 이력 — 밴드는 **그 계열이 고른 조건**의 것이다.
+ *  아직 안 구워졌으면 404 이고, 화면은 「이력을 불러오는 중이에요」로 둔다. */
+export function fetchMrPlanHistory(id: string): Promise<MrHistory> {
+  return get<MrHistory>(mrPlanHistoryUrl(id), 'mr plan history');
 }

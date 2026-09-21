@@ -774,18 +774,48 @@ describe('1순위를 바로 띄운다 — rv 히어로의 문법으로', () => {
   });
 
   it('트리거는 서버가 끝낸 값이다 — 화면이 밴드를 다시 계산하지 않는다', () => {
-    const code = page();
-    expect(code).toMatch(/r\.triggers \?\? \[\]/);
-    /* 레벨·거리를 화면에서 만들면 §16 이 깨지고 보드와 다른 수가 선다. */
-    expect(code).not.toMatch(/upper - |ma \+ |sd \*/);
+    /* 고르는 규칙은 `planText.pickLevel` 한 곳이다(2026-09-21 에 `MrPage` 의
+       `heroTrigger` 에서 내려왔다 — 표·히어로·상세가 같은 다리를 앞세워야 한다). */
+    expect(src('src/mr/planText.ts')).toMatch(/r\.levels \?\? \[\]/);
+    /* 레벨·거리를 화면에서 만들면 §16 이 깨지고 창과 다른 수가 선다. 문장을
+       짓는 파일도 같이 잰다 — 거기가 수를 만들기 제일 쉬운 자리다. */
+    for (const f of ['src/mr/MrPage.tsx', 'src/mr/planText.ts']) {
+      expect(src(f), f).not.toMatch(/upper - |ma \+ |sd \*/);
+    }
+  });
+
+  it('문장은 한 벌이다 — 표·히어로·상세가 같은 줄을 쓴다', () => {
+    /* [OWNER 2026-09-21 — "상태 칸에 토스스타일의 문장으로"]. 세 자리가 같은
+       사건을 조금씩 다르게 말하면 화면이 스스로를 반박한다(캐논 얼라인 8). */
+    expect(src('src/mr/planText.ts')).toMatch(/export function planLines\b/);
+    expect(src('src/mr/planText.ts')).toMatch(/export function stateText\b/);
+    for (const f of ['src/mr/MrPage.tsx', 'src/mr/StrategyWindow.tsx',
+                     'src/mr/BookWindow.tsx']) {
+      expect(src(f), f).not.toMatch(/function (planLines|stateText|fmtZ)\b/);
+    }
+    expect(page()).toMatch(/from '\.\/planText'/);
   });
 
   it('트리거가 무엇인지 화면이 말한다 — 명구 의무와 한 몸', () => {
     const code = page();
-    expect(code).toMatch(/트리거는 위에서 고른 밴드/);
-    expect(code).toMatch(/명목·손절·목표는 안/);
+    /* 밴드가 계열마다 달라졌으므로(격자 1등 조건) 각주도 그 사실을 적는다 —
+       종전 문장은 「위에서 고른 밴드」였고 그 알약이 2026-09-21 에 내려갔다. */
+    expect(code).toMatch(/트리거는 계열마다 격자가 고른 조건의 밴드 경계/);
+    /* 표본내 과적합을 화면이 스스로 말한다(조건은 전체 표본에서 골랐다). */
+    expect(code).toMatch(/표본내 과적합/);
+    /* 손절·청산은 이제 적는다 [OWNER 2026-09-21] — **명목만** 안 말한다. */
+    expect(code).toMatch(/명목은 안 말해요/);
     /* 창설부터 지고 있는 명구는 그대로 산다. */
     expect(code).toMatch(/투자판단이 아니에요/);
+  });
+
+  it('못 구운 계열을 세어서 말한다 — 빈 표를 조용히 내지 않는다', () => {
+    /* 25계열이 2~3분이라 첫 응답은 부분이다. 그 사실을 화면이 적고, 폴링은
+       `pending` 이 0 이면 **멈춘다**(끝난 뒤에도 도는 폴링은 서버를 계속 깨운다). */
+    const code = page();
+    expect(code).toMatch(/plan\.pending > 0/);
+    expect(code).toMatch(/계열을 채점했어요/);
+    expect(code).toMatch(/if \(!plan \|\| plan\.pending <= 0\) return;/);
   });
 });
 

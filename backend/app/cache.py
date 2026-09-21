@@ -151,6 +151,37 @@ def sql_data_hash(asof: "object | None" = None) -> str:
     return f"sql:{last}:{rows}:v{SCHEMA_VERSION}{tail}"
 
 
+def peek(
+    name: str,
+    current_hash: str,
+    cache_dir: Path = DEFAULT_CACHE_DIR,
+) -> object | None:
+    """이미 구워져 있으면 그 페이로드, 아니면 **None — 계산하지 않는다**.
+
+    `cached()` 의 읽기 가지만 떼어낸 것이다. 있는 이유는 **부분 결과**다
+    [2026-09-21, MR 계획면]: 25계열의 격자+실행이 2~3분이라 한 요청 안에서 못
+    끝내고, 라우트는 «지금까지 구워진 것» 만 내주면서 나머지를 배경에서 굽는다.
+    그 라우트가 `cached()` 를 부르면 첫 요청이 그 자리에서 2~3분을 서 버린다.
+
+    미스를 **조용히** 넘긴다는 점이 `cached()` 와 다르다 — 미스가 결함이 아니라
+    「아직」이기 때문이고, 부르는 쪽이 그 수를 세어 화면에 적는다(못 잰 것을
+    0 으로 적지 않는 이 리포의 규율은 그 자리에서 산다).
+    """
+    f = Path(cache_dir) / f"{name}.json"
+    if not f.exists():
+        return None
+    try:
+        blob = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        log.warning("[cache] %s: unreadable (%s)", name, e)
+        return None
+    # `cached()` 와 같은 관용 — JSON 은 맞는데 객체가 아닌 파일(`[1,2,3]`·`null`)
+    # 에서 `.get` 이 터지던 자리다.
+    if not isinstance(blob, dict) or blob.get("hash") != current_hash:
+        return None
+    return blob.get("payload")
+
+
 def cached(
     name: str,
     current_hash: str,

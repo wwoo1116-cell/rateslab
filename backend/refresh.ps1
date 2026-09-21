@@ -74,6 +74,25 @@ function Get-ServedAsof {
   } catch { return "" }
 }
 
+# ── 계획면을 미리 굽는다 [2026-09-21] ──────────────────────────────────────
+#
+# `/api/mr/plan` 은 계열 스물다섯을 **배경에서** 굽는다(실측 40초). 빌더를 깨우는
+# 것은 첫 요청이라, 안 찔러 두면 아침 첫 사람이 「채점 중 3/25」를 본다. 여기서
+# 한 번 부르면 트레이더가 화면을 열 때는 다 서 있다.
+#
+# 기동 시점에 안 굽는 이유는 시험이다 — 백엔드 시험이 `TestClient(app)` 로
+# lifespan 을 타므로 거기서 빌더가 뜨면 시험마다 몇 분이 붙는다(`app/mrplan.py` 머리).
+#
+# 실패해도 재기동 결과를 안 바꾼다 — 화면이 스스로 다시 묻는다.
+function Invoke-PlanWarm {
+  try {
+    $p = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/mr/plan" -TimeoutSec 30
+    Say "계획면을 깨웠어요 — done=$($p.done)/$($p.total) building=$($p.building)"
+  } catch {
+    Say "계획면 워밍은 실패했어요(무시): $($_.Exception.Message)"
+  }
+}
+
 $deadline = (Get-Date).AddMinutes($WaitMinutes)
 $sqlAsof = ""
 $served = ""
@@ -90,7 +109,7 @@ while ($true) {
   # 백엔드가 안 떠 있으면 기다릴 것 없이 띄운다.
   if ($served -eq "") { Say "백엔드가 안 떠 있어요 — 띄웁니다."; break }
   # 이미 최신이면 건드리지 않는다. 끊김 0 이 기본값이다.
-  if ($served -ge $sqlAsof) { Say "이미 최신이에요 — 아무것도 안 합니다."; exit 0 }
+  if ($served -ge $sqlAsof) { Say "이미 최신이에요 — 아무것도 안 합니다."; Invoke-PlanWarm; exit 0 }
   # SQL 이 더 새로우면 재기동한다.
   if ($sqlAsof -gt $served) { Say "SQL 이 더 새로워요 — 재기동합니다."; break }
 
@@ -124,7 +143,7 @@ for ($i = 0; $i -lt 30; $i++) {
   Start-Sleep -Seconds 4
   $now = Get-ServedAsof
   if ($now -ne "") {
-    if ($now -ge $sqlAsof) { Say "확인: asof=$now — 갱신됐어요."; exit 0 }
+    if ($now -ge $sqlAsof) { Say "확인: asof=$now — 갱신됐어요."; Invoke-PlanWarm; exit 0 }
     Say "떴는데 아직 asof=$now (기대 $sqlAsof) — 더 봅니다."
   }
 }

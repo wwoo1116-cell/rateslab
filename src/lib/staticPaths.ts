@@ -199,6 +199,21 @@ export const mrOptimizeUrl = (query: string) => liveUrl("/api/mr/optimize", quer
 export const mrBookOptimizeUrl = (query: string) =>
   liveUrl("/api/mr/book/optimize", query);
 
+/** MR **계획면** [OWNER 2026-09-21 · 시니어 트레이더 피드백] — 계열마다 «격자
+ * 1등 조건 · 오늘의 진입/청산/손절 레벨 · 들고 있는 다리 · 지난 1년 성적과 분해».
+ *
+ * 손잡이가 없어 query 도 없다: 룩백·밴드 폭은 고르는 것이 아니라 **계열마다 격자가
+ * 고른 것**이고(그래서 보드의 알약 둘이 이 화면에서 내려갔다), 비용·Delta 는 격자가
+ * 안 흔드는 값이다(`backend/app/mrplan.py` 머리).
+ *
+ * **부분 결과가 정상이다** — 25계열의 격자+실행이 2~3분이라 첫 응답에는 구워진
+ * 것만 있고 나머지는 `pending` 으로 센다. 화면이 그 수를 적고 몇 초 뒤 다시 묻는다. */
+export const mrPlanUrl = () => liveUrl("/api/mr/plan");
+/** 그 계열의 값+밴드 이력 — 밴드는 **그 계열이 고른 조건**의 것이다. 아직 안
+ * 구워졌으면 404 다(보드의 `/api/mr/history` 와 같은 이유로 갈라져 있다). */
+export const mrPlanHistoryUrl = (id: string) =>
+  liveUrl(`/api/mr/plan/history/${encodeURIComponent(id)}`);
+
 export const simInstrumentsUrl = () => liveUrl("/api/instruments");
 export const simExpandUrl = () => liveUrl("/api/instruments/expand");
 export const simulateUrl = () => liveUrl("/api/simulate");

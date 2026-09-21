@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import logging.config
+import threading
 
 # Configured before anything else imports a logger, so `irs_pricer`'s DEBUG
 # lines are not swallowed by the root default. Carried over from the
@@ -75,6 +76,7 @@ from . import mrbook
 from . import mrcarry as mrc
 from . import mrdiag as mrd
 from . import mrmetrics as mrm
+from . import mrplan as mrp
 from . import mrregime as mrg
 from . import mrseries as mrs
 from . import payloads
@@ -87,7 +89,7 @@ from . import backtest as bt_engine
 from .backtest import BacktestError
 from . import futures
 from . import mixedbook
-from .cache import cached
+from .cache import cached, peek
 from .cors import allowed_origin_regex, allowed_origins
 from . import dev_marker
 from . import cashbond
@@ -1877,7 +1879,8 @@ def _mr_reconcilable(pts: list[dict], kind: str) -> list[dict]:
 def _mr_leg(id: str, *, lookback: int, entryZ: float, exitZ: float, stopZ: float,
             costBp: float, notional: float, carry: bool, entryMode: str,
             timeStop: int, costModel: str, regime: str, reverseExit: bool,
-            countOpen: bool, spec: funding.FundingSpec) -> dict:
+            countOpen: bool, spec: funding.FundingSpec,
+            accounting: bool = True) -> dict:
     """한 계열의 **준비 + 시뮬** — 낱개 창과 통합 장부가 같은 것을 쓴다.
 
     2026-09-01 에 통합 밴드 워치(`/api/mr/book`)가 생기면서 갈라 냈다. 아홉
@@ -1999,9 +2002,15 @@ def _mr_leg(id: str, *, lookback: int, entryZ: float, exitZ: float, stopZ: float
     # `simulate` 가 정한 **언제** 위에 실제 자산스왑의 **얼마** 를 얹는다.
     # 엔진 함수는 안 건드린다(잠긴 적합성 벡터가 그대로 통과한다) — 근거와
     # 한계는 `_mr_real_accounting` 머리에.
+    #
+    # `accounting=False` 는 **격자 전용 문**이다 [2026-09-21, 계획면]. 근거는
+    # 산술이다: `_mr_optimize` 는 `leg["r"]` 를 안 읽고 봉·거래를 자기가 다시
+    # 시뮬하므로 **회계가 격자의 칸을 한 자도 안 바꾼다**. 그런데 실가격 회계는
+    # 거래마다 자산스왑을 다시 가격해 계열 하나가 초 단위다. 기본값이 참이라
+    # 종전 호출부(라우트 넷·스크립트 일곱)는 한 글자도 안 바뀐다.
     real = _mr_real_accounting(
         r, sid=id, kind=kinds[id], tenor=mrc._tenor_of(id),
-        notional=notional, cost_bp=costBp, spec=spec)
+        notional=notional, cost_bp=costBp, spec=spec) if accounting else False
 
     return {"id": id, "label": labels[id], "kind": kinds[id], "unit": unit,
             # 이 다리의 수가 «실가격 회계» 인가 «엔진 근사» 인가. 두 회계가
@@ -2551,6 +2560,163 @@ def mr_optimize(id: str, span: str = "all",
     # 화면이 그 사실을 적을 수 있게 같이 보낸다(`MrStrategyRun.real` 과 같은 값).
     return {"id": id, "label": labels[id], "real": False,
             "headReal": leg["real"], **got}
+
+
+# ── 계획면 [OWNER 2026-09-21 · 시니어 트레이더 피드백] ──────────────────────
+#
+# 산술은 전부 `app/mrplan.py` 가 진다(그 머리에 오너 결정 넷). 여기 있는 것은
+# **배관뿐**이다: 계열 하나를 굽는 함수, 디스크 캐시, 배경 빌더, 라우트 둘.
+#
+# ## 왜 배경에서 굽나 — 실측
+#
+# 계열 하나가 «격자 162칸 + 회계 붙인 실행» 이라 라이브에서 2~3초, 퓨처스왑은
+# 9초다(2026-09-21 실측 `/api/mr/strategy?id=FSW-3Y`). 25계열이면 2~3분이라
+# 한 요청 안에서 못 끝낸다. 그래서 라우트는 **구워진 것만** 내주고 나머지는
+# 배경 스레드가 채운다 — 화면이 「채점 중 12/25」를 적고 몇 초마다 다시 묻는다.
+#
+# ## 기동·임포트에서 시작하지 않는다
+#
+# 백엔드 시험은 `TestClient(app)` 로 lifespan 을 탄다. 거기서 빌더가 뜨면 시험이
+# 돌 때마다 2~3분짜리 SQL 작업이 붙는다. **첫 요청이 깨운다** — 아침에는
+# `refresh.ps1` 이 재기동 확인 뒤 한 번 찔러서 트레이더보다 먼저 굽는다.
+
+#: 빌더의 상태 — 한 프로세스에 하나. `_mr_plan_key` 는 굽고 있는 자료의 캐시
+#: 키다(자료가 갈리면 하던 것을 버리고 새로 시작해야 한다).
+_mr_plan_lock = threading.Lock()
+_mr_plan_thread: threading.Thread | None = None
+_mr_plan_key: str | None = None
+#: 못 구운 계열 — **조용히 빼지 않는다**(rv exclusions 문법). 사유는 서버 문장.
+_mr_plan_excluded: dict[str, dict] = {}
+
+
+def _mr_plan_leg(sid: str, knobs: dict, *, accounting: bool = True) -> dict:
+    """`mrplan` 이 부르는 `_mr_leg` 의 얼굴 — 노브 다섯만 받고 나머지는 계획면의
+    고정값이다(실전 규칙 다섯은 긴 표본에서 기각됐고, 비용·Delta 는 격자가 안
+    흔드는 값이다 — `mrplan` 머리)."""
+    return _mr_leg(
+        sid, lookback=int(knobs["lookback"]), entryZ=float(knobs["entryZ"]),
+        exitZ=float(knobs["exitZ"]), stopZ=float(knobs["stopZ"]),
+        costBp=mrp.COST_BP, notional=mrp.NOTIONAL, carry=True,
+        entryMode=str(knobs["entryMode"]), timeStop=0, costModel="flat",
+        regime="none", reverseExit=False, countOpen=False,
+        spec=_funding_spec(funding.DEFAULT_BASIS, funding.DEFAULT_SPREAD_BP),
+        accounting=accounting)
+
+
+def _mr_plan_grid(leg: dict, knobs: dict, *, span: str) -> dict:
+    """`mrplan` 이 부르는 `_mr_optimize` 의 얼굴 — 전략 창이 도는 그 격자와 **같은
+    함수·같은 프리셋**이다. 그래서 계획면의 1등과 창의 1등이 같은 칸이다."""
+    return _mr_optimize(
+        leg["dates"], leg["vals"],
+        {"lookback": int(knobs["lookback"]), "entryZ": float(knobs["entryZ"]),
+         "exitZ": float(knobs["exitZ"]), "stopZ": float(knobs["stopZ"]),
+         "costBp": mrp.COST_BP, "notional": mrp.NOTIONAL,
+         "entryMode": str(knobs["entryMode"])},
+        tuple(leg["dirs"]["allowed"]), span=span,
+        carry=leg["carryKrw"], gate=leg["gate"],
+        cost_bp_series=leg["costSeries"], time_stop=None,
+        tradable_dv=leg["tradable"])
+
+
+def _mr_plan_one(sid: str) -> dict:
+    """계열 하나 — 디스크 캐시를 통과한다. 이름이 새것이라 옛 보드 캐시와 안 섞인다.
+
+    ⚠ 이 페이로드의 **모양**을 바꾸면 `cache.SCHEMA_VERSION` 을 올려야 한다
+    (안 올리면 옛 모양이 계속 나간다 — 이 리포가 세 번 밟은 함정).
+    """
+    return cached(f"mr-plan-{sid}", _dataset.data_key,
+                  lambda: mrp.build_series(sid, leg_of=_mr_plan_leg,
+                                           grid_of=_mr_plan_grid))
+
+
+def _mr_plan_build(key: str) -> None:
+    """배경 빌더의 **몸통** — 스레드를 안 만든다(시험이 이것을 동기로 부른다).
+
+    계열마다 따로 잡아 `excluded` 로 적는다. 하나가 터져도 나머지는 구워져야
+    한다 — 첫 판에서 `/api/mr/book` 이 이미 그 규율을 쓴다.
+    """
+    global _mr_plan_thread
+    log = logging.getLogger("sauron.mrplan")
+    try:
+        for sid, label, _kind in mr_mod.SERIES:
+            if _mr_plan_key != key:
+                log.info("[mrplan] 자료가 갈려서 멈춰요 (%s)", sid)
+                return
+            if peek(f"mr-plan-{sid}", key) is not None:
+                continue
+            try:
+                _mr_plan_one(sid)
+                _mr_plan_excluded.pop(sid, None)
+            except Exception as exc:                       # noqa: BLE001
+                # HTTPException 도 여기 든다(룩백보다 짧은 이력이 422 로 난다).
+                why = getattr(exc, "detail", None) or str(exc)
+                log.warning("[mrplan] %s 를 못 구웠어요: %s", sid, why)
+                _mr_plan_excluded[sid] = {"id": sid, "label": label,
+                                          "reason": str(why)}
+    finally:
+        with _mr_plan_lock:
+            if _mr_plan_key == key:
+                _mr_plan_thread = None
+
+
+def _mr_plan_start(key: str) -> bool:
+    """빌더가 안 돌고 있으면 깨운다. 반환 = 「지금 굽고 있나」."""
+    global _mr_plan_thread, _mr_plan_key
+    with _mr_plan_lock:
+        if _mr_plan_thread is not None and _mr_plan_thread.is_alive():
+            if _mr_plan_key == key:
+                return True
+            # 자료가 갈렸다 — 돌던 것은 스스로 멈춘다(키를 보고 있다).
+        _mr_plan_key = key
+        _mr_plan_excluded.clear()
+        t = threading.Thread(target=_mr_plan_build, args=(key,),
+                             name="mr-plan-build", daemon=True)
+        _mr_plan_thread = t
+    t.start()
+    return True
+
+
+@router.get("/api/mr/plan")
+def mr_plan() -> dict:
+    """계획면 — 계열마다 «격자 1등 조건 · 오늘의 진입·청산·손절 레벨 · 들고 있는
+    다리 · 지난 1년 성적과 분해» [OWNER 2026-09-21].
+
+    **부분 결과가 정상이다.** 아직 안 구워진 계열은 `pending` 으로 세어서 말하고,
+    화면이 그 수를 적으며 몇 초 뒤에 다시 묻는다. 빌드가 끝나기 전에도 순위는
+    매겨지지만 그건 **구워진 것들 안에서**의 순위라, 화면이 그 사실도 적는다.
+
+    이력(`history`)은 여기서 뺀다 — 25계열 × 260봉이면 페이로드만 커지고, 화면은
+    고른 줄 하나만 그린다(`/api/mr/plan/history/{id}` 가 그 몫).
+    """
+    key = _dataset.data_key
+    rows: list[dict] = []
+    missing = False
+    for sid, _label, _kind in mr_mod.SERIES:
+        got = peek(f"mr-plan-{sid}", key)
+        if got is None:
+            if sid not in _mr_plan_excluded:
+                missing = True
+            continue
+        rows.append({k: v for k, v in got.items() if k != "history"})
+    building = _mr_plan_start(key) if missing else False
+    return mrp.build_plan(rows, total=len(mr_mod.SERIES),
+                          excluded=list(_mr_plan_excluded.values()),
+                          building=building)
+
+
+@router.get("/api/mr/plan/history/{series_id:path}")
+def mr_plan_history(series_id: str) -> dict:
+    """그 계열의 값+밴드 이력 — 밴드는 **그 계열이 고른 조건**의 것이다.
+
+    보드의 `/api/mr/history` 와 같은 이유로 갈라져 있다: 무겁고 행마다 필요하지
+    않다. 아직 안 구워졌으면 404 이고 화면은 「이력을 불러오는 중이에요」로 둔다.
+    """
+    got = peek(f"mr-plan-{series_id}", _dataset.data_key)
+    if got is None or "history" not in got:
+        raise HTTPException(
+            status_code=404,
+            detail=f"아직 계획을 못 구웠어요: {series_id}")
+    return got["history"]
 
 
 def _mr_cost_span(legs: list[dict]) -> dict | None:

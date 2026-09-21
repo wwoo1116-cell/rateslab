@@ -425,11 +425,28 @@ def _state(vals: list[float], up: list, lo: list) -> dict[str, Any]:
 
 def _assemble(sid: str, label: str, kind: str, unit: str,
               dates: list[str], vals: list[float],
-              window: int = WINDOW, k: float = K) -> tuple[dict, dict]:
-    """한 계열의 보드 행과 히스토리 조각. 반환 = (row, history)."""
+              window: int = WINDOW, k: float = K,
+              bands: tuple[list, list, list] | None = None) -> tuple[dict, dict]:
+    """한 계열의 보드 행과 히스토리 조각. 반환 = (row, history).
+
+    `bands` 는 **밖에서 잰 밴드**를 받는 자리다(`(ma, up, lo)`) — 안 주면 여기서
+    `_bands(vals, window, k)` 로 잰다(종전 그대로).
+
+    있는 이유는 계획면(`mrplan.py`, 2026-09-21)이다: 그 화면의 밴드는 보드의
+    고정 (창, 배수)가 아니라 **계열마다 격자가 고른 조건**의 밴드이고, 그 밴드는
+    이미 엔진이 재 둔 것이다(`mrbacktest.rolling_series` 의 mean ± entryZ·std).
+    같은 밴드를 여기서 다시 재면 두 수가 갈릴 자리가 생긴다 — 엔진은 봉마다
+    모집단 σ 를, 이 함수는 `_bands` 를 쓰는데 둘이 같은 규약인 것은 **지금** 참일
+    뿐이고(2026-09-02 에 한 번 갈려 있었다) 규약이 다시 갈리면 계획면의 진입
+    트리거가 그 계열의 백테스트 진입과 다른 자리를 가리키게 된다.
+
+    ⚠ 단위는 **계열의 자기 단위**다(`vals` 와 같은 눈금). 엔진은 %-계열을 bp 로
+    환산해 돌리므로 부르는 쪽이 되돌려서 넘겨야 한다 — 안 그러면 `scale` 이 한 번
+    더 곱해져 선물 계열의 거리만 100배가 된다(`main._mr_leg` 머리의 그 함정).
+    """
     if len(vals) < window + 1:
         raise ValueError(f"{sid}: 창({window})보다 짧은 이력({len(vals)})")
-    ma, up, lo = _bands(vals, window, k)
+    ma, up, lo = _bands(vals, window, k) if bands is None else bands
     v, m, u, l = vals[-1], ma[-1], up[-1], lo[-1]
     sd = (u - m) / k if (u is not None and m is not None) else None
     z = (v - m) / sd if sd else None

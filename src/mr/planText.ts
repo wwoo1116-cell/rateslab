@@ -1,0 +1,164 @@
+/* 계획면의 **문장** — 「지금 어디에 있고, 얼마면 무엇을 하나」를 두 줄로
+ * [OWNER 2026-09-21 · 시니어 트레이더 피드백 — "상태 칸에 토스스타일의 문장으로
+ * 구현해서. 진입 추천 타점을 같이 적어줘야 할 거 같아"].
+ *
+ * ## 왜 파일 하나인가
+ *
+ * 같은 문장이 서는 자리가 셋이다: 표의 상태 칸 · 1순위 히어로 · 상세 카드. 셋이
+ * 같은 줄을 조금씩 다르게 말하면 화면이 스스로를 반박한다 — `parts.condWord` 가
+ * 같은 이유로 한 벌인 것과 같은 자리(캐논 얼라인 8).
+ *
+ * ## 화면은 계산하지 않는다 (§16)
+ *
+ * 여기 있는 것은 **옮겨 적기**뿐이다. 레벨·거리·상태·포지션은 전부 서버가 끝낸
+ * 값이고(`backend/app/mrplan.py`), 이 파일은 그 수들을 우리말로 잇는다. 밴드를
+ * 화면에서 다시 내면 보드와 창이 다른 수를 말하게 된다 — 가드가 그 자리를 잰다.
+ *
+ * ## 명목은 안 적는다
+ *
+ * 2026-09-09 의 「트리거는 진입 레벨까지」는 청산·손절이 붙으면서 뒤집혔지만
+ * [OWNER 2026-09-21], **명목·목표가는 여전히 이 화면의 것이 아니다**. 포지션
+ * 크기는 데스크가 정하는 것이고, 그것까지 적으면 이 화면이 주문 카드가 된다.
+ */
+
+import type { Unit } from '@/lib/api';
+import { fmtLevel, unitSuffix } from '@/lib/format';
+import { fmtKrw } from '@/lib/krw';
+
+import type { MrPlanLevel, MrPlanRow } from './api';
+
+const MINUS = '−';
+
+/** z 표기 — 부호 명시, 반올림 후 0 은 부호 없이(rv fmt 의 규칙 그대로).
+ *
+ *  ⚠ **앱에 한 벌이다** — 종전에는 `MrPage` 안에 있었고, 계획면의 문장이 같은
+ *  표기를 쓰게 되면서 여기로 내려왔다. 두 벌이면 한쪽만 자릿수가 바뀐다. */
+export function fmtZ(z: number | null): string {
+  if (z == null) return '—';
+  const s = Math.abs(z).toFixed(2);
+  if (Number(s) === 0) return '0.00σ';
+  return z > 0 ? `+${s}σ` : `${MINUS}${s}σ`;
+}
+
+/** 레벨 한 수 — 계열의 자기 단위로. */
+const lvl = (v: number | null | undefined, unit: string): string =>
+  `${fmtLevel(v ?? null, unit as Unit)}${unitSuffix(unit as Unit)}`;
+
+/** 거리 한 수 — 늘 **bp** 다(서버가 그렇게 끝낸다). 부호는 안 적는다: 「얼마나
+ *  더 가야 하나」라서 방향은 낱말이 진다. */
+const gap = (v: number, dUnit: string): string =>
+  `${fmtLevel(Math.abs(v), dUnit as Unit)}${unitSuffix(dUnit as Unit)}`;
+
+/** 히어로·표가 적을 **한 방향** — 지난 것이 먼저, 없으면 가까운 것.
+ *
+ *  양방향 계열(선물·퓨처스왑·커브)은 문턱이 둘이라 고르는 규칙이 있어야 한다.
+ *  지난 문턱이 곧 「지금 할 수 있는 것」이라 그쪽이 먼저이고, 둘 다 멀면 더 가까운
+ *  쪽이 다음에 닿을 문턱이다. 둘 다 보여 주는 자리는 상세 카드의 「트리거」 칸이다.
+ *  (보드의 `heroTrigger` 와 같은 규칙 — 두 화면이 다른 다리를 앞세우지 않는다.) */
+export function pickLevel(r: MrPlanRow): MrPlanLevel | undefined {
+  const ls = r.levels ?? [];
+  return ls.find((l) => l.entryReached) ?? [...ls].sort((a, b) => a.entryGap - b.entryGap)[0];
+}
+
+export interface PlanLines {
+  /** 첫 줄 — 지금 무슨 상태인가. */
+  lead: string;
+  /** 둘째 줄 — 그래서 얼마면 무엇을 하나. */
+  sub: string;
+  /** 첫 줄의 방향색(평가손익이 있을 때만). 없으면 잉크 그대로. */
+  tone?: 'up' | 'down';
+}
+
+/** 한 계열의 두 줄.
+ *
+ *  갈래는 셋이고 **순서가 곧 우선순위**다:
+ *
+ *    ① 못 재는 줄        창이 안 찼거나 σ=0 이라 밴드가 없다
+ *    ② 들고 있는 줄      백테스트가 표본 끝에 연 다리가 있다 → 나가는 문을 적는다
+ *    ③ 비어 있는 줄      진입 문턱과 남은 거리를 적는다
+ *
+ *  ②가 ③보다 앞인 이유: 들고 있으면 「얼마면 들어가나」는 지금 할 일이 아니다.
+ */
+export function planLines(r: MrPlanRow): PlanLines {
+  const unit = r.unit;
+  const dUnit = r.dUnit;
+
+  // ① 밴드가 못 선다 — 「없다」가 아니라 「못 잰다」라고 적는다.
+  if (r.z == null || r.levels.length === 0) {
+    return {
+      lead: '아직 못 재요',
+      sub: `${r.cond.lookback}일 창이 차야 밴드가 서요`,
+    };
+  }
+
+  // ② 들고 있는 다리 — 나가는 문 둘이 오늘 레벨로 선다.
+  const p = r.position;
+  if (p) {
+    const won = fmtKrw(p.pnl);
+    const lead = `${p.bars}일째 들고 있어요 · ${won}`;
+    if (p.exit == null || p.stop == null) {
+      return { lead, sub: `${p.legs} · 밴드가 못 서서 청산·손절 레벨이 없어요`,
+               tone: p.pnl > 0 ? 'up' : p.pnl < 0 ? 'down' : undefined };
+    }
+    // 방향 낱말은 **지금 값이 중심선의 어느 쪽인가**가 정한다(서버의 그 규약) —
+    // 위쪽이면 내려와야 청산이고 더 올라야 손절이다.
+    const above = (p.z ?? 0) >= 0;
+    const sub = `청산 ${lvl(p.exit, unit)} ${above ? '이하' : '이상'}`
+      + ` · 손절 ${lvl(p.stop, unit)} ${above ? '이상' : '이하'}`;
+    return { lead, sub, tone: p.pnl > 0 ? 'up' : p.pnl < 0 ? 'down' : undefined };
+  }
+
+  // ③ 비어 있는 줄 — 진입 문턱 하나와 남은 거리.
+  const l = pickLevel(r);
+  if (!l) {
+    // 문턱이 아예 없다 = 이 데스크가 할 수 있는 방향이 없다는 뜻이고, 사유는
+    // 행이 따로 진다(`triggerBlocked`) — 지어내지 않는다.
+    return { lead: `${fmtZ(r.z)} 벌어졌어요`, sub: r.triggerBlocked ?? '문턱이 없어요' };
+  }
+  const word = l.side === 'above' ? '이상' : '이하';
+  const touch = r.cond.entryMode === 'touch';
+  const out = r.state.kind === 'above' || r.state.kind === 'below';
+  /* 앞머리는 **늘 상태**다 — 종전 판은 여기서 z 를 다시 적었는데, 바로 왼쪽
+     「늘어남」 열이 그 수를 이미 인쇄하고 있어서 한 행에 같은 수가 두 번 섰다
+     (브라우저 실측 2026-09-21). 이 칸이 더할 것은 **그래서 무엇을 하나**다. */
+  const head = stateText(r.state);
+
+  if (touch) {
+    // 「밴드 복귀」 규칙 — 밖에 있다가 **돌아오는** 봉에 들어간다. 그래서 문턱을
+    // 지났다고 진입 자리가 아니다(그 사실을 안 적으면 화면이 거짓을 말한다).
+    return out
+      ? { lead: `${head} · 돌아오면 진입`,
+          sub: `${lvl(l.entry, unit)} 안으로 돌아오면 ${l.legs}` }
+      : { lead: `${head} · 진입까지 ${gap(l.entryGap, dUnit)}`,
+          sub: `${lvl(l.entry, unit)} 밖으로 나갔다 돌아오면 ${l.legs}` };
+  }
+  return l.entryReached
+    ? { lead: `${head} · 진입 자리예요`,
+        sub: `${lvl(l.entry, unit)} ${word} · ${gap(l.entryGap, dUnit)} 지났어요 → ${l.legs}` }
+    : { lead: `${head} · 진입까지 ${gap(l.entryGap, dUnit)}`,
+        sub: `${lvl(l.entry, unit)} ${word}이면 ${l.legs}` };
+}
+
+/** 상태 한 낱말 — **판정이지 행동이 아니다**.
+ *
+ *  앱에 한 벌이다: 계획면의 문장, 통합 스트립의 툴팁, 그리고 보드가 쓰던 그
+ *  어휘가 전부 이것이다. 두 화면이 같은 사건을 다르게 부르면 나란히 못 읽는다. */
+export function stateText(s: MrPlanRow['state']): string {
+  if (s.kind === 'below') return `하단 밖 ${s.days}일째`;
+  if (s.kind === 'above') return `상단 밖 ${s.days}일째`;
+  if (s.kind === 'reentry-low') return `하단 재진입 ${s.days}일째`;
+  if (s.kind === 'reentry-high') return `상단 재진입 ${s.days}일째`;
+  return '밴드 안';
+}
+
+/** 「지난 1년」 한 줄 — 표의 손익 칸 밑에 서는 뒷말.
+ *
+ *  거래 수를 **같이** 적는다: 1년 창은 계열당 거래가 한 줌이라(실측 BSS-3Y 1건)
+ *  손익만 적으면 그 수가 몇 건 위에 서 있는지 안 보인다 [OWNER 2026-09-21 —
+ *  조건은 전체 표본, 성과는 1년]. */
+export function perfNote(r: MrPlanRow): string {
+  const n = r.perf1y.numTrades;
+  if (!n) return '1년 거래 없어요';
+  const wr = r.perf1y.winRate;
+  return `1년 ${n}건${wr == null ? '' : ` · 승률 ${Math.round(wr * 100)}%`}`;
+}
