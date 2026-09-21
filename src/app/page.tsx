@@ -47,6 +47,7 @@ import { SettingView } from '@/ui/SettingView';
 import { BondTypeFilter } from '@/ui/BondTypeFilter';
 import { SimulationPage, type CaseRuns } from '@/sim/SimulationPage';
 import { MomentumPage } from '@/momentum/MomentumPage';
+import { PortfolioPage } from '@/pm/PortfolioPage';
 import { MrPage } from '@/mr/MrPage';
 import { RvPage } from '@/rv/RvPage';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
@@ -166,7 +167,7 @@ export default function Home() {
    * Splitting section and tab into two states makes combinations representable
    * that the screen does not have — "Backtest with no asset class" — which is
    * v1's ruling, carried. */
-  const NON_GROUP: TabId[] = ['all', 'sim', 'strategy', 'setting', 'lab'];
+  const NON_GROUP: TabId[] = ['all', 'sim', 'strategy', 'portfolio', 'setting', 'lab'];
   const tab = (
     GROUPS.includes(groupParam as Group) || NON_GROUP.includes(groupParam as TabId)
       ? groupParam
@@ -611,6 +612,16 @@ const BANNER_H = 34;
           ) : (
             dataFallback()
           )
+        ) : section === 'portfolio' && !isGroupTab ? (
+          /* Portfolio — **Strategy 와 같은 위계** [OWNER 2026-09-21]. 세입자가
+             하나뿐이라 메가 패널이 없고 곧바로 화면이다(Lab·Strategy 가 둘째
+             세입자와 함께 패널을 연 그 규칙의 반대쪽).
+
+             라이브 전용이다 — 장부가 서버에 있고(`/api/paper`) 계열 목록은
+             계획면이 준다. 그래서 `data` 로드와 무관하게 자기 fetch 로 선다. */
+          <ErrorBoundary region="페이퍼 북" fallback="페이퍼 북을 그리지 못했어요.">
+            <PortfolioPage />
+          </ErrorBoundary>
         ) : section === 'setting' && !isGroupTab ? (
           /* Setting — 다른 화면이 읽는 값을 정하는 자리 [OWNER, 2026-08-14].
              데이터가 없어도 선다: 저장은 브라우저 몫이고 서버는 출처만 답한다. */

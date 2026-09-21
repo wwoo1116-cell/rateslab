@@ -13,9 +13,10 @@
 import { GROUP_LABEL, type Group } from '@/table/rows';
 
 /** 탭 = 종목군 · 오버뷰 · 시뮬레이션 · 전략 · 설정 · 연구실. URL 의 `g` 가 드는 값이다. */
-export type TabId = Group | 'all' | 'sim' | 'strategy' | 'setting' | 'lab';
+export type TabId = Group | 'all' | 'sim' | 'strategy' | 'portfolio' | 'setting' | 'lab';
 
-export type SectionId = 'main' | 'backtest' | 'simulation' | 'strategy' | 'setting' | 'lab';
+export type SectionId =
+  | 'main' | 'backtest' | 'simulation' | 'strategy' | 'portfolio' | 'setting' | 'lab';
 
 export type Section = {
   id: SectionId;
@@ -44,6 +45,14 @@ export const SECTIONS: Section[] = [
      blurb 는 이제 «이 섹션이 무엇을 하는 곳인가» 이고, 지금 보고 있는 전략의
      이름은 `STRATEGY_ITEMS` 가 진다(Lab 이 세입자 이름을 h1 으로 쓰는 그 규칙). */
   { id: 'strategy', label: 'Strategy', blurb: '상대가치를 재는 화면들.', tab: 'strategy' },
+  /* Portfolio — **Strategy 와 같은 위계** [OWNER 2026-09-21 — "Strategy와 동일
+   * 위계로 존재하는 Portfolio Management tab을 만들어서 … 매일 PnL을 확인할 수
+   * 있게"]. 밑에 두지 않는 이유가 그 지시의 요점이다: Strategy 는 «재는» 자리고
+   * 여기는 «세운 것을 지키는» 자리라, 한쪽이 다른 쪽의 하위 화면이 아니다.
+   *
+   * 세입자가 하나뿐이라 `PANELED` 에 안 넣는다 — 메가 패널은 고를 것이 둘 이상일
+   * 때 여는 물건이다(Strategy 가 둘째 세입자와 함께 들어간 그 규칙의 반대쪽). */
+  { id: 'portfolio', label: 'Portfolio', blurb: '세운 것을 매일 지켜본다.', tab: 'portfolio' },
   /* Setting 은 데이터 화면이 아니라 **다른 화면들이 읽는 값을 정하는 자리**라
    * 최상위다 [OWNER, 2026-08-14]. 지금은 조달금리 하나뿐이고, 그 값은 Cash
    * Bond 백테스트가 읽는다.
@@ -163,6 +172,7 @@ export function sectionOf(t: TabId): SectionId {
   if (t === 'all') return 'main';
   if (t === 'sim') return 'simulation';
   if (t === 'strategy') return 'strategy';
+  if (t === 'portfolio') return 'portfolio';
   if (t === 'setting') return 'setting';
   if (t === 'lab') return 'lab';
   return 'backtest';

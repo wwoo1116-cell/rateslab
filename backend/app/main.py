@@ -70,6 +70,7 @@ from . import instruments as instruments_mod
 from . import calendar_cache
 from . import df_cache
 from . import momentum
+from . import paper
 from . import mr as mr_mod
 from . import mrbacktest as mrbt
 from . import mrbook
@@ -3211,6 +3212,161 @@ def expand_instrument(body: dict) -> dict:
         # 없거나, 데이터 범위를 벗어난 날짜거나. 500이 아니라 이유를 말한다.
         raise HTTPException(status_code=422, detail=str(exc))
     return {"seriesId": series_id, "kind": instruments_mod.kind_of(series_id), "legs": legs}
+
+
+
+# ── 페이퍼 북 (`app/paper.py`) ─────────────────────────────────────────────
+#
+# 이 리포의 **첫 쓰기 라우트**다. 지금까지 사용자 상태는 전부 `localStorage`
+# 였고(조달·백테스트 북·오버레이) 그것으로 충분했다 — 취향이었기 때문이다.
+# 페이퍼 북은 취향이 아니라 **기록**이라 브라우저에 두면 안 된다: 다른 자리에서
+# 열어도 같은 북이어야 하고, 캐시를 지워도 안 날아가야 한다.
+#
+# 쓰기는 넷뿐이고 전부 **덧쓰기**다(등록·해지·거래·청산). 지우는 라우트는 두지
+# 않는다 — 진 기록을 지우는 것이 생존 편향이 장부에 들어오는 가장 흔한 길이다.
+
+
+def _paper_leg(sid: str, knobs: dict, *, accounting: bool = True) -> dict:
+    """`paper` 가 부르는 `_mr_leg` 의 얼굴 — 계획면과 **같은** 고정값이다.
+
+    `_mr_plan_leg` 와 한 글자도 다르면 안 된다: 두 화면이 같은 계열에 다른 돈을
+    매기는 순간 페이퍼 북은 대조가 아니라 세 번째 의견이 된다. 그래서 여기서
+    노브를 다시 적지 않고 **그 함수를 그대로 부른다**.
+    """
+    return _mr_plan_leg(sid, knobs, accounting=accounting)
+
+
+def _paper_account(*, sid: str, leg: dict, trades: list[dict],
+                   cost_bp: float) -> bool:
+    """수동 거래를 **실가격 대사**에 얹는다 — `/api/mr/recon` 의 그 기계다.
+
+    한 건이라도 못 재면 **전부** 엔진 근사로 남긴다(`_mr_real_accounting` 의 그
+    규율). 반은 실가격 반은 근사인 장부는 어느 쪽 수인지 읽는 사람이 모른다.
+
+    비용은 대사에 없다 — `costBp` 는 전략의 노브지 상품의 성질이 아니라서
+    `paper.manual_leg` 이 이미 매긴 값을 그대로 둔다.
+    """
+    got: list[tuple[dict, dict[str, float], dict[str, float]]] = []
+    for o in trades:
+        try:
+            rec = mr_recon(id=sid, entry=o["entryT"], exit=o["exitT"],
+                           notional=o["notional"], dir=int(o["dir"]))
+        except BaseException:                          # noqa: BLE001
+            return False
+        if not rec.get("available"):
+            return False
+        day: dict[str, float] = {}
+        agg = {"mtm": 0.0, "carry": 0.0, "rolldown": 0.0, "funding": 0.0}
+        for row in rec.get("rows") or []:
+            if row.get("actual") is None:
+                continue                               # 이월 앵커 — 오늘의 돈이 아니다
+            day[row["t"]] = day.get(row["t"], 0.0) + float(row["actual"])
+            c = float(row.get("carry") or 0.0)
+            rd = float(row.get("rolldown") or 0.0)
+            f = float(row.get("funding") or 0.0)
+            agg["carry"] += c
+            agg["rolldown"] += rd
+            agg["funding"] += f
+            agg["mtm"] += float(row["actual"]) - c - rd - f
+        if not day:
+            return False
+        got.append((o, day, agg))
+
+    # 한 건도 안 빠졌을 때만 갈아 끼운다.
+    for o, day, agg in got:
+        # 비용은 **첫 봉**이 진다 — 진입에서 문다. 마지막 봉에 얹으면 미청산
+        # 거래의 «오늘 손익»에 진입 비용이 뒤늦게 튀어나온다.
+        first = min(day)
+        day[first] = day[first] + o["cost"]            # `cost` 는 음수다
+        o["day"] = {t: round(v, 2) for t, v in day.items()}
+        o["mtm"] = round(agg["mtm"], 2)
+        o["carry"] = round(agg["carry"], 2)
+        o["rolldown"] = round(agg["rolldown"], 2)
+        o["funding"] = round(agg["funding"], 2)
+        o["pnl"] = round(sum(day.values()), 2)
+    return True
+
+
+def _paper_sheet() -> dict:
+    """한 장 굽기 — 등록한 것만 도는 물건이라 **동기**로 끝난다."""
+    return paper.build_sheet(leg_of=_paper_leg, account_of=_paper_account)
+
+
+@router.get("/api/paper")
+def paper_book() -> dict:
+    """페이퍼 북 한 장 — 규칙 북 · 수동 북 · 둘의 차이.
+
+    계획면(`/api/mr/plan`)이 **표본내**를 말한다면 이 화면은 **표본밖**을 말한다:
+    등록하는 순간 조건이 얼고, 그 뒤로는 시장만 움직인다.
+    """
+    try:
+        return {"available": True, **_paper_sheet()}
+    except BaseException as exc:                       # noqa: BLE001
+        logging.getLogger("sauron.paper").warning("[paper] 못 세웠어요: %s", exc)
+        return {"available": False, "why": f"페이퍼 북을 못 세웠어요 — {exc}"}
+
+
+@router.post("/api/paper/enroll")
+def paper_enroll(body: dict) -> dict:
+    """계열 하나를 규칙 북에 — **지금 계획면이 쓰는 조건 그대로 얼린다**.
+
+    조건을 요청이 실어 오게 두지 않는다. 그러면 화면이 보여 준 것과 다른 규칙이
+    등록될 수 있고, 그 순간 이 장부는 「우리가 테스트했던 것」이 아니다.
+    """
+    sid = str(body.get("id") or "")
+    if not sid:
+        raise HTTPException(status_code=400, detail="id 가 없어요")
+    got = peek(mrp.cache_name(sid), _dataset.data_key)
+    if got is None:
+        raise HTTPException(
+            status_code=409,
+            detail="그 계열의 조건이 아직 안 구워졌어요 — 계획면을 먼저 열어 주세요")
+    st = paper.load()
+    paper.enroll(st, sid, got["cond"], label=got.get("label") or sid)
+    paper.save(st)
+    return {"ok": True, **_paper_sheet()}
+
+
+@router.post("/api/paper/retire")
+def paper_retire(body: dict) -> dict:
+    """규칙 북에서 내린다 — 기록은 남고 «내린 날»이 붙는다."""
+    sid = str(body.get("id") or "")
+    if not sid:
+        raise HTTPException(status_code=400, detail="id 가 없어요")
+    st = paper.load()
+    paper.retire(st, sid)
+    paper.save(st)
+    return {"ok": True, **_paper_sheet()}
+
+
+@router.post("/api/paper/trade")
+def paper_trade(body: dict) -> dict:
+    """수동 북에 한 건. 방향은 **엔진 규약**이다(+1 = 값이 오르는 쪽)."""
+    sid = str(body.get("id") or "")
+    entry = str(body.get("entry") or "")
+    if not sid or not entry:
+        raise HTTPException(status_code=400, detail="id·entry 가 있어야 해요")
+    st = paper.load()
+    paper.add_trade(st, sid=sid, direction=int(body.get("dir") or -1),
+                    entry=entry,
+                    notional=float(body.get("notional") or paper.NOTIONAL),
+                    label=str(body.get("label") or ""),
+                    note=str(body.get("note") or ""))
+    paper.save(st)
+    return {"ok": True, **_paper_sheet()}
+
+
+@router.post("/api/paper/close")
+def paper_close(body: dict) -> dict:
+    """수동 북의 한 건을 닫는다."""
+    n = body.get("n")
+    exit_t = str(body.get("exit") or "")
+    if n is None or not exit_t:
+        raise HTTPException(status_code=400, detail="n·exit 가 있어야 해요")
+    st = paper.load()
+    paper.close_trade(st, int(n), exit_t)
+    paper.save(st)
+    return {"ok": True, **_paper_sheet()}
 
 
 # The monitor first, then the simulation — the order the reader meets them, and

@@ -73,3 +73,6 @@ backend/data/krwswapdata/clean.parquet
 backend/data/krd_ladder.json
 # 엔진이 굽는 HTML 리포트 — 산출물이지 소스가 아니다. JSON 계약만 추적한다.
 backend/output/*.html
+backend/data/paper_book.json
+backend/output/.tenor_run*.log
+backend/output/.tenor_search_cache*.json

@@ -191,6 +191,18 @@ export const momentumBookUrl = () => liveUrl("/api/momentum/book");
  * 돌아오고 배경이 굽는다 — 화면이 그 사실을 적고 몇 초 뒤 다시 묻는다. */
 export const momentumSleeveUrl = () => liveUrl("/api/momentum/sleeve");
 
+/** 페이퍼 북 — 이 앱의 **유일한 쓰기 경로**다.
+ *
+ * 나머지 라우트는 전부 읽기이고 사용자 상태는 `localStorage` 에 있다(조달·
+ * 백테스트 북·오버레이). 페이퍼 북만 서버에 두는 이유는 그것이 취향이 아니라
+ * **기록**이기 때문이다 — 다른 자리에서 열어도 같은 북이어야 하고 캐시를 지워도
+ * 안 날아가야 한다(`backend/app/paper.py` 머리 §저장). */
+export const paperUrl = () => liveUrl("/api/paper");
+export const paperEnrollUrl = () => liveUrl("/api/paper/enroll");
+export const paperRetireUrl = () => liveUrl("/api/paper/retire");
+export const paperTradeUrl = () => liveUrl("/api/paper/trade");
+export const paperCloseUrl = () => liveUrl("/api/paper/close");
+
 /** 거래 하나의 실가격 일별 대사 — 자산스왑으로 세워 민평 노드를 범프한
  * 테너별 KRD. **거래를 누를 때만** 도는 별도 패스라 라우트도 따로다
  * (KRD 범프가 본체보다 비싸다 — `cashbond` 의 그 근거). */
