@@ -87,6 +87,52 @@ export function fmtDelta(v: number | null | undefined, unit: Unit): string {
   return fmtBp(v);
 }
 
+/**
+ * **변화의 단위는 레벨의 단위가 아니다.**
+ *
+ * 이 제품에서 레벨은 자기 단위로 말하고(`%` 는 4자리 퍼센트) **변화는 bp 로
+ * 말한다**. 그 규약은 한 곳이 아니라 세 곳에 이미 박혀 있다:
+ *
+ *   `derive.py::series_history`  `scale = 100 if unit == "%"` — "deltas quoted
+ *                                in bp even for % levels"
+ *   `table/rows.ts:85`           `changes: Record<BasisKey, number|null>  // bp`
+ *   표의 변화 열 머리             `1D`/`MTD`/`YTD` — 단위를 열이 한 번 이름한다
+ *
+ * 그런데 접미사를 붙이는 일은 `unitSuffix`(= **레벨**의 단위)라는 별개 호출이
+ * 지고 있었고, 호출부가 그걸 각자 기억해야 했다. 두 자리가 각자 틀렸다
+ * [실측 2026-09-21]:
+ *
+ *   리드아웃 카드   `fmtDelta(d, '%')`           → `+2.2`    단위 없음
+ *   히어로          `fmtDelta(net, '%') + '%'`   → `+0.2%`   같은 양을 다른 단위로
+ *
+ * 둘은 같은 뿌리다. 호출부 둘을 각자 고치면 세 번째 호출부에서 또 난다. 그래서
+ * **부호 있는 변화는 단위까지 한 함수가 진다**. `unitSuffix` 는 레벨 옆에만
+ * 쓴다.
+ */
+export function deltaUnitSuffix(unit: Unit): string {
+  /* `가격`(선물 포인트)과 `ratio` 는 차가 곧 그 단위라 접미사가 없다 —
+     `unitSuffix` 가 같은 둘에 대해 지는 판단과 같은 근거다. */
+  return unit === "%" || unit === "bp" ? "bp" : "";
+}
+
+/** 부호 있는 변화 + 그 변화의 단위. 리드아웃 스트립과 히어로가 같이 쓴다. */
+export function fmtDeltaUnit(v: number | null | undefined, unit: Unit): string {
+  if (v == null) return EMDASH;
+  return `${fmtDelta(v, unit)}${deltaUnitSuffix(unit)}`;
+}
+
+/**
+ * 레벨의 단위로 잰 차를 **변화의 단위**로 옮긴다 — `%` 면 ×100 이다.
+ *
+ * 서버가 내는 `d` 는 이미 bp 다(`series_history`). 이 함수가 필요한 자리는
+ * 화면이 «보이는 구간» 안에서 직접 낸 차 하나뿐이다(히어로의 순변화: 서버는
+ * 구간을 모르므로 발행할 수 없다). 그 하나가 다른 단위로 말하고 있었다.
+ */
+export function toDeltaUnit(v: number | null | undefined, unit: Unit): number | null {
+  if (v == null) return null;
+  return unit === "%" ? v * 100 : v;
+}
+
 /* The LEVEL HEADER — the label over every current-level surface (pass M).
  *
  * It used to read 현재, which named the quantity and not the DAY it belongs to.

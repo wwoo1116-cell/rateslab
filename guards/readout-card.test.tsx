@@ -131,8 +131,12 @@ describe('카드를 여는 배선', () => {
 
        2026-08-26 부터 명제가 **한 겹 강해졌다**: 기준선을 끌 수 있게 되면서
        (`drawn` = 있고 + 켜져 있음) 카드가 읽는 조건도 «그려진 선» 으로 좁아졌다.
-       `refs`(있음)를 읽으면 꺼 둔 선의 값이 카드에 남는다. */
-    expect(pane).toMatch(/drawn\?\.cd \? \(\s*<ReadoutLevel k=\{READOUT_LABEL\.cd91\}/);
-    expect(pane).not.toMatch(/refs\?\.cd \? \(\s*<ReadoutLevel/);
+       `refs`(있음)를 읽으면 꺼 둔 선의 값이 카드에 남는다.
+
+       2026-09-21 부터 그 «카드» 는 종목 차트에서 **그림 위의 고정 줄**이다
+       (`ui/ChartReadoutStrip.tsx`). 재는 자리만 옮겨지고 명제는 그대로다:
+       칸이 서는가는 `refs`, 값을 적는가는 `drawn`. */
+    expect(pane).toMatch(/value: drawn\?\.cd \? fmtLevel\(drawn\.cd\[i\], '%'\)/);
+    expect(pane).not.toMatch(/value: prefs\.refs\.cd \?/);
   });
 });

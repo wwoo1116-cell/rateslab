@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { Chip } from '@coinbase/cds-web/chips';
 import { Box, HStack, VStack } from '@coinbase/cds-web/layout';
 import {
   TextBody,
@@ -14,7 +13,7 @@ import {
 } from '@coinbase/cds-web/typography';
 
 import { CD_SERIES_ID, type PolicyStep } from '@/lib/api';
-import { fmtDelta, fmtLevel, unitSuffix } from '@/lib/format';
+import { fmtDelta, fmtDeltaUnit, fmtLevel, toDeltaUnit, unitSuffix } from '@/lib/format';
 import { rangePosition } from '@/lib/range';
 import { cashbondSeriesUrl, seriesUrl, universeSeriesUrl } from '@/lib/staticPaths';
 import { PeriodSelector } from '@coinbase/cds-web/visualizations/chart';
@@ -31,13 +30,12 @@ import type { Row } from '@/table/rows';
 
 import { useFillHeight } from './useFillHeight';
 
-import {
-  READOUT_LABEL,
-  ReadoutCard,
-  ReadoutChange,
-  ReadoutLevel,
-  placeReadout,
-} from './ReadoutCard';
+/* `ReadoutCard` 는 **안 쓴다** [2026-09-21] — 이 pane 의 두 차트는 떠 있는
+   카드에서 고정 스트립으로 옮겼다. 모듈과 CSS 는 남는다: 시뮬·rv·MR·Lab 의
+   열네 카드가 아직 그 문법을 쓴다. 낱말(`READOUT_LABEL`)은 계속 한 곳이다 —
+   같은 값에 표면마다 다른 이름을 붙이지 않기 위해서다. */
+import { READOUT_LABEL } from './ReadoutCard';
+import { ChartReadoutStrip, slotChars, type StripSlot } from './ChartReadoutStrip';
 
 /** `d` = 그날의 전일 대비 변화. **백엔드가 낸다**(`derive.py::series_history`) —
  * 브라우저는 시계열을 차분하지 않는다(§16). 카드의 「당일 변화」가 이 값이다. */
@@ -109,6 +107,21 @@ type SeriesStats = { min: number | null; max: number | null; avg: number | null 
 
 const CD_LINE = 'CD91';
 const BASE_LINE = 'BASE';
+
+/**
+ * 52주 최고·최저·평균을 **리드아웃 줄에도** 적는가 [OWNER 2026-09-21: 뺀다].
+ *
+ * 카드 시절에는 세 줄이었다 [OWNER 2026-08-14: "날짜, 레벨, 52주 최고·최저·
+ * 평균, CD91 금리가 나와야 함"]. 줄로 옮기면서 뺀 이유는 뜻이 바뀌어서가 아니라
+ * **자리**다: 한 줄에 일곱 칸이 서는데 그 중 셋이 커서를 따라 **안 바뀌는 값**
+ * 이면(52주 통계는 서버가 낸 252관측 고정이라 구간을 좁혀도 그대로다), 정작
+ * 커서가 읽는 값들이 좁은 창에서 먼저 밀려난다.
+ *
+ * 없어진 것은 아니다 — 표의 52주 열과 히어로 밑 「이 구간」 통계가 같은 값을
+ * 적는다. 되살릴 일이 생기면 이 상수 하나이고, 자리는 **둘째 줄**이다(첫 줄에
+ * 끼우면 위의 이유가 그대로 돌아온다).
+ */
+const SHOW_52W_IN_STRIP = false;
 
 /* 주봉·월봉(캔들 모드)이 여기 살았다가 **오너 지시로 제거됐다** [OWNER
  * 2026-08-18 — "주봉 월봉 없애도 될 거 같고"]. 백엔드의 `interval=w|m` 라우트와
@@ -199,38 +212,13 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'up
   );
 }
 
-/** 기준선 범례 항목 중 **끌 수 있는** 것 [2026-08-26]. `RefKey` 는 못 끄는
- * 자리(아이들 커브의 오늘/전일)가 아직 쓰고, 이쪽은 MA 칩과 같은 부품이다 —
- * 한 줄에 나란히 서므로 같은 모양이어야 한다.
+/* `RefChip`(끌 수 있는 기준선 범례 항목)이 여기 있었다 [은퇴 2026-09-21].
  *
- * 견본(`.sr-casedash`)이 **그려진 색 그대로**이고, 끄면 흐려져 «있지만 지금은
- * 안 그린다» 가 읽힌다. MA 칩과 한 글자도 다르지 않은 규칙이다. */
-export function RefChip({
-  label,
-  color,
-  on,
-  onToggle,
-}: {
-  label: string;
-  color: string;
-  on: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <Chip
-      size="xs"
-      className="sr-chip sr-ctlfont"
-      accessibilityLabel={`${label} ${on ? '끄기' : '켜기'}`}
-      start={
-        <span className="sr-casedash" style={{ background: color, opacity: on ? 0.9 : 0.3 }} />
-      }
-      active={on}
-      onClick={onToggle}
-    >
-      {label}
-    </Chip>
-  );
-}
+ * 그 부품의 일 — 견본은 그려진 색 그대로, 끄면 흐려지고, 누르면 토글 — 은
+ * 그대로 살아서 **리드아웃 줄의 칸**이 진다(`ui/ChartReadoutStrip.tsx`).
+ * 없어진 것은 부품이 아니라 «값 없이 이름만 있는 범례» 라는 자리다: 그림
+ * 아래에 이름만 서고 값은 떠 있는 카드에 있어서, 같은 커서를 두 자리가
+ * 설명하고 있었다. `RefKey`(못 끄는 범례)는 남는다 — Lab 시나리오가 쓴다. */
 
 /** One entry of the reference legend: the line as it is drawn, then its name.
  * The swatch carries the same colour and opacity the series does, so the legend
@@ -438,11 +426,12 @@ export function PreviewPane({
   const [plotRef, plotH] = useFillHeight(height);
   const chartH = fill ? plotH : height;
 
-  /* 자리는 상자의 CSS 변수에 적는다 — 상태가 아니다(`placeReadout` 머리글).
-     픽셀마다 이 pane 전체를 다시 그리지 않는다. */
-  const onPlotMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    placeReadout(e.currentTarget, e.clientX);
-  }, []);
+  /* 커서 자리를 상자의 CSS 변수에 적던 `onPlotMove` 가 여기 있었다 —
+     떠 있는 카드가 그걸 읽어 커서를 따라다녔다. 스트립은 자리가 고정이라 잴
+     것이 없고, 그래서 픽셀마다 도는 콜백도 없다.
+
+     떠날 때 비우는 것은 남는다: 커서가 그림 밖으로 나가면 스트립이 마지막
+     봉으로 돌아가야 한다(`stripPoint` 머리글). */
   const onPlotLeave = useCallback(() => setHoverIdx(undefined), []);
 
   /* ── 제자리 확대 [v1 OWNER 2026-08-04] ──────────────────────────────────────
@@ -538,11 +527,16 @@ export function PreviewPane({
   /* 52주 세 줄의 출처. 스왑 라우트는 `stats` 를 싣고(252관측) 유니버스 라우트는
      안 싣는다. 없을 때 **행의 값**으로 떨어지는데 그 둘은 같은 백엔드 함수
      (`annual_stats`)에서 나오므로 카드가 표의 52주 열과 다른 말을 할 수 없다. */
-  const stats52 = {
-    max: data?.stats?.max ?? row?.rangeHigh ?? null,
-    min: data?.stats?.min ?? row?.rangeLow ?? null,
-    avg: data?.stats?.avg ?? row?.rangeAvg ?? null,
-  };
+  /* memo 인 이유는 성능이 아니라 **참조**다: 매 렌더 새 객체면 이걸 의존성에
+     둔 `stripSlots` 가 렌더마다 다시 돈다(lint 가 그 자리를 가리킨다). */
+  const stats52 = useMemo(
+    () => ({
+      max: data?.stats?.max ?? row?.rangeHigh ?? null,
+      min: data?.stats?.min ?? row?.rangeLow ?? null,
+      avg: data?.stats?.avg ?? row?.rangeAvg ?? null,
+    }),
+    [data?.stats, row?.rangeHigh, row?.rangeLow, row?.rangeAvg],
+  );
 
   /* 확대는 **지금 보고 있는 것** 위의 조작이라, 보고 있는 것이 갈리면 초기화한다.
      남겨두면 다른 종목·다른 구간·다른 종류의 인덱스 구간을 그대로 적용하게 되고,
@@ -637,6 +631,101 @@ export function PreviewPane({
   const pctAxis = !!(drawn && (drawn.cd || drawn.policy)) && mode === 'own';
 
 
+  /**
+   * 스트립이 읽는 점 — **커서가 없으면 마지막 봉**이다.
+   *
+   * 카드에는 «없는 상태» 가 있었다(커서가 그림 밖이면 카드가 사라진다). 줄에는
+   * 없다 — 자리가 고정이라 비워 두면 빈 줄이 서 있게 되고, 그건 화면이 아무
+   * 말도 안 하면서 높이만 먹는 것이다. 쉴 때 마지막 봉을 읽으면 그 줄은 늘
+   * «지금 이 종목이 어디에 있나» 를 말한다.
+   */
+  const stripPoint = useMemo(() => {
+    const w = view?.win;
+    if (!w?.length) return { i: 0, t: '', v: null as number | null, d: null as number | null, ma: undefined as (number | null)[] | undefined };
+    const p = hoverPoint ?? w[w.length - 1];
+    const i = hoverPoint ? hoverPoint.i : w.length - 1;
+    return { i, t: p.t, v: p.v, d: p.d ?? null, ma: p.ma };
+  }, [view, hoverPoint]);
+
+  /**
+   * 스트립의 칸들 — **그려진 선과 일대일**이다. 선이 없으면 칸도 없고, 칸의
+   * 견본 색은 선의 색이며, 칸을 누르면 그 선이 꺼진다.
+   *
+   * 값의 출처가 선의 출처와 **같다**: MA 는 둘 다 `pt.ma[k]` 이고 `k` 는 서버
+   * 목록의 첨자다(켠 것만 거른 배열의 첨자를 쓰면 다른 창의 평균을 그린다).
+   * 기준선은 둘 다 `refs.*[i]` 다. 그래서 줄과 선이 다른 수를 말할 수 없다.
+   */
+  const stripSlots = useMemo<StripSlot[]>(() => {
+    if (!view || !row) return [];
+    const i = stripPoint.i;
+    const fmtU = (v: number | null | undefined) => fmtLevel(v, row.unit);
+    /* 자리는 **보이는 구간의 고·저**로 잰다 — 그 둘이 이 구간에서 가장 긴
+       글자를 만든다(서식이 고정 자릿수라 길이는 정수부가 정한다). */
+    const chU = slotChars(fmtU, view.hi, view.lo);
+    const chPct = slotChars((v) => fmtLevel(v, '%'), 5, 0.5);
+
+    const out: StripSlot[] = [
+      { key: 'level', label: READOUT_LABEL.level, value: fmtU(stripPoint.v), color: hue, chars: chU },
+    ];
+    /* 이동평균 — **켠 것만** 값을 적는다. 끈 창은 이름과 견본만 남아 손잡이로
+       선다(칸을 떨구면 좁은 창에서 켤 길이 없어진다).
+
+       좁아질 때는 **긴 창부터** 값을 내려놓는다. 잉크 사다리(긴 창일수록
+       무겁다)의 뒤집힘이 아니라 읽는 순서다: 커서 옆에서 먼저 보는 것은 가까운
+       평균이고, 긴 평균은 그림의 선으로 이미 보인다. 서버 목록이 짧은 창부터라
+       (`MA_WINDOWS` = 5·10·20·60·120) 첨자가 클수록 먼저 내려간다. */
+    const maDrop = (k: number) => Math.min(6, Math.max(1, k + 1)) as 1 | 2 | 3 | 4 | 5 | 6;
+    maWindows.forEach((w, k) => {
+      const on = prefs.shown.includes(w);
+      out.push({
+        key: maSeriesId(w),
+        label: `MA${w}`,
+        value: on ? fmtU(stripPoint.ma?.[k]) : '',
+        color: maColorVar(maColorOf(prefs, w)),
+        opacity: MA_INK[k]?.opacity ?? 0.6,
+        chars: chU,
+        drop: maDrop(k),
+        toggle: { on, onToggle: () => ov.toggle(w) },
+      });
+    });
+    /* 기준선 둘 — **있음과 그림이 갈려 있다**: 칸이 서는가는 `refs`(값이
+       있는가)가 정하고, 값을 적는가는 `drawn`(켜져 있는가)이 정한다. 없는
+       기준선은 끌 수도 없어야 하고, 끈 기준선은 이름과 견본만 남아 손잡이로
+       선다. 둘을 한 식으로 합치면 여기가 `drawn` 의 두 번째 벌이 된다. */
+    if (refs?.cd) {
+      out.push({
+        key: CD_LINE,
+        label: 'CD 91일',
+        value: drawn?.cd ? fmtLevel(drawn.cd[i], '%') : '',
+        color: 'var(--sr-ref-cd)',
+        opacity: 0.9,
+        chars: chPct,
+        drop: 5,
+        toggle: { on: prefs.refs.cd, onToggle: () => ov.toggleRef('cd') },
+      });
+    }
+    if (refs?.policy) {
+      out.push({
+        key: BASE_LINE,
+        label: '기준금리',
+        value: drawn?.policy ? fmtLevel(drawn.policy[i], '%') : '',
+        color: 'var(--sr-ref-policy)',
+        opacity: 0.9,
+        chars: chPct,
+        drop: 6,
+        toggle: { on: prefs.refs.policy, onToggle: () => ov.toggleRef('policy') },
+      });
+    }
+    if (SHOW_52W_IN_STRIP) {
+      out.push(
+        { key: 'w52h', label: READOUT_LABEL.rangeHigh, value: fmtU(stats52.max), chars: chU, drop: 6 },
+        { key: 'w52l', label: READOUT_LABEL.rangeLow, value: fmtU(stats52.min), chars: chU, drop: 6 },
+        { key: 'w52a', label: READOUT_LABEL.rangeAvg, value: fmtU(stats52.avg), chars: chU, drop: 6 },
+      );
+    }
+    return out;
+  }, [view, row, stripPoint, hue, maWindows, prefs, refs, drawn, ov, stats52]);
+
   /* 차트가 먹는 선들. `axis` 가 어느 쪽인지 말한다: 같은 단위면 셋 다 종목
    * 축(오른쪽), 다른 단위면 기준선 둘만 왼쪽 %축으로 간다. */
   const chartLines = useMemo<TimeLine[]>(() => {
@@ -649,6 +738,9 @@ export function PreviewPane({
         color: (pal) => pal.resolve(hue),
         area: 'dots',
         format: fmtY,
+        /* 구슬은 주선에만 — 기준선 둘과 MA 다섯까지 점을 띄우면 커서가 무엇을
+           읽는지 그림이 말해 주지 못한다(`series.ts::addLine` 의 그 주석). */
+        beacon: true,
       },
       /* 두 기준선은 **같은 위계의 두 색**이다 [OWNER 2026-08-18, 3차 확정 —
          네이버 MA 방식]. 색·판정 이력은 `theme/direction.css` 의 토큰 주석에
@@ -763,6 +855,45 @@ export function PreviewPane({
     return out;
   }, [curve]);
 
+  /** 커브 리드아웃의 칸들 — 그려진 선과 **같은 둘**이다(오늘·전일). 종전에는
+   *  카드가 값을 적고 아래 `RefKey` 줄이 이름을 적어 둘로 나뉘어 있었다. 한
+   *  칸에 견본·이름·값이 같이 서면 그럴 수가 없다. */
+  const curveSlots = useMemo<StripSlot[]>(() => {
+    if (!curve) return [];
+    /* 쉴 때는 **맨 오른쪽 노드**를 읽는다 — 시계열 차트가 쉴 때 마지막 봉을
+       읽는 것과 같은 규칙이다(그림의 오른쪽 끝). 커브에는 «마지막 날» 이 없고
+       «가장 긴 만기» 가 그 자리다. 줄이 빈 채로 서 있지 않게 하는 것이 이
+       규칙의 요점이고, 그래야 행을 안 고른 첫 화면이 em 대시 줄로 열리지
+       않는다. */
+    const i =
+      hoverIdx != null && hoverIdx >= 0 && hoverIdx < curve.tenors.length
+        ? hoverIdx
+        : curve.tenors.length - 1;
+    const at = (a: readonly (number | null)[]) => fmtLevel(a[i] ?? null, '%');
+    /* 자리는 커브 전체의 고·저로 잰다 — 커브는 짧아서(노드 십수 개) 매 렌더
+       훑어도 공짜이고, 그래야 노드를 옮겨도 칸이 안 밀린다. */
+    const ch = slotChars(
+      (v) => fmtLevel(v, '%'),
+      ...curve.now,
+      ...curve.prev,
+    );
+    const out: StripSlot[] = [
+      { key: 'NOW', label: '오늘', value: at(curve.now), color: 'var(--color-fg)', chars: ch },
+    ];
+    if (curve.prev.some((v) => v != null)) {
+      out.push({
+        key: 'PREV',
+        label: '전일',
+        value: at(curve.prev),
+        color: 'var(--color-fgMuted)',
+        opacity: 0.5,
+        chars: ch,
+        drop: 1,
+      });
+    }
+    return out;
+  }, [curve, hoverIdx]);
+
   /* ── 아무것도 안 고른 상태 = **IRS 파 커브** ────────────────────────────────
      빈 pane 에 "행을 고르세요" 라고 적어두는 대신 커브를 그린다. 커브 보기가 이
      제품의 1순위이고, 그건 탭과 무관하게 같은 커브다 [v1 OWNER, pass M].
@@ -798,6 +929,19 @@ export function PreviewPane({
             {curve.prevDate ? ` · 전일 ${curve.prevDate}` : ''}
           </TextCaption>
         </VStack>
+        {/* 커브의 리드아웃 줄. 히스토리 차트와 **같은 부품**이고, 만기가 날짜
+            자리에 온다(v1 `ui/CurveView.tsx` 이래 두 표면이 같은 질문에 답한다:
+            «커서 밑의 숫자는 얼마인가»). 52주 세 줄은 여기서도 빠졌다 —
+            커브의 고·저·평균은 아래 두 선과 축이 이미 말한다. */}
+        <ChartReadoutStrip
+          date={curve.tenors[curveIdx ?? curve.tenors.length - 1] ?? curve.asof}
+          slots={curveSlots}
+          change={{
+            label: READOUT_LABEL.dailyChange,
+            text: fmtDeltaUnit(curve.changeBp[curveIdx ?? curve.tenors.length - 1], 'bp'),
+            v: curve.changeBp[curveIdx ?? curve.tenors.length - 1],
+          }}
+        />
         <Box
           ref={fill ? plotRef : undefined}
           className="sr-plot"
@@ -805,7 +949,6 @@ export function PreviewPane({
           flexGrow={fill ? 1 : undefined}
           flexBasis={fill ? 0 : undefined}
           minHeight={0}
-          onMouseMove={onPlotMove}
           onMouseLeave={onPlotLeave}
         >
           <CurveChart
@@ -817,26 +960,7 @@ export function PreviewPane({
             onHoverIndex={setCurveHover}
             hoverLabel={curveScrubLabel}
           />
-          {/* 노드의 리드아웃 — 히스토리 차트와 **같은 카드**다. 만기가 날짜
-              자리에 오고 나머지 다섯 줄은 같다(v1 `ui/CurveView.tsx` 와 동일). */}
-          {curveIdx != null ? (
-            <ReadoutCard title={curve.tenors[curveIdx]}>
-              <ReadoutLevel k={READOUT_LABEL.level} v={curve.now[curveIdx]} unit="%" />
-              <ReadoutLevel k={READOUT_LABEL.rangeHigh} v={curve.high[curveIdx]} unit="%" />
-              <ReadoutLevel k={READOUT_LABEL.rangeLow} v={curve.low[curveIdx]} unit="%" />
-              <ReadoutLevel k={READOUT_LABEL.rangeAvg} v={curve.avg[curveIdx]} unit="%" />
-              <ReadoutChange
-                k={READOUT_LABEL.dailyChange}
-                v={curve.changeBp[curveIdx]}
-                unit="bp"
-              />
-            </ReadoutCard>
-          ) : null}
         </Box>
-        <HStack gap={2} paddingX={2} paddingBottom={1} flexWrap="wrap">
-          <RefKey label={curve.asof} opacity={1} />
-          {curve.prev.some((v) => v != null) ? <RefKey label="전일" opacity={0.5} /> : null}
-        </HStack>
       </VStack>
     );
   }
@@ -929,8 +1053,13 @@ export function PreviewPane({
               noWrap
               className={dir === 'up' ? 'sr-up' : dir === 'down' ? 'sr-down' : 'sr-flat'}
             >
-              {dir === 'up' ? '↗' : dir === 'down' ? '↘' : '→'} {fmtDelta(view.net, row.unit)}
-              {u}{' '}
+              {/* **변화는 bp 다** — 레벨의 단위가 아니다 [2026-09-21 수리].
+                  종전에는 `fmtDelta(net, '%') + unitSuffix('%')` 라 같은 양을
+                  카드는 `+2.2`(bp), 이 줄은 `+0.2%` 로 말하고 있었다. 규약은
+                  백엔드·표·표 머리 셋에 이미 박혀 있었고(`deltaUnitSuffix`
+                  머리글) 이 줄만 밖에 있었다. */}
+              {dir === 'up' ? '↗' : dir === 'down' ? '↘' : '→'}{' '}
+              {fmtDeltaUnit(toDeltaUnit(view.net, row.unit), row.unit)}{' '}
               {/* 확대 중이면 이 변화는 **보이는 창**의 변화지 「1Y」의 변화가
                   아니다. 구간 이름을 그대로 두면 숫자와 라벨이 다른 기간을
                   말하게 되고, 그건 이 pane 이 처음부터 막으려던 실패다. */}
@@ -941,6 +1070,27 @@ export function PreviewPane({
           ) : null}
         </HStack>
       </VStack>
+
+      {/* ── 리드아웃 줄 [OWNER 2026-09-21] ───────────────────────────────────
+          그림 **밖**에, 그림 **위**에, 고정 높이로. 떠 있던 카드가 그림을
+          가린다는 트레이더 보고에서 나온 자리다(`ui/ChartReadoutStrip.tsx`
+          머리글에 경위). 이 줄이 종전의 카드와 아래 범례 줄 **둘을 대신한다** —
+          견본·이름·값·토글이 한 칸에 선다.
+
+          52주 최고·최저·평균은 여기 없다 [OWNER 2026-09-21]: 표의 52주 열과
+          히어로 밑 통계가 이미 적고 있어서, 한 줄짜리 리드아웃이 그걸 또 지면
+          정작 그려진 선들의 값이 밀려난다. 되살리려면 `SHOW_52W_IN_STRIP`. */}
+      {view && row ? (
+        <ChartReadoutStrip
+          date={stripPoint.t}
+          slots={stripSlots}
+          change={{
+            label: READOUT_LABEL.dailyChange,
+            text: fmtDeltaUnit(stripPoint.d, row.unit),
+            v: stripPoint.d,
+          }}
+        />
+      ) : null}
 
       {/* ── chart ────────────────────────────────────────────────────────────
           Reference chrome, matched: no gridlines, y labels on the RIGHT, the
@@ -962,7 +1112,10 @@ export function PreviewPane({
            눌림이 필요하면(fill) 차트도 잰 값을 따라 주니 shrink 를 허용한다. */
         flexShrink={fill ? undefined : 0}
         minHeight={0}
-        onMouseMove={onPlotMove}
+        /* `onMouseMove` 가 없어졌다 — 카드 자리를 CSS 변수에 적던 배선이고,
+           스트립은 자리가 고정이라 잴 것이 없다(`placeReadout` 은 남은 열네
+           카드가 계속 쓴다). 떠날 때 인덱스를 비우는 것은 남는다: 커서가
+           나가면 스트립이 마지막 봉으로 돌아가야 한다. */
         onMouseLeave={onPlotLeave}
         /* ── 차트 클릭 = 백테스트 [v1 계약 복원, OWNER 2026-08-18] ──────────
            v1 은 차트 블록 전체가 role="button" 이었고, 클릭하면 그 행 +
@@ -1008,120 +1161,7 @@ export function PreviewPane({
         ) : (
           <Box height={chartH} />
         )}
-        {/* 커서 아래 점의 리드아웃 [OWNER 2026-08-14: "패널에서는 날짜, 레벨,
-            52주 최고·최저·평균, CD91 금리가 나와야 함"].
-
-            52주 세 줄은 **이 구간의 통계가 아니다** — 서버가 낸 최근 252관측이고,
-            1M 으로 좁혀도 안 바뀐다(v1 과 같은 규칙). 차트가 보여주는 구간의
-            고저는 히어로 밑 「이 구간」 열이 따로 말한다.
-            CD 91일은 **그려진 선이 있을 때만** 나온다 — 없는 선의 값을 카드가
-            읽는 일은 없다(범례가 지는 규칙과 같다). */}
-        {hoverPoint ? (
-          <ReadoutCard title={hoverPoint.t}>
-            <ReadoutLevel k={READOUT_LABEL.level} v={hoverPoint.v} unit={row.unit} />
-            <ReadoutLevel k={READOUT_LABEL.rangeHigh} v={stats52.max} unit={row.unit} />
-            <ReadoutLevel k={READOUT_LABEL.rangeLow} v={stats52.min} unit={row.unit} />
-            <ReadoutLevel k={READOUT_LABEL.rangeAvg} v={stats52.avg} unit={row.unit} />
-            {drawn?.cd ? (
-              <ReadoutLevel k={READOUT_LABEL.cd91} v={drawn.cd[hoverPoint.i]} unit="%" />
-            ) : null}
-            {/* 이동평균 — **켠 것만** [OWNER 2026-08-26: "MA값도 넣어줘야지"].
-                끈 창의 값을 적으면 카드가 화면에 없는 선을 읽는 셈이다(기준선이
-                «그려진 것만» 이름을 얻는 그 규칙과 같다).
-
-                값의 출처가 선의 출처와 **같다**: 둘 다 `pt.ma[k]` 이고 `k` 는
-                서버 목록의 첨자다. 그래서 카드와 선이 다른 수를 말할 수 없다.
-                스크러버가 MA 를 안 짚는 대신 값은 여기가 진다. */}
-            {maWindows.map((w, k) =>
-              prefs.shown.includes(w) ? (
-                <ReadoutLevel
-                  key={maSeriesId(w)}
-                  k={`MA${w}`}
-                  v={hoverPoint.ma?.[k]}
-                  unit={row.unit}
-                />
-              ) : null,
-            )}
-            <ReadoutChange
-              k={READOUT_LABEL.dailyChange}
-              v={hoverPoint.d}
-              unit={row.unit}
-            />
-          </ReadoutCard>
-        ) : null}
       </Box>
-
-      {/* ── 기준선 범례 ───────────────────────────────────────────────────────
-          한 줄, 그리고 **실제로 그려진 것만** 이름을 얻는다. 늘 두 이름을 찍으면
-          CD 를 못 받아온 날 화면이 없는 선을 가리킨다. 범례가 없다 = 기준선이
-          없다, 이고 그건 bp·ratio 차트에서 정상이다(`referenceMode`). */}
-      {refs || maWindows.length ? (
-        <HStack gap={2} paddingX={2} paddingBottom={1} flexWrap="wrap">
-          {/* 기준선도 **누르는 것**이다 [OWNER 2026-08-26 — "기준금리랑 CD금리도
-              MA처럼 껏다 켰다 가능하게"]. MA 칩과 같은 부품·같은 문법이라 한 줄에
-              섰을 때 두 어휘가 안 생긴다.
-
-              **값이 있을 때만 칩이 선다** — 없는 것은 끌 수도 없어야 한다. 그게
-              이 자리의 원래 규칙이기도 하다(«범례가 없다 = 기준선이 없다»).
-
-              색은 **고르는 대상이 아니다**: 두 색은 오너가 3차까지 보고 확정한
-              값이라(`direction.css`) 여기서 바뀌지 않는다. MA 와 다른 점이 그
-              하나다. */}
-          {refs?.cd ? (
-            <RefChip
-              label="CD 91일"
-              color="var(--sr-ref-cd)"
-              on={prefs.refs.cd}
-              onToggle={() => ov.toggleRef('cd')}
-            />
-          ) : null}
-          {refs?.policy ? (
-            <RefChip
-              label="기준금리"
-              color="var(--sr-ref-policy)"
-              on={prefs.refs.policy}
-              onToggle={() => ov.toggleRef('policy')}
-            />
-          ) : null}
-          {/* MA 범례는 **누르는 것**이다 [OWNER 2026-08-26 — "당연히 껏다 켰다
-              가능하게"]. 차트 범례를 눌러 계열을 끄는 것은 어느 차트 제품에나
-              있는 관례라 새 어휘가 아니고, 무엇보다 «지금 그려진 것» 과 «끄는
-              손잡이» 가 한 자리에 있으면 둘이 갈릴 수가 없다.
-
-              CDS `Chip` — 이 리포가 이미 여덟 곳에서 쓰는 부품이다. `active` 가
-              켜진 상태를 대비로 말하고, 견본(색 막대)이 **실제로 그려진 색**을
-              그대로 든다. 끈 것은 견본이 흐려져 «있지만 지금은 안 그린다» 가
-              읽힌다. 색은 Setting 에서 바꾼다. */}
-          {maWindows.map((w, k) => {
-            const on = prefs.shown.includes(w);
-            return (
-              <Chip
-                key={maSeriesId(w)}
-                size="xs"
-                className="sr-chip sr-ctlfont"
-                accessibilityLabel={`MA${w} ${on ? '끄기' : '켜기'}`}
-                /* 견본은 **그려진 선 그대로**다 — `RefKey` 가 기준선에 대해 지는
-                   그 규칙이고, 여기서는 `.sr-casedash`(시뮬 케이스 칩의 그 부품)
-                   가 같은 일을 한다. 끈 것은 흐려져 «있지만 지금은 안 그린다» 가
-                   읽힌다. */
-                start={
-                  <span
-                    className="sr-casedash"
-                    style={{
-                      background: maColorVar(maColorOf(prefs, w)),
-                      opacity: on ? (MA_INK[k]?.opacity ?? 0.6) : 0.3,
-                    }}
-                  />
-                }
-                active={on}
-                onClick={() => ov.toggle(w)}
-              >
-                {`MA${w}`}
-              </Chip>
-            );
-          })}
-        </HStack>
-      ) : null}
 
       {/* ── stat columns ─────────────────────────────────────────────────────
           `chartOnly` 면 통째로 빠진다 — 확대 창이 이걸 서랍에 따로 그린다. */}

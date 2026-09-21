@@ -54,6 +54,8 @@ export type ScaleLine = {
   /** 점선으로. CDS `Line type="dotted"` 의 자리 — «지난 판» 처럼 뒤로 물러난
    *  계열이 쓴다. */
   dash?: boolean;
+  /** 커서 구슬 — **주선 하나만** 켠다(`series.ts::addLine` 의 그 주석). */
+  beacon?: boolean;
 };
 
 /** 가로로 눕는 상수선 — CDS `ReferenceLine dataY={…}` 의 자리. */
@@ -162,6 +164,9 @@ export function ScaleChart({
           area: ln.area,
           areaColor: src.lines[i]?.areaColor ?? ln.areaColor,
           format: src.tickFormat,
+          /* 구슬은 주선 하나만 — `TimeChart` 와 같은 규약이고 근거도 같다
+             (`series.ts::addLine` 의 `crosshairMarkerVisible` 주석). */
+          beacon: ln.beacon ?? (sLines.some((l) => l.beacon) ? false : i === 0),
           data: fillWhitespace(xs, (x) => valueAt.get(x), pad) as (
             | LineData<number>
             | WhitespaceData<number>

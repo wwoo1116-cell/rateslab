@@ -70,8 +70,9 @@ ui-ux-pro-max 병행» 규칙은 폐기한다.
 | 변화 열 머리 | `1D`/`MTD`/`YTD`(BASIS_LABEL) | `table/InstrumentTable.tsx` |
 | 변화 셀 | **네 부품 한 벌**: `tintStyle` 배경 + `directionClass` + `directionGlyph`(↗↘) + `unsignedDelta`(무부호) | `table/tint.ts` |
 | 범위 위치 | `.sr-track`/`.sr-track-mark`(폭은 바깥이 준다) | `table/InstrumentTable.tsx`·`lib/range.ts` |
-| 사실 스트립 | `StatColumn`+`Stat`, 감싸는 `.sr-stats` — 차트 **아래** | `ui/Stat.tsx` |
-| 커서 리드아웃 | `ReadoutCard`+`ReadoutLevel`/`ReadoutMoney`+`placeReadout`, 상자는 `.sr-plot` | `ui/ReadoutCard.tsx` |
+| 사실 스트립 | `StatColumn`+`Stat`, 감싸는 `.sr-stats` — 차트 **아래**(커서와 무관한 통계) | `ui/Stat.tsx` |
+| 커서 리드아웃 | **그림 밖 한 줄** `ChartReadoutStrip`(값+견본+토글, 고정 높이) — 그림 **위**에 [OWNER 2026-09-21] | `ui/ChartReadoutStrip.tsx` |
+| 〃 (옛 판) | 떠 있는 `ReadoutCard`+`placeReadout`, 상자는 `.sr-plot` — **새 표면에는 쓰지 말 것**(그림을 가린다). 열네 자리가 아직 쓰고 은퇴는 표면마다 따로 본다 | `ui/ReadoutCard.tsx` |
 | 시계열 차트 | `TimeChart` — x = 날짜 | `chart/TimeChart.tsx` |
 | 만기 커브 | `CurveChart` — x = **√만기**(선형 월수는 짧은 쪽을 뭉갠다) | `chart/CurveChart.tsx` |
 | 숫자축 차트 | `NumericChart` — x = 경과일·분기 | `chart/NumericChart.tsx` |

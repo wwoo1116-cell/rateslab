@@ -131,12 +131,23 @@ describe('④ 껏다 켰다 [OWNER 2026-08-26]', () => {
     expect(pane).not.toMatch(/maShown\.map\(\(w, k\)/);
   });
 
-  it('범례가 손잡이다 — 켠 상태가 칩에 실린다', () => {
-    expect(pane).toMatch(/onClick=\{\(\) => ov\.toggle\(w\)\}/);
-    /* 9.16 에서 `invertColorScheme` 이 deprecate 되고 `active` 가 캐논이 됐다
-       (제거 예정 v11). 9.22 승급과 함께 개명했다. */
-    expect(pane).toMatch(/active=\{on\}/);
+  it('범례가 손잡이다 — 켠 상태가 칸에 실린다', () => {
+    /* **재는 자리가 옮겨졌다** [2026-09-21]: 그림 아래의 `Chip` 범례 줄이
+       그림 **위**의 리드아웃 줄로 흡수됐다(떠 있던 카드가 그림을 가린다는
+       트레이더 보고에서 나온 이동 — `ui/ChartReadoutStrip.tsx` 머리글).
+       규칙은 그대로다: 켠 상태와 끄는 손잡이가 **그려진 것과 같은 자리**에
+       있어야 둘이 갈리지 않는다. 이제 그 자리가 칩이 아니라 칸이다. */
+    expect(pane).toMatch(/toggle: \{ on, onToggle: \(\) => ov\.toggle\(w\) \}/);
     expect(pane).not.toMatch(/invertColorScheme/);
+  });
+
+  it('끈 계열도 **칸은 남는다** — 좁은 창에서 켤 길이 없어지면 안 된다', () => {
+    /* [OWNER 2026-09-21] 좁아질 때 내려놓는 것은 **값뿐**이다. 칸을 통째로
+       떨구면 이 줄이 겸하는 범례가 같이 사라져, 좁은 창에서 그 계열을 켜고
+       끌 수 없게 된다. CSS 가 값(`.sr-strip-v`)만 감춘다. */
+    const css = read('src/theme/type.css');
+    expect(css).toMatch(/\.sr-strip-slot\[data-drop='\d'\] \.sr-strip-v \{\s*display: none/);
+    expect(css).not.toMatch(/\.sr-strip-slot\[data-drop='\d'\] \{\s*display: none/);
   });
 
   it('취향은 `state/overlays.ts` 한 곳이다 — Setting 과 차트가 같은 저장소를 읽는다', () => {
@@ -146,10 +157,12 @@ describe('④ 껏다 켰다 [OWNER 2026-08-26]', () => {
   });
 
   it('리드아웃도 **켠 것만** 적는다 — 없는 선의 값을 읽지 않는다', () => {
-    const card = pane.slice(pane.indexOf('<ReadoutCard title={hoverPoint.t}>'));
-    const block = card.slice(0, card.indexOf('</ReadoutCard>'));
+    const from = pane.indexOf('const stripSlots = useMemo<StripSlot[]>');
+    const block = pane.slice(from, pane.indexOf('return out;', from));
     expect(block).toMatch(/prefs\.shown\.includes\(w\)/);
-    expect(block).toMatch(/v=\{hoverPoint\.ma\?\.\[k\]\}/);
+    /* 값은 **서버 목록의 첨자**로 읽는다 — 켠 것만 거른 배열의 첨자를 쓰면
+       다른 창의 평균을 적게 된다. 끈 창은 빈 글자이고 이름·견본만 남는다. */
+    expect(block).toMatch(/stripPoint\.ma\?\.\[k\]/);
   });
 });
 
@@ -179,9 +192,11 @@ describe('⑤ 잉크 위계는 색이 생겨도 남는다', () => {
   it('스크러버는 MA 를 안 짚는다 — 값은 리드아웃이 진다', () => {
     /* 캔버스 판에는 «짚을 계열» 목록이 없다 — 크로스헤어는 자리를 주고 값은
        리드아웃 카드가 읽는다. 그래서 재는 것은 «MA 가 리드아웃의 주인공이
-       아니다» 이고, 그건 카드가 서버 첨자(`hoverPoint.ma?.[k]`)로만 MA 를
-       읽는 것으로 지켜진다. */
-    expect(pane).toMatch(/hoverPoint\.ma\?\.\[k\]/);
+       아니다» 이고, 그건 리드아웃이 서버 첨자(`stripPoint.ma?.[k]`)로만 MA 를
+       읽는 것으로 지켜진다. 구슬 쪽은 이제 손잡이가 생겼다 — 주선만
+       `beacon: true` 다(`chart/series.ts::addLine`). */
+    expect(pane).toMatch(/beacon: true,/);
+    expect(pane).toMatch(/stripPoint\.ma\?\.\[k\]/);
   });
 
   it('종목 선이 MA **아래**가 아니다 — 잉크의 위계', () => {
@@ -210,8 +225,8 @@ describe('⑥ 기준선도 껏다 켰다 [OWNER 2026-08-26]', () => {
       /id: CD_LINE,[\s\S]{0,30}values: drawn\.cd/,
       /id: BASE_LINE,[\s\S]{0,30}values: drawn\.policy/,
       /* 스크러버의 «짚을 계열» 목록은 캔버스 판에 없다 — 크로스헤어는 자리를
-         주고 값은 리드아웃이 읽는다. 그 두 자리는 위·아래 정규식이 잰다. */
-      /v=\{drawn\.cd\[hoverPoint\.i\]\}/,
+         주고 값은 리드아웃 줄이 읽는다. 그 줄도 `drawn` 을 지난다. */
+      /value: drawn\?\.cd \? fmtLevel\(drawn\.cd\[i\], '%'\)/,
     ]) {
       expect(pane).toMatch(re);
     }
@@ -221,9 +236,14 @@ describe('⑥ 기준선도 껏다 켰다 [OWNER 2026-08-26]', () => {
     expect(pane).toMatch(/const pctAxis = !!\(drawn && \(drawn\.cd \|\| drawn\.policy\)\)/);
   });
 
-  it('칩은 **값이 있을 때만** 선다', () => {
-    const legend = pane.slice(pane.indexOf('{refs?.cd ? ('));
-    expect(legend.slice(0, 200)).toMatch(/<RefChip/);
+  it('칸은 **값이 있을 때만** 선다', () => {
+    /* 없는 기준선은 끌 수도 없어야 한다. 칸이 서는가는 `refs`(값이 있는가)를
+       보고, 값을 적는가는 `drawn`(켜져 있는가)을 본다 — 위 시험의 그 구별이
+       리드아웃 줄에서도 그대로다. */
+    const from = pane.indexOf('const stripSlots = useMemo<StripSlot[]>');
+    const block = pane.slice(from, pane.indexOf('return out;', from));
+    expect(block).toMatch(/if \(refs\?\.cd\) \{/);
+    expect(block).toMatch(/if \(refs\?\.policy\) \{/);
   });
 
   it('기준선 색은 **고르는 대상이 아니다** — 저장소에 색 항목이 없다', () => {

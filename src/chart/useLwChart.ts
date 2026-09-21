@@ -105,6 +105,31 @@ function isoTick(time: unknown): string {
   return String(time);
 }
 
+/**
+ * 값 축이 **크로스헤어 라벨을 담기 위해** 최소한 가져야 하는 폭.
+ *
+ * `canonOptions` 의 `horzLine` 주석에 적은 라이브러리 성질(라벨은 그리면서 폭은
+ * 안 잡는다)의 대가다. 손으로 고른 수가 아니라 라이브러리 자신의 산술을
+ * 글자크기 11 로 푼 값이다(번들 실측, 5.2.1):
+ *
+ *   borderSize      1      `RendererConstants.BorderSize`        :289
+ *   tickLength      5      `RendererConstants.TickLength`        :290
+ *   paddingInner    4.583  `fontSize/12 * tickLength`            :314
+ *   paddingOuter    4.583  같은 식                                :315
+ *   LabelOffset     5      `_optimalWidth` 의 상수                :9171
+ *   ─────────────────────
+ *   크롬 합계      20.17
+ *   글자 «3.2450»  40.5    6자 × 6.76px (등폭 14px=8.60px 실측의 11/14)
+ *   ─────────────────────
+ *   ceil          → 61
+ *
+ * 이 수가 **바닥이라는 것**이 중요하다(`Math.max(optimalWidth, minimumWidth)`,
+ * 번들 :11020). 돈 축처럼 자기 눈금이 이미 이보다 넓은 차트에서는 아무 일도
+ * 안 한다. 실제로 무는 자리는 눈금 글자가 여섯 자보다 짧은 차트뿐이고
+ * (bp 축의 «−12.5» ≈ 54), 거기서 7px 를 더 가져간다.
+ */
+export const CROSSHAIR_LABEL_MIN_W = 61;
+
 export function canonOptions(p: LwPalette): DeepPartial<ChartOptions> {
   return {
     layout: {
@@ -150,12 +175,44 @@ export function canonOptions(p: LwPalette): DeepPartial<ChartOptions> {
          그냥 두면 **차트만 다른 말을 쓴다**(실측 2026-08-26 라이브). */
       tickMarkFormatter: isoTick,
     },
+    /* 크로스헤어 라벨의 글자. 날짜는 **축 눈금과 같은 함수**를 지난다 —
+       `tickMarkFormatter`(눈금)와 `localization.timeFormatter`(크로스헤어
+       라벨)는 **별개 손잡이**라, 한쪽만 주면 눈금은 ISO 인데 크로스헤어는
+       로케일 글자(「9월 18일」)가 된다. 한 차트가 두 날짜 문법을 쓰는 실패는
+       이 파일이 `tickMarkFormatter` 자리에서 이미 한 번 고친 것이다. */
+    localization: { timeFormatter: isoTick },
     crosshair: {
       /* 자석 — 커서가 값에 붙는다. 이 제품의 리드아웃은 «그 점의 값» 을
-         읽어 주므로 자유 크로스헤어면 카드의 숫자와 커서가 어긋난다. */
+         읽어 주므로 자유 크로스헤어면 스트립의 숫자와 커서가 어긋난다. */
       mode: CrosshairMode.Magnet,
-      vertLine: { color: p.line, width: 1, style: LineStyle.Solid, labelVisible: false },
-      horzLine: { visible: false, labelVisible: false },
+      /* ── 축 라벨은 **켠다** [2026-09-21, 트레이더 보고] ────────────────────
+         종전에는 둘 다 꺼 두고 떠 있는 카드가 날짜와 레벨을 대신 적었다. 그
+         카드가 그림을 가린다는 것이 이번 보고의 내용이고, 카드를 걷으면 «커서가
+         지금 어느 날짜·어느 눈금에 있나» 를 말할 것이 라이브러리의 축 라벨밖에
+         없다. 이건 캔버스가 자기 좌표로 그리는 것이라 우리가 DOM 을 그림 안에
+         띄우는 일이 없다 — 가림이 구조적으로 불가능하다.
+
+         서식은 계열이 이미 진다(`series.ts::addLine` 의 `priceFormat` custom).
+         가격축 라벨은 그 축에 붙은 계열의 서식을 그대로 쓰므로 bp 축과 % 축이
+         각자 자기 서식으로 찍힌다 — 여기서 서식을 한 벌 더 만들지 않는다. */
+      vertLine: { color: p.line, width: 1, style: LineStyle.Solid, labelVisible: true },
+      /**
+       * **가로선은 안 그리고 라벨만 켠다** — 그런데 그러면 축이 그 라벨만큼
+       * 안 넓어진다.
+       *
+       * 라이브러리 안에 판정이 둘이고 서로 다르다(실측, 5.2.1 번들):
+       *
+       *   라벨을 **그리는** 쪽   `if (!options.labelVisible) return;`      :1042
+       *   축 **폭을 잡는** 쪽    `horzLine.visible && horzLine.labelVisible` :9041
+       *                          (`PriceAxisWidget._optimalWidth` 에서 호출 :9164)
+       *
+       * 즉 `visible:false, labelVisible:true` 면 **폭을 안 넓힌 축에 라벨이
+       * 그려져 잘린다.** 가로선을 켜서 폭을 얻는 길도 있지만, 그림을 가로로
+       * 가로지르는 선은 이번에 없애려는 «그림 위에 덧대는 것» 과 같은 계열이다
+       * [OWNER 2026-09-21]. 그래서 폭은 우리가 잡는다 — `TimeChart` 가
+       * `CROSSHAIR_LABEL_MIN_W` 로 `minimumWidth` 에 실어 보낸다.
+       */
+      horzLine: { visible: false, labelVisible: true },
     },
     /* 구간은 이 제품이 정한다 — 위 머리 주석. */
     handleScroll: false,

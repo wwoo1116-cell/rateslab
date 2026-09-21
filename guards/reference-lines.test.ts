@@ -253,16 +253,22 @@ describe('기준선은 같은 위계의 두 색이다 [OWNER 2026-08-18, 3차 �
 
        2026-08-26 부터 이 범례 항목은 **누를 수 있다**(`RefChip`) [OWNER —
        "기준금리랑 CD금리도 MA처럼 껏다 켰다 가능하게"]. 재는 명제는 그대로다:
-       각자 자기 선의 색을 입고, 둘이 같은 부품·같은 prop 으로 선다. */
-    expect(pane).toMatch(/<RefChip\s+label="CD 91일"\s+color="var\(--sr-ref-cd\)"/);
-    expect(pane).toMatch(/<RefChip\s+label="기준금리"\s+color="var\(--sr-ref-policy\)"/);
-    const chips = [...pane.matchAll(/<RefChip\s+label="(?:CD 91일|기준금리)"/g)];
-    expect(chips).toHaveLength(2);
-    /* 불투명도는 이제 부품 안에 **한 번만** 적힌다 — 두 항목이 그것을 나눠 쓰므로
-       갈릴 자리가 아예 없다(전에는 호출부마다 적어서 갈릴 수 있었다). */
-    const comp = pane.slice(pane.indexOf('export function RefChip'));
-    const ops = [...comp.slice(0, 900).matchAll(/opacity: on \? ([\d.]+) : ([\d.]+)/g)];
-    expect(ops).toHaveLength(1);
+       각자 자기 선의 색을 입고, 둘이 같은 부품·같은 prop 으로 선다.
+
+       2026-09-21 부터 그 범례는 그림 **위**의 리드아웃 줄에 흡수됐다
+       (`ui/ChartReadoutStrip.tsx` — 떠 있던 카드가 그림을 가린다는 보고에서
+       나온 이동). 부품이 `RefChip` 에서 스트립의 «칸» 으로 바뀌었을 뿐,
+       재는 명제는 한 글자도 안 바뀐다: 각자 자기 선의 색을 입고, 둘이 같은
+       모양·같은 prop 으로 서며, 점선 견본은 없다. */
+    const from = pane.indexOf('const stripSlots = useMemo<StripSlot[]>');
+    const block = pane.slice(from, pane.indexOf('return out;', from));
+    expect(block).toMatch(/label: 'CD 91일',[\s\S]{0,120}color: 'var\(--sr-ref-cd\)'/);
+    expect(block).toMatch(/label: '기준금리',[\s\S]{0,120}color: 'var\(--sr-ref-policy\)'/);
+    /* 취급이 같다 — 둘 다 같은 잉크로 선다. 갈리면 ②의 불평등이 범례에서
+       돌아온다(전에는 `RefChip` 안에 한 번만 적혀 갈릴 자리가 없었고, 지금은
+       칸 둘이 같은 수를 적으므로 그 둘이 같은지를 잰다). */
+    const ops = [...block.matchAll(/opacity: 0\.9,/g)];
+    expect(ops).toHaveLength(2);
     expect(pane).not.toMatch(/dashed/);
   });
 

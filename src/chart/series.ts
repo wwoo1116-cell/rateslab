@@ -44,6 +44,9 @@ export type ChartLine<H> = {
    * 같은 서식으로 찍힌다. 가격축 라벨은 거기 붙은 계열의 서식을 따른다.
    */
   format?: (v: number) => string;
+  /** 커서가 이 선 위에 **구슬**을 띄우는가. 기본은 안 띄운다 — 근거는
+   *  `addLine` 의 `crosshairMarkerVisible` 주석. 주선 하나만 켠다. */
+  beacon?: boolean;
 };
 
 export type PlacedLine<H> = {
@@ -64,9 +67,23 @@ export function addLine<H>(
     lineStyle: line.dash ? LineStyle.Dotted : LineStyle.Solid,
     lineType: line.step ? LineType.WithSteps : LineType.Simple,
     /* 마지막값 라벨과 가격선은 이 제품의 화면 문법에 없다 — 값은 리드아웃
-       카드와 사실 스트립이 읽어 준다. */
+       스트립과 사실 스트립이 읽어 준다. */
     priceLineVisible: false,
     lastValueVisible: false,
+    /**
+     * 커서 구슬은 **주선에만** [2026-09-21].
+     *
+     * 라이브러리 기본이 `true` 라(`typings.d.ts:501`) 그냥 두면 커서 밑에
+     * 계열 수만큼 점이 뜬다 — 종목 미리보기는 종목 + CD91 + 기준금리 + MA 다섯
+     * 이라 **최대 여덟 개**다. 그러면 커서가 무엇을 읽고 있는지 그림이 말해
+     * 주지 못한다.
+     *
+     * 이 판단은 CDS 판에 이미 있었다. 그때는 `Scrubber seriesIds` 로 짚을 계열을
+     * 명시했고(「기본은 전부라 유령 구슬」 — `lab/scenario/ModelChart.tsx:16`),
+     * 캔버스로 옮기면서 그 손잡이가 없어진 자리다. 다른 계열의 값은 그림이
+     * 아니라 리드아웃 스트립이 줄로 적는다.
+     */
+    crosshairMarkerVisible: line.beacon ?? false,
     priceScaleId: line.axis === 'aux' ? 'left' : 'right',
     priceFormat: line.format
       ? { type: 'custom', formatter: line.format, minMove: 10 ** -precision }

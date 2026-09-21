@@ -39,7 +39,7 @@ import {
   sameStrings,
   useStable,
 } from './stable';
-import { useLwChart } from './useLwChart';
+import { CROSSHAIR_LABEL_MIN_W, useLwChart } from './useLwChart';
 
 export type TimeLine = {
   id: string;
@@ -57,6 +57,8 @@ export type TimeLine = {
   axis?: LineAxis;
   /** 그 축의 눈금 글자. 축마다 다르므로 계열이 진다(`series.ts` 주석). */
   format?: (v: number) => string;
+  /** 커서 구슬 — **주선 하나만** 켠다(`series.ts::addLine` 의 그 주석). */
+  beacon?: boolean;
 };
 
 /** 세로선의 결 — 색을 직접 주지 않고 **뜻**을 준다(`theme/tint.ts` 의 규율).
@@ -186,7 +188,16 @@ export function TimeChart({
     if (!handle) return;
     const { chart } = handle;
     chart.applyOptions({
-      rightPriceScale: { minimumWidth: scaleWidth ?? 0 },
+      /* 바닥이 **둘**이고 큰 쪽이 이긴다 [2026-09-21]. 하나는 형제 차트와 폭을
+         맞추는 것(`scaleWidth`), 다른 하나는 크로스헤어 라벨이 잘리지 않게 하는
+         것(`CROSSHAIR_LABEL_MIN_W` — 그 수의 유래는 그 상수의 머리글).
+
+         둘을 따로 `applyOptions` 하면 **나중 것이 앞 것을 덮는다** — 같은 키에
+         쓰는 것이라 「합쳐진다」가 아니다. 한 줄에서 `Math.max` 로 합치는 이유가
+         그것이고, 이 리포가 쌓인 차트에서 이미 한 번 겪은 어긋남이다. */
+      rightPriceScale: {
+        minimumWidth: Math.max(scaleWidth ?? 0, CROSSHAIR_LABEL_MIN_W),
+      },
       timeScale: { visible: !hideTimeAxis },
     });
     const report = () => latest.current.onScaleWidth?.(chart.priceScale('right').width());
@@ -230,6 +241,10 @@ export function TimeChart({
           areaColor: src.lines[i]?.areaColor ?? ln.areaColor,
           axis: ln.axis,
           format: src.lines[i]?.format ?? ln.format,
+          /* 아무도 안 켰으면 **첫 줄**이 켠 것으로 친다. 이 리포의 모든 시계열
+             차트에서 첫 줄이 주선이고(`anchor` 도 그 규약을 쓴다), 그래야 아홉
+             호출부가 한 줄씩 더 적지 않아도 구슬이 하나 남는다. */
+          beacon: ln.beacon ?? (sLines.some((l) => l.beacon) ? false : i === 0),
           data: sDates.map((t, k) => {
             const v = ln.values[k];
             return (v == null ? { time: t as Time } : { time: t as Time, value: v }) as

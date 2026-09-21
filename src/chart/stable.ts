@@ -90,6 +90,7 @@ type LineShape = {
   step?: boolean;
   area?: string;
   axis?: string;
+  beacon?: boolean;
 };
 
 export function sameLines(
@@ -106,6 +107,8 @@ export function sameLines(
       x.step === y.step &&
       x.area === y.area &&
       x.axis === y.axis &&
+      /* 구슬도 «모양» 이다 — 빼 두면 주선이 바뀌어도 계열을 다시 안 세운다. */
+      x.beacon === y.beacon &&
       sameValues(x.values, y.values),
   );
 }

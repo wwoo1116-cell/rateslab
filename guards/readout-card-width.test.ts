@@ -35,10 +35,16 @@ import { stripComments } from './_source';
 const ROOT = path.resolve(__dirname, '..');
 const read = (p: string) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
-/** 카드를 띄우는 모든 표면. 새 표면이 생기면 여기 추가되어야 한다. */
+/** 카드를 띄우는 모든 표면. 새 표면이 생기면 여기 추가되어야 한다.
+ *
+ * **둘이 빠졌다** [2026-09-21]: 종목 차트(`ui/PreviewPane.tsx`)와 백테스트
+ * (`backtest/LinkedCharts.tsx`)는 떠 있는 카드에서 **그림 위의 고정 줄**로
+ * 옮겼다 — 카드가 그림을 가린다는 트레이더 보고 때문이고, 경위는
+ * `ui/ChartReadoutStrip.tsx` 머리글에 있다. 그 둘은
+ * `guards/chart-readout-strip.test.ts` 가 다른 계약으로 잰다.
+ *
+ * 카드 자체는 은퇴하지 않았다 — 아래 넷을 포함해 열네 자리가 아직 쓴다. */
 const SURFACES = [
-  'src/ui/PreviewPane.tsx',
-  'src/backtest/LinkedCharts.tsx',
   'src/sim/CurvePreview.tsx',
   'src/sim/ResultsWindow.tsx',
   'src/rv/RvPage.tsx',
@@ -122,10 +128,9 @@ describe('자리는 상태가 아니다 — 픽셀마다 리렌더하지 않는�
    * 때마다 컴포넌트 전체가 다시 그려진다. 인덱스는 상태가 맞다(카드의 **내용**이
    * 그걸 읽는다). 둘을 갈라 두는 것이 이 절의 전부다. */
 
-  /** 커서를 따라다니는 표면들. RvScatter 는 예외다 — 아래 참조. */
+  /** 커서를 따라다니는 표면들. RvScatter 는 예외다 — 아래 참조.
+   *  종목 차트와 백테스트는 고정 줄로 옮겨 **따라다니지 않는다**(위 주석). */
   const CURSOR_SURFACES = [
-    'src/ui/PreviewPane.tsx',
-    'src/backtest/LinkedCharts.tsx',
     'src/sim/CurvePreview.tsx',
     'src/sim/ResultsWindow.tsx',
     'src/rv/RvPage.tsx',
@@ -138,7 +143,7 @@ describe('자리는 상태가 아니다 — 픽셀마다 리렌더하지 않는�
     expect(offenders).toEqual([]);
   });
 
-  it('다섯 표면이 모두 placeReadout 을 지난다', () => {
+  it('세 표면이 모두 placeReadout 을 지난다', () => {
     const missing = CURSOR_SURFACES.filter((f) => !read(f).includes('placeReadout('));
     expect(missing).toEqual([]);
   });

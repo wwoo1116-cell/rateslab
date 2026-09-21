@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 
 import { DIRECTION_SURFACES, REJECTED_FOR_DIRECTION } from '../src/theme/sauronTheme';
 
+import { stripComments } from './_source';
+
 /**
  * The two direction hues are frozen. This guard does not police the hues — it
  * measures them against every surface v2 actually paints, in both schemes, and
@@ -73,11 +75,17 @@ function walk(dir: string, out: string[] = []): string[] {
 
 /** Every `background="…"` in v2's own components. Enumerated from the source, not
  * hand-listed — a screen that paints a surface nobody measured is the defect this
- * catches. */
+ * catches.
+ *
+ * **주석은 걷는다** [2026-09-21]. 이 리포의 주석은 근거를 적는 자리라 «이
+ * 토큰을 왜 안 쓰는가» 같은 문장에 `background="transparent"` 가 그대로
+ * 들어간다. 안 걷으면 가드가 «칠하지 않기로 한 것» 을 칠한 것으로 읽는다 —
+ * `guards/guard-hygiene.test.ts` 가 있는 이유가 바로 이 계열의 실패이고, 이
+ * 파일은 그 함수를 안 지나는 여섯 번째였다. */
 function paintedInSource(): string[] {
   const found = new Set<string>();
   for (const file of walk(path.join(ROOT, 'src'))) {
-    const body = fs.readFileSync(file, 'utf8');
+    const body = stripComments(fs.readFileSync(file, 'utf8'));
     for (const m of body.matchAll(/background=(?:"([^"]+)"|\{'([^']+)'\})/g)) {
       found.add(m[1] ?? m[2]);
     }
