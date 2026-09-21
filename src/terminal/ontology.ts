@@ -655,11 +655,15 @@ export function buildOntology(input: OntologyInput): Ontology {
  * 이름만 적고 **판단은 안 한다** — Strategy 섹션의 Mean Reversion 이 지키는
  * «측정이지 신호가 아니다» 를 여기서도 지킨다. */
 function bandLabel(m: MrRow): string {
-  if (m.state.kind === 'above') return '상단 밖';
-  if (m.state.kind === 'below') return '하단 밖';
-  if (m.state.kind === 'reentry-high') return '상단에서 재진입';
-  if (m.state.kind === 'reentry-low') return '하단에서 재진입';
-  return '밴드 안';
+  /* 낱말은 계획면의 `mr/planText.stateText` 와 **같은 어휘**다 [OWNER 2026-09-21 —
+     데스크 표준]: 밖 → 이탈 · 재진입 → 복귀 · 밴드 안 → 밴드 내. 터미널과 화면이
+     같은 사건을 두 낱말로 부르면 둘을 나란히 못 읽는다. 위 주석이 지키라는
+     **구분**(복귀 ≠ 계속 안)은 그대로다 — 바뀐 것은 이름뿐이다. */
+  if (m.state.kind === 'above') return '상단 이탈';
+  if (m.state.kind === 'below') return '하단 이탈';
+  if (m.state.kind === 'reentry-high') return '밴드 복귀 (상단)';
+  if (m.state.kind === 'reentry-low') return '밴드 복귀 (하단)';
+  return '밴드 내';
 }
 
 /** 레인의 출처. 백엔드 `src` 가 날짜별로 같은 값을 주므로 여기 한 벌만 둔다. */

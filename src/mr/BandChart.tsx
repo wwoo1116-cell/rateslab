@@ -5,7 +5,9 @@
  * RvPage 의 소형 차트와 같은 기계다: 공용 `TimeChart`(lightweight-charts —
  * CLAUDE.md 규칙 7 로 15차트가 캔버스로 옮겨 갔다. 종전 주석은 CDS
  * `CartesianChart` + `Scrubber` 를 말했는데 2026-08-26 이후 거짓이다),
- * 커서 리드아웃은 공용 `ReadoutCard`. 밴드가 상수가 아니라 **구르는 선**이라
+ * 커서 리드아웃은 **그림 위 한 줄**(`ChartReadoutStrip`) — 2026-09-21 에 떠 있는
+ * 카드에서 옮겼다. 이 차트가 160px 이라 카드(약 220px)가 **그림보다 컸고**, 커서를
+ * 따라다니며 최근 구간을 덮었다. 밴드가 상수가 아니라 **구르는 선**이라
  * 가격선(dataY 상수) 대신 시리즈 셋으로 선다. 밴드 선은 값보다 흐리다 —
  * 캔버스에는 불투명도 손잡이가 없어 색 자체를 흐리게 만든다(`palette.dim`).
  * 색을 더 시키지 않는 판단은 LinkedCharts 의 기준선과 같다(지각적 무게).
@@ -13,14 +15,14 @@
  * 숫자는 서버 것 그대로(§16) — 여기서 밴드를 다시 내지 않는다.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
-import { Box } from '@coinbase/cds-web/layout';
+import { Box, VStack } from '@coinbase/cds-web/layout';
 
 import { TimeChart, type TimeLine } from '@/chart/TimeChart';
 import type { Unit } from '@/lib/api';
 import { fmtLevel } from '@/lib/format';
-import { ReadoutCard, ReadoutLevel, placeReadout } from '@/ui/ReadoutCard';
+import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 
 import type { MrHistory } from './api';
 
@@ -31,8 +33,12 @@ export function BandChart({ history }: { history: MrHistory }) {
   const ma = history.points.map((p) => p.ma);
   const up = history.points.map((p) => p.up);
   const lo = history.points.map((p) => p.lo);
-  const cur = idx != null ? history.points[idx] : undefined;
   const unit = history.unit as Unit;
+  /* 커서가 그림 밖이면 **마지막 봉**을 읽는다 — 줄이 비어 서 있지 않게 하는 그
+     규칙(`ChartReadoutStrip` 머리). 그래서 `cur` 은 절대 `undefined` 가 아니다. */
+  const at = idx != null && idx >= 0 && idx < history.points.length
+    ? idx : history.points.length - 1;
+  const cur = history.points[at];
   /* 주선 색 = **보이는 구간의 순변화 방향** — Main 미리보기(PreviewPane)의
      그 규칙이다. 잉크로 칠했던 판은 시뮬 시나리오 커브의 문법을 잘못 가져온
      것이었다 [OWNER 2026-08-25 — "진짜 Backtest 랑 Main 을 참고한 게 맞는지"]. */
@@ -42,6 +48,26 @@ export function BandChart({ history }: { history: MrHistory }) {
   /* 주선 = 구간 방향색(hue), 보조선(밴드·중심)은 뮤트 — Main 미리보기의 종목 선 +
      기준선 위계 그대로. **밴드가 먼저** = 아래에 깔린다.
      캔버스에는 불투명도 손잡이가 없어 색 자체를 흐리게 만든다(`palette.dim`). */
+  /** 리드아웃 칸 넷 — **그려진 선 그대로**다(견본 색이 그 선의 잉크다).
+   *
+   *  자리는 이력 전체의 고·저로 잰다 — 봉이 260개라 매 렌더 훑어도 싸고, 그래야
+   *  커서를 옮겨도 칸이 한 글자씩 안 밀린다(`slotChars` 의 그 이유).
+   *  좁아지면 **바깥 밴드부터** 값을 내려놓는다: 값 → 중심선 → 상·하단 순으로
+   *  이 화면에서 덜 급한 수다(주인공은 「지금 값이 밴드 어디인가」다). */
+  const slots = useMemo<StripSlot[]>(() => {
+    const fmt = (x: number | null) => fmtLevel(x, unit);
+    const ch = slotChars((x) => fmtLevel(x, unit), ...v, ...up, ...lo);
+    return [
+      { key: 'v', label: '값', value: fmt(cur?.v ?? null), color: hue, chars: ch },
+      { key: 'ma', label: '중심선', value: fmt(cur?.ma ?? null),
+        color: 'var(--color-fgMuted)', opacity: 0.7, chars: ch, drop: 3 },
+      { key: 'up', label: '상단', value: fmt(cur?.up ?? null),
+        color: 'var(--color-fgMuted)', opacity: 0.45, chars: ch, drop: 1 },
+      { key: 'lo', label: '하단', value: fmt(cur?.lo ?? null),
+        color: 'var(--color-fgMuted)', opacity: 0.45, chars: ch, drop: 1 },
+    ];
+  }, [cur, unit, hue, v, up, lo]);
+
   const lines: TimeLine[] = [
     { id: 'up', values: up, color: (p) => p.dim('var(--color-fgMuted)', 45), width: 1 },
     { id: 'lo', values: lo, color: (p) => p.dim('var(--color-fgMuted)', 45), width: 1 },
@@ -51,15 +77,12 @@ export function BandChart({ history }: { history: MrHistory }) {
   ];
 
   return (
-    <Box
-      className="sr-plot"
-      width="100%"
-      /* 카드 자리는 상자의 CSS 변수 — 상태가 아니다(`placeReadout` 머리글). */
-      onMouseMove={(e: React.MouseEvent<HTMLDivElement>) => {
-        placeReadout(e.currentTarget, e.clientX);
-      }}
-      onMouseLeave={() => setIdx(null)}
-    >
+    <VStack width="100%" gap={0} onMouseLeave={() => setIdx(null)}>
+      {/* 줄이 **그림 위**에 선다 — 아래에 두면 상세 카드의 다음 블록(조건 표)과
+          붙어 그 표의 머리처럼 읽힌다. 자리도 높이도 고정이라 커서를 움직여도
+          그림이 안 흔들린다. */}
+      <ChartReadoutStrip date={cur?.t ?? ''} slots={slots} />
+      <Box className="sr-plot" width="100%">
       <TimeChart
         /* 240 → **160** [2026-09-21 · 계획면]. 240 의 근거는 아래 그대로이고
            (밴드 셋이 겹친다) 바뀐 것은 **이 차트가 선 자리**다: 계획면에서 이
@@ -82,14 +105,7 @@ export function BandChart({ history }: { history: MrHistory }) {
            (CLAUDE.md 규칙 7 · Main 미리보기 `scrubLabel` 의 그 자리). */
         hoverLabel={(i) => `${history.label} ${dates[i]} ${fmtLevel(history.points[i]?.v ?? null, unit)}`}
       />
-      {cur ? (
-        <ReadoutCard title={cur.t}>
-          <ReadoutLevel k="값" v={cur.v} unit={unit} />
-          <ReadoutLevel k="중심선" v={cur.ma} unit={unit} />
-          <ReadoutLevel k="상단" v={cur.up} unit={unit} />
-          <ReadoutLevel k="하단" v={cur.lo} unit={unit} />
-        </ReadoutCard>
-      ) : null}
-    </Box>
+      </Box>
+    </VStack>
   );
 }

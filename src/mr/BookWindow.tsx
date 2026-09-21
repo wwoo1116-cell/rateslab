@@ -54,7 +54,7 @@ import { BacktestUnavailable } from '@/lib/api';
 import { fmtKrw } from '@/lib/krw';
 import { Segmented } from '@/ui/ControlCard';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
-import { ReadoutCard, ReadoutFact, ReadoutMoney, placeReadout } from '@/ui/ReadoutCard';
+import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 import { Stat, StatColumn } from '@/ui/Stat';
 
 import {
@@ -467,6 +467,30 @@ export function BookWindow({
       format: (v: number) => `${v}다리`,
     },
   ];
+  /* ── 리드아웃 줄의 칸 ────────────────────────────────────────────────
+     커서가 그림 밖이면 **마지막 봉**을 읽는다. 두 그림이 한 커서를 나눠 쓰므로
+     (`syncIndex`) 자리도 하나다 — 어느 그림을 짚든 두 줄이 같은 날을 말한다.
+
+     칸은 **그 그림이 그리는 것만** 적는다. 종전 카드는 둘 다 「그날 손익」과
+     「다리」를 실었는데, 고정 줄에서는 그게 같은 수를 두 줄에 적는 것이 된다. */
+  const bookAt = !run ? null : run.points[
+    idx != null && idx.i >= 0 && idx.i < run.points.length ? idx.i : run.points.length - 1
+  ] ?? null;
+  const eqSlots: StripSlot[] = !run || !bookAt ? [] : (() => {
+    const ch = slotChars(fmtKrw, ...run.points.map((p) => p.cum),
+                                  ...run.points.map((p) => p.pnl));
+    return [
+      { key: 'cum', label: '누적', value: fmtKrw(bookAt.cum), color: eqHue, chars: ch },
+      { key: 'pnl', label: '그날', value: fmtKrw(bookAt.pnl),
+        color: eqHue, opacity: 0.5, chars: ch, drop: 1 },
+    ];
+  })();
+  const legSlots: StripSlot[] = !run || !bookAt ? [] : [
+    { key: 'legs', label: '다리', value: `${bookAt.legs}개`, color: 'var(--color-fg)' },
+    { key: 'delta', label: '걸린 Delta',
+      value: `${(bookAt.legs * run.params.notional).toLocaleString()}원/bp`, drop: 1 },
+  ];
+
   const zeroLine: ScalePriceLine[] = [{ value: 0, color: (pa) => pa.line }];
   /* 아홉이 다 선 자리 — 「여기가 Delta 의 천장」을 그림이 스스로 말한다. */
   const capLine: ScalePriceLine[] = !run ? [] : [
@@ -851,10 +875,15 @@ export function BookWindow({
                 title="누적 손익"
                 sub={`${run.summary.numTrades} 거래 · 순 ${fmtKrw(run.summary.totalPnl)}`}
               >
+                {/* 커서 밑의 값 — **그림 위 한 줄** [2026-09-21 이관]. 창 안의
+                    차트라 떠 있는 카드가 특히 나빴다: 카드가 그림보다 크고,
+                    창을 줄이면 카드가 패널 밖으로 나갔다.
+                    칸은 **이 그림이 그리는 것만** 적는다 — 다리 수는 아래 패널의
+                    사실이라 거기 줄이 진다(같은 수를 두 줄에 적지 않는다). */}
+                <ChartReadoutStrip date={bookAt?.t ?? ''} slots={eqSlots} />
                 <Box
                   className="sr-plot"
                   width="100%"
-                  onMouseMove={(e: React.MouseEvent<HTMLDivElement>) => placeReadout(e.currentTarget, e.clientX)}
                   onMouseLeave={() => setIdx(null)}
                 >
                   <TimeChart
@@ -868,13 +897,6 @@ export function BookWindow({
                     onHoverIndex={(i) => setIdx(i == null ? null : { chart: 'eq', i })}
                     {...stack}
                   />
-                  {idx?.chart === 'eq' && run.points[idx.i] ? (
-                    <ReadoutCard title={run.points[idx.i]!.t}>
-                      <ReadoutMoney k="누적" v={run.points[idx.i]!.cum} />
-                      <ReadoutMoney k="그날" v={run.points[idx.i]!.pnl} />
-                      <ReadoutFact k="다리" v={`${run.points[idx.i]!.legs}개`} />
-                    </ReadoutCard>
-                  ) : null}
                 </Box>
               </Panel>
 
@@ -884,10 +906,10 @@ export function BookWindow({
                   run.book.idleShare == null ? '—' : pct(run.book.idleShare)
                 }`}
               >
+                <ChartReadoutStrip date={bookAt?.t ?? ''} slots={legSlots} />
                 <Box
                   className="sr-plot"
                   width="100%"
-                  onMouseMove={(e: React.MouseEvent<HTMLDivElement>) => placeReadout(e.currentTarget, e.clientX)}
                   onMouseLeave={() => setIdx(null)}
                 >
                   <TimeChart
@@ -902,16 +924,6 @@ export function BookWindow({
                     onHoverIndex={(i) => setIdx(i == null ? null : { chart: 'legs', i })}
                     {...stack}
                   />
-                  {idx?.chart === 'legs' && run.points[idx.i] ? (
-                    <ReadoutCard title={run.points[idx.i]!.t}>
-                      <ReadoutFact k="다리" v={`${run.points[idx.i]!.legs}개`} />
-                      <ReadoutFact
-                        k="걸린 Delta"
-                        v={`${(run.points[idx.i]!.legs * run.params.notional).toLocaleString()}원/bp`}
-                      />
-                      <ReadoutMoney k="그날" v={run.points[idx.i]!.pnl} />
-                    </ReadoutCard>
-                  ) : null}
                 </Box>
               </Panel>
 

@@ -30,24 +30,25 @@ import { describe, expect, it } from 'vitest';
 
 import { READOUT_CARD_MAX, READOUT_X_VAR, readoutLeft } from '../src/ui/ReadoutCard';
 
-import { stripComments } from './_source';
+import { stripComments, walk } from './_source';
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (p: string) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 /** 카드를 띄우는 모든 표면. 새 표면이 생기면 여기 추가되어야 한다.
  *
- * **둘이 빠졌다** [2026-09-21]: 종목 차트(`ui/PreviewPane.tsx`)와 백테스트
- * (`backtest/LinkedCharts.tsx`)는 떠 있는 카드에서 **그림 위의 고정 줄**로
+ * **2026-09-21 에 여섯이 빠졌다.** 먼저 종목 차트(`ui/PreviewPane.tsx`)와
+ * 백테스트(`backtest/LinkedCharts.tsx`)가, 이어서 시뮬 둘(`sim/CurvePreview`·
+ * `sim/ResultsWindow`) · RV 이력(`rv/RvPage`) · MR 밴드(`mr/BandChart`) ·
+ * 연구실(`lab/scenario/ModelChart`)이 떠 있는 카드에서 **그림 위의 고정 줄**로
  * 옮겼다 — 카드가 그림을 가린다는 트레이더 보고 때문이고, 경위는
- * `ui/ChartReadoutStrip.tsx` 머리글에 있다. 그 둘은
+ * `ui/ChartReadoutStrip.tsx` 머리글에 있다. 옮긴 표면은
  * `guards/chart-readout-strip.test.ts` 가 다른 계약으로 잰다.
  *
- * 카드 자체는 은퇴하지 않았다 — 아래 넷을 포함해 열네 자리가 아직 쓴다. */
+ * 카드 자체는 은퇴하지 않았다 — 산점도(축이 둘이라 「커서 밑의 한 날」이 없다) ·
+ * 3D 표면 · 터미널 · MR 두 창이 아직 쓴다. 표면마다 폭이 다르므로 은퇴도
+ * 표면마다 따로 본다. */
 const SURFACES = [
-  'src/sim/CurvePreview.tsx',
-  'src/sim/ResultsWindow.tsx',
-  'src/rv/RvPage.tsx',
   'src/rv/RvScatter.tsx',
 ];
 
@@ -128,24 +129,37 @@ describe('자리는 상태가 아니다 — 픽셀마다 리렌더하지 않는�
    * 때마다 컴포넌트 전체가 다시 그려진다. 인덱스는 상태가 맞다(카드의 **내용**이
    * 그걸 읽는다). 둘을 갈라 두는 것이 이 절의 전부다. */
 
-  /** 커서를 따라다니는 표면들. RvScatter 는 예외다 — 아래 참조.
-   *  종목 차트와 백테스트는 고정 줄로 옮겨 **따라다니지 않는다**(위 주석). */
-  const CURSOR_SURFACES = [
-    'src/sim/CurvePreview.tsx',
-    'src/sim/ResultsWindow.tsx',
-    'src/rv/RvPage.tsx',
-  ];
+  /** **2026-09-21 이후 커서를 «따라다니는» 표면은 하나도 없다.** 고정 줄로 다
+   *  옮겼고(`ui/ChartReadoutStrip`), 남은 카드 하나(RvScatter)는 시간축이 없어
+   *  인덱스가 아니라 **자료 좌표**에서 자리를 낸다.
+   *
+   *  목록을 손으로 들지 않는다 — 손목록은 새 표면이 생겨도 조용히 초록이다.
+   *  대신 **src 전체**를 훑는다. */
+  const withCard = () =>
+    walk(path.join(ROOT, 'src'), ['.tsx'])
+      .filter((f) => stripComments(fs.readFileSync(f, 'utf8')).includes('<ReadoutCard'))
+      .map((f) => path.relative(ROOT, f).split(path.sep).join('/'));
 
-  it('커서 자리를 상태로 들고 있는 표면이 없다', () => {
-    const offenders = CURSOR_SURFACES.filter((f) =>
-      /const \[(hoverX|pathX)[\s\S]{0,40}useState/.test(stripComments(read(f))),
-    );
+  it('카드를 띄우는 표면은 공용 클램프 **둘 중 하나**를 지난다', () => {
+    /* `placeReadout` 은 상자의 CSS 변수에 적고(커서를 따라가는 판),
+       `readoutLeft` 는 그 안에서 쓰는 산술을 직접 부른다(자료 좌표에 붙는 판).
+       어느 쪽이든 **식은 한 벌**이고, 손으로 다시 쓰는 순간 갈린다 — 이 파일
+       머리가 적은 그 사고가 두 번 났다. */
+    const offenders = withCard().filter((f) => {
+      const src = stripComments(read(f));
+      return !src.includes('placeReadout(') && !src.includes('readoutLeft(');
+    });
     expect(offenders).toEqual([]);
   });
 
-  it('세 표면이 모두 placeReadout 을 지난다', () => {
-    const missing = CURSOR_SURFACES.filter((f) => !read(f).includes('placeReadout('));
-    expect(missing).toEqual([]);
+  it('지금 카드를 쓰는 표면은 산점도 하나뿐이다 — 은퇴 진도를 여기서 센다', () => {
+    /* 수를 박아 두면 다음 사람이 「어디까지 옮겼나」를 이 줄에서 읽는다. 또
+       옮기면 이 줄이 빨개지고, 그때 줄을 고치는 것이 곧 기록이 된다.
+
+       산점도가 마지막인 데는 이유가 있다: 고정 줄의 계약은 「한 날 + 그날의
+       값들」인데 산점도는 축이 둘이라 **커서 밑의 «한 날»이 없다**. 옮기려면
+       줄의 계약부터 바꿔야 하고, 그건 이 이관의 범위가 아니다. */
+    expect(withCard()).toEqual(['src/rv/RvScatter.tsx']);
   });
 
   it('CSS 가 그 변수를 읽는다', () => {

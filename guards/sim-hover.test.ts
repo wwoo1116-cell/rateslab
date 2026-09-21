@@ -26,6 +26,8 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments } from './_source';
+
 const read = (p: string) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 const PREVIEW = 'src/sim/CurvePreview.tsx';
@@ -51,28 +53,41 @@ describe('세 차트가 모두 커서를 받는다', () => {
   });
 });
 
-describe('눈으로 읽는 카드', () => {
-  it('세 차트가 백테스트와 같은 카드를 쓴다 — 자기 카드를 만들지 않는다', () => {
+describe('눈으로 읽는 줄', () => {
+  /* 2026-09-21 에 떠 있는 카드에서 **그림 위 고정 줄**로 옮겼다. 명제 셋은
+     그대로이고 주어만 바뀌었다 — ①부품을 각자 만들지 않는다 ②자리 산술이
+     한 벌이다 ③커서가 쉴 때 빈 줄이 서지 않는다. 카드 시절 ②는 「클램프를
+     지난다」였는데, 고정 줄은 **자리를 아예 안 잰다**(그게 그 부품의 요점이라
+     클램프가 필요 없다). 그래서 ②는 「칸 폭을 손으로 세지 않는다」로 바뀐다. */
+
+  it('두 화면이 **공용 줄**을 쓴다 — 자기 리드아웃을 만들지 않는다', () => {
     for (const f of [PREVIEW, RESULTS]) {
-      expect(read(f), f).toMatch(/from '@\/ui\/ReadoutCard'/);
-      expect(read(f), f).toMatch(/<ReadoutCard/);
+      expect(read(f), f).toMatch(/from '@\/ui\/ChartReadoutStrip'/);
+      expect(read(f), f).toMatch(/<ChartReadoutStrip/);
     }
   });
 
-  it('카드가 그림 밖으로 나가지 않게 같은 클램프를 지난다', () => {
-    /* 두 화면이 각자 클램프하면 CDS 가 눈금 폭을 바꾸는 날 갈린다.
-     *
-     * 2026-08-20 에 경로가 한 겹 깊어졌다: 표면이 `readoutLeft` 를 직접 부르는
-     * 대신 `placeReadout`(상자의 CSS 변수에 이미 클램프된 값을 적는다)을
-     * 지난다 — 커서를 따라가는 데 리렌더가 필요 없게 만든 변경이다. 명제는
-     * 그대로이고 핀만 갱신했다(`readout-card-width` 가 그 둘이 같은 식임을 본다). */
+  it('칸 폭을 손으로 세지 않는다 — `slotChars` 가 잰다', () => {
+    /* 이 파일 머리가 적은 그 사고(「스왑롤다운 −12억 3,456만원」이 148px 를
+       65px 넘겼다)의 고정 줄 판이다. 손으로 센 글자 수는 서식이 바뀌는 날
+       틀리고, 틀리면 오른쪽 칸들이 한 글자씩 밀린다. */
     for (const f of [PREVIEW, RESULTS]) {
-      expect(read(f), f).toMatch(/placeReadout\(/);
+      const src = stripComments(read(f));
+      expect(src, f).toMatch(/slotChars\(/);
+      expect(src, f).not.toMatch(/chars:\s*\d+/);
     }
   });
 
-  it('카드가 기준으로 삼을 상자가 relative 다', () => {
-    /* `.sr-plot` 이 아니면 카드가 페이지 기준으로 떠서 엉뚱한 곳에 선다. */
+  it('커서가 쉬어도 줄이 **안 빈다** — 마지막/끝 자리를 읽는다', () => {
+    /* 줄이 생겼다 사라지면 그림 높이가 흔들린다(`ChartReadoutStrip` 머리).
+       그래서 호버 인덱스가 없을 때 쓰는 대체 자리가 반드시 있어야 한다. */
+    for (const f of [PREVIEW, RESULTS]) {
+      expect(stripComments(read(f)), f).toMatch(/:\s*[\w.]+\.length\s*-\s*1/);
+    }
+  });
+
+  it('줄이 기준으로 삼을 상자는 그대로 `.sr-plot` 이다', () => {
+    /* 줄은 그림 «밖»이지만 상자는 남는다 — 차트가 그 안에서 높이를 받는다. */
     for (const f of [PREVIEW, RESULTS]) {
       expect(read(f), f).toMatch(/className="sr-plot"/);
     }

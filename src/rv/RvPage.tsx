@@ -65,7 +65,7 @@ import { useFunding } from '@/state/funding';
 import { Cond } from '@/ui/Cond';
 import { NumField } from '@/ui/ControlCard';
 import { ErrorState, LoadingState } from '@/ui/DataState';
-import { ReadoutCard, ReadoutLevel, placeReadout } from '@/ui/ReadoutCard';
+import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 import { DROPDOWN_STYLES } from '@/ui/window/popup';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
 import { useUrlState } from '@/ui/useUrlState';
@@ -169,9 +169,10 @@ function SetRow({
 /** ±σ 밴드를 두른 소형 차트 하나 — 창 평균과 평균±σ 가 `ReferenceLine`(dataY)
  * 으로 선다. 통계는 서버 것 그대로(§16) — 여기서 평균을 다시 내지 않는다.
  *
- * 커서 리드아웃은 Main·Backtest 의 그 카드다 [OWNER 2026-08-19] — CDS
- * `Scrubber` 가 인덱스를 주고(`onScrubberPositionChange`), 공용 `ReadoutCard`
- * 가 커서 옆에 뜬다(PreviewPane 의 배선 그대로). */
+ * 커서 리드아웃은 **그림 위 한 줄**이다(`ChartReadoutStrip`) — 2026-09-21 에
+ * 떠 있는 카드에서 옮겼다. 이 차트가 180px 이라 카드(약 220px)가 그림보다 컸다.
+ * 아래에 있던 「지금 X · 창 평균 Y · σ Z」 문장도 같이 걷었다: 줄이 쉴 때 마지막
+ * 봉을 읽으므로 **같은 세 수를 두 번 적던 자리**였다. */
 function BandChart({
   title,
   dates,
@@ -198,18 +199,31 @@ function BandChart({
       : []),
   ];
 
+  /* 커서가 그림 밖이면 마지막 봉을 읽는다 — 줄이 비어 서 있지 않게 하는 규칙. */
+  const at = idx != null && idx >= 0 && idx < values.length ? idx : values.length - 1;
+  /* 이 화면의 bp 서식은 **한 자리**다 — 걷어 낸 아래 문장이 쓰던 그 서식을
+     그대로 든다(같은 수를 두 서식으로 말하지 않는다). */
+  const bp = (v: number) => `${v.toFixed(1)}bp`;
+  const fmtBp = (v: number | null | undefined) => (v == null ? '—' : bp(v));
+  const ch = slotChars(bp, ...values, stats.mean, stats.sd);
+  /* 창 평균·σ 는 **가격선**이라 계열이 아니다 — 견본을 그 선의 잉크로 준다.
+     좁아지면 σ → 창 평균 순으로 값을 내려놓고 「값」은 안 내려놓는다. */
+  const slots: StripSlot[] = [
+    { key: 'v', label: '값', value: fmtBp(values[at]), color: 'var(--color-fg)', chars: ch },
+    /* 견본 색은 그 가격선이 캔버스에서 쓰는 토큰 그대로다 — 팔레트의 `line`
+       이 `--color-bgLine` 이다(`chart/palette.ts`). 「--color-line」 같은 토큰은
+       **없다**(가드가 그 오타를 잡았다, 2026-09-21). */
+    { key: 'mean', label: '창 평균', value: fmtBp(stats.mean),
+      color: 'var(--color-bgLine)', chars: ch, drop: 2 },
+    { key: 'sd', label: 'σ', value: fmtBp(stats.sd),
+      color: 'var(--color-bgLine)', opacity: 0.6, chars: ch, drop: 1 },
+  ];
+
   return (
-    <VStack gap={0.25} width="100%">
+    <VStack gap={0.25} width="100%" onMouseLeave={() => setIdx(null)}>
       <TextLabel2 as="span">{title}</TextLabel2>
-      <Box
-        className="sr-plot"
-        width="100%"
-        /* 자리는 상자의 CSS 변수 — 상태가 아니다(`placeReadout` 머리글). */
-        onMouseMove={(e: React.MouseEvent<HTMLDivElement>) => {
-          placeReadout(e.currentTarget, e.clientX);
-        }}
-        onMouseLeave={() => setIdx(null)}
-      >
+      <ChartReadoutStrip date={dates[at] ?? ''} slots={slots} />
+      <Box className="sr-plot" width="100%">
         <TimeChart
           height={180}
           accessibilityLabel={title}
@@ -219,19 +233,7 @@ function BandChart({
           onHoverIndex={setIdx}
           hoverLabel={() => `${title} 스크러버`}
         />
-        {idx != null && values[idx] != null ? (
-          <ReadoutCard title={dates[idx]}>
-            <ReadoutLevel k="값" v={values[idx]} unit="bp" />
-            <ReadoutLevel k="창 평균" v={stats.mean} unit="bp" />
-            <ReadoutLevel k="σ" v={stats.sd} unit="bp" />
-          </ReadoutCard>
-        ) : null}
       </Box>
-      <TextLegal as="span" color="fgMuted">
-        지금 {stats.now != null ? stats.now.toFixed(1) : '—'}bp · 창 평균{' '}
-        {stats.mean != null ? stats.mean.toFixed(1) : '—'}bp · σ{' '}
-        {stats.sd != null ? stats.sd.toFixed(1) : '—'}bp예요.
-      </TextLegal>
     </VStack>
   );
 }

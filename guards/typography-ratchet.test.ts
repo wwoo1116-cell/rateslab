@@ -32,8 +32,13 @@ const SRC = path.resolve(import.meta.dirname, '../src');
 const SHORTHAND =
   /<(TextDisplay\d|TextTitle\d|TextHeadline|TextBody|TextLabel\d|TextCaption|TextLegal)\b/g;
 
-/** 현재 수. **오직 내려갈 수만 있다.** */
-const CEILING = 251;
+/** 현재 수. **오직 내려갈 수만 있다.**
+ *
+ *  251 → **231** [2026-09-21]. 떠 있는 리드아웃 카드를 그림 위 고정 줄로 옮기면서
+ *  여섯 표면의 `TextLabel2`·`TextLegal` 줄이 공용 부품(`ChartReadoutStrip` 안의
+ *  `Text font="label2"`)으로 빨려 들어갔다 — 마이그레이션이 아니라 **부품화**의
+ *  부수 효과다. 래칫이 그걸 세어서 내려 적으라고 했고, 이 줄이 그 기록이다. */
+const CEILING = 231;
 
 
 function tsxFiles(dir: string, out: string[] = []): string[] {

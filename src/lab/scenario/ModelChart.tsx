@@ -14,7 +14,10 @@
  *               (`--sr-ref-cd` 호박 / `--sr-ref-policy` 보라 — direction.css)
  *               눈금 라벨은 `opacity 0.65` 로 물러남
  *               `Scrubber` 는 짚을 시리즈를 **명시**한다(기본은 전부라 유령 구슬)
- *     범례      바닥 `RefKey` — 선 견본 + 이름, 이름도 선의 색을 입는다
+ *     리드아웃  그림 **위** 한 줄(`ChartReadoutStrip`) — 견본 + 이름 + 값이 한 칸
+ *               [2026-09-21] 종전에는 떠 있는 카드(값)와 바닥 범례(`RefKey`,
+ *               견본+이름)로 **둘로 나뉘어** 있었다. 한 칸에 모으면 「그려진
+ *               것」과 「그 값」이 갈릴 수가 없다
  *     통계      차트 아래 `.sr-stats` 세 칸, 사이는 여백이 아니라 **헤어라인**
  *
  * 앞선 두 판이 «메인/백테스트랑 그래프는 커녕 디자인 문법조차 안 맞는다» 는
@@ -41,8 +44,7 @@ import { Text } from '@coinbase/cds-web/typography';
 import { Stat, StatColumn } from '@/ui/Stat';
 
 import { CurveChart, type CurveLine } from '@/chart/CurveChart';
-import { ReadoutCard, ReadoutChange, ReadoutLevel, placeReadout } from '@/ui/ReadoutCard';
-import { RefKey } from '@/ui/PreviewPane';
+import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 
 import type { ScenarioRow } from './assemble';
 
@@ -68,11 +70,6 @@ const bp = (v: number | null | undefined) =>
 export function ModelChart({ rows, asof }: { rows: ScenarioRow[]; asof: string }) {
   const [hoverIdx, setHoverIdx] = useState<number | undefined>(undefined);
 
-  /* 자리는 상자의 CSS 변수에 적는다 — 상태가 아니다. 픽셀마다 이 탭 전체를 다시
-     그리지 않는다(백테스트 차트가 쓰는 그 규약). */
-  const onMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    placeReadout(e.currentTarget, e.clientX);
-  }, []);
   const onLeave = useCallback(() => setHoverIdx(undefined), []);
 
   const s = useMemo(
@@ -119,7 +116,36 @@ export function ModelChart({ rows, asof }: { rows: ScenarioRow[]; asof: string }
   const dir = head?.vsMarketBp == null ? 'flat' : head.vsMarketBp > 0 ? 'up' : head.vsMarketBp < 0 ? 'down' : 'flat';
 
   const idx = hoverIdx != null && hoverIdx >= 0 && hoverIdx < rows.length ? hoverIdx : null;
-  const hit = idx == null ? null : rows[idx];
+  /* 커서가 그림 밖이면 **맨 오른쪽 노드**를 읽는다 — 커브에는 「마지막 날」이
+     없고 「가장 긴 만기」가 그 자리다(`ChartReadoutStrip` 머리의 그 규칙). */
+  const at = idx ?? rows.length - 1;
+  const hit = rows[at] ?? null;
+
+  /** 리드아웃 칸 — **그려진 선 셋 그대로**다(견본 색·잉크가 그 선의 것).
+   *
+   *  「시장 캐리」는 선이 아니라 수라 견본이 없다. 좁아지면 캐리 → 오늘 → 시장
+   *  순으로 값을 내려놓고 모형은 안 내려놓는다 — 이 화면의 주인공이다. */
+  const slots: StripSlot[] = (() => {
+    const lvlOf = (v: number | null | undefined) => (v == null ? '—' : `${lvl(v)}%`);
+    const ch = slotChars(
+      (v) => `${lvl(v)}%`,
+      ...s.model, ...s.market, ...s.today,
+    );
+    const out: StripSlot[] = [
+      { key: 'model', label: '모형 12M', value: lvlOf(hit?.scenario12m),
+        color: 'var(--color-fg)', chars: ch },
+    ];
+    if (hasMarket) {
+      out.push({ key: 'market', label: '시장 12M', value: lvlOf(hit?.market12m),
+        color: 'var(--sr-ref-cd)', opacity: 0.9, chars: ch, drop: 2 });
+    }
+    out.push({ key: 'today', label: `오늘 ${asof}`, value: lvlOf(hit?.spot),
+      color: 'var(--sr-ref-policy)', opacity: 0.9, chars: ch, drop: 3 });
+    out.push({ key: 'carry', label: '시장 캐리',
+      value: hit?.marketCarryBp == null ? '—' : `${hit.marketCarryBp.toFixed(1)}bp`,
+      drop: 1 });
+    return out;
+  })();
 
   if (!head) return null;
 
@@ -157,13 +183,25 @@ export function ModelChart({ rows, asof }: { rows: ScenarioRow[]; asof: string }
       {/* ── 차트 ──────────────────────────────────────────────────────────
           `flexBasis={0}` 이 없으면 상자가 자기 내용에서 높이를 얻으려 하고,
           내용은 상자에서 높이를 얻으려 해서 되먹임이 생긴다. */}
+      {/* 커서 밑의 값 — **그림 위 한 줄**이다 [2026-09-21 이관]. 아래에 따로
+          있던 범례(`RefKey` 셋)도 이 줄이 흡수했다: 견본·이름·값이 한 자리에
+          서면 「그려진 것」과 「그 값」이 갈릴 수가 없다(그 줄이 존재하던 이유가
+          그것이었고, 정작 «값»은 거기 없었다). */}
+      <ChartReadoutStrip
+        date={TENOR_LABEL[hit?.tenor ?? ''] ?? hit?.tenor ?? ''}
+        slots={slots}
+        change={hit?.vsMarketBp == null ? undefined : {
+          label: '차이',
+          text: `${Math.abs(hit.vsMarketBp).toFixed(1)}bp`,
+          v: hit.vsMarketBp,
+        }}
+      />
       <Box
         className="sr-plot"
         paddingX={1}
         flexGrow={1}
         flexBasis={0}
         minHeight={0}
-        onMouseMove={onMove}
         onMouseLeave={onLeave}
       >
         <CurveChart
@@ -176,24 +214,7 @@ export function ModelChart({ rows, asof }: { rows: ScenarioRow[]; asof: string }
           hoverLabel={nodeLabel}
         />
 
-        {hit ? (
-          <ReadoutCard title={TENOR_LABEL[hit.tenor] ?? hit.tenor}>
-            <ReadoutLevel k="모형 12M" v={hit.scenario12m} unit="%" />
-            <ReadoutLevel k="시장 12M" v={hit.market12m} unit="%" />
-            <ReadoutLevel k="오늘" v={hit.spot} unit="%" />
-            <ReadoutChange k="시장 캐리" v={hit.marketCarryBp} unit="bp" />
-            <ReadoutChange k="차이" v={hit.vsMarketBp} unit="bp" />
-          </ReadoutCard>
-        ) : null}
       </Box>
-
-      {/* ── 범례 ──────────────────────────────────────────────────────────
-          **실제로 그려진 것만** 이름을 얻는다. 이름도 선의 색을 입는다. */}
-      <HStack gap={2} paddingX={2} paddingBottom={1} flexWrap="wrap">
-        <RefKey label="모형 12M" opacity={1} />
-        {hasMarket ? <RefKey label="시장 12M" opacity={0.9} color="var(--sr-ref-cd)" /> : null}
-        <RefKey label={`오늘 ${asof}`} opacity={0.9} color="var(--sr-ref-policy)" />
-      </HStack>
 
       {/* ── 통계 셋 ───────────────────────────────────────────────────────
           사이가 여백이 아니라 헤어라인이라 세 목록이 **한 덩어리**로 읽힌다. */}

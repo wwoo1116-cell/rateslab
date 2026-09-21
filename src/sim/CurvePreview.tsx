@@ -28,7 +28,7 @@ import { CurveChart, type CurveLine } from '@/chart/CurveChart';
 import { NumericChart, type NumericLine } from '@/chart/NumericChart';
 import type { SeriesSummary } from '@/lib/api';
 import { fmtLevel } from '@/lib/format';
-import { ReadoutCard, ReadoutLevel, placeReadout } from '@/ui/ReadoutCard';
+import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 
 import {
   buildWaypoints,
@@ -105,13 +105,16 @@ export function CurvePreview({
      그 x 에 띄운다. 시뮬은 경로를 설계하는 화면인데 "D+37 에 얼마" 를 읽을
      길이 없었다(v1 `sim/ui/HoverPanel.tsx` 84줄이 하던 일). */
   const [hoverIdx, setHoverIdx] = useState<number>();
-  /* 자리는 상태가 아니라 상자의 CSS 변수다 — 픽셀마다 리렌더하지 않는다
-     (`placeReadout` 머리글). 인덱스만 상태다: 카드의 **내용**이 그걸 읽는다. */
-  const onMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    placeReadout(e.currentTarget, e.clientX);
-  }, []);
 
 
+  /** 리드아웃 칸 — **그려진 선 그대로**다(견본이 그 선의 잉크).
+   *
+   *  커브 판은 기준 + 켠 케이스들, 경로 판은 케이스별 누적 bp 다. 커서가 그림
+   *  밖이면 **오른쪽 끝**을 읽는다 — 커브는 가장 긴 만기, 경로는 마지막 날이고,
+   *  둘 다 「그림의 오른쪽 끝」이라는 같은 규칙이다(`ChartReadoutStrip` 머리).
+   *
+   *  좁아지면 켠 케이스부터 값을 내려놓는다. 기준(커브)·활성 케이스(경로)는
+   *  안 내려놓는다 — 그 둘이 이 화면이 답하는 「지금 얼마」다. */
   const pillars = useMemo(
     () =>
       outrights
@@ -232,6 +235,65 @@ export function CurvePreview({
     [timeLines],
   );
 
+  /* ── 리드아웃 줄의 칸 — 커브 판과 경로 판이 서로 다른 축을 읽는다 ─────────
+     커브는 만기축·%, 경로는 날짜축·bp 다. 그래서 자리(`slotChars`)도 따로 잰다.
+     쉴 때 읽는 자리는 둘 다 **그림의 오른쪽 끝**이다(커브는 가장 긴 만기,
+     경로는 마지막 날) — 줄이 빈 채로 서 있지 않게 하는 그 규칙. */
+  const curveAt =
+    hoverIdx != null && hoverIdx >= 0 && hoverIdx < pillars.length
+      ? hoverIdx : pillars.length - 1;
+  const timeAt =
+    hoverIdx != null && hoverIdx >= 0 && hoverIdx < timeLines.days.length
+      ? hoverIdx : timeLines.days.length - 1;
+
+  const stripDate =
+    view === 'curve'
+      ? (pillars[curveAt]?.id ?? asOf)
+      : timeLines.days[timeAt] == null ? asOf : `D+${timeLines.days[timeAt]}`;
+
+  const stripSlots = useMemo<StripSlot[]>(() => {
+    if (view === 'curve') {
+      if (!pillars.length) return [];
+      const fmt = (v: number | null | undefined) => fmtLevel(v ?? null, '%');
+      const ch = slotChars(
+        (v) => fmtLevel(v, '%'),
+        ...base, ...caseLines.flatMap((l) => l.data),
+      );
+      return [
+        /* ⚠ 열쇠에 이름공간을 둔다 — 케이스 하나의 id 가 그냥 `base` 라
+           「기준」 칸과 부딪혔다(브라우저 실측 2026-09-21: React 가 같은 열쇠
+           둘을 경고했고, 그러면 칸 하나가 조용히 사라질 수 있다). */
+        { key: 'ref', label: '기준', value: fmt(base[curveAt]),
+          color: 'var(--color-fgMuted)', opacity: 0.6, chars: ch },
+        ...caseLines.map((l, n) => ({
+          key: `case:${l.id}`,
+          label: CASE_LABEL[l.id] ?? l.id,
+          value: fmt(l.data[curveAt]),
+          color: CASE_COLOR[l.id as CaseId] ?? 'var(--color-fg)',
+          chars: ch,
+          /* 겹쳐 본 케이스부터 값을 내려놓는다 — 활성 케이스가 맨 앞이라
+             `n === 0` 은 안 내려놓는다(그게 이 화면의 주인공이다). */
+          drop: (n === 0 ? undefined : Math.min(n, 5) as 1 | 2 | 3 | 4 | 5),
+        })),
+      ];
+    }
+    if (!timeLines.days.length) return [];
+    const fmtBp = (v: number | null | undefined) =>
+      v == null ? '—' : `${v.toFixed(1)}bp`;
+    const ch = slotChars(
+      (v) => `${v.toFixed(1)}bp`,
+      ...timeLines.lines.flatMap((l) => l.data.filter((x): x is number => x != null)),
+    );
+    return timeLines.lines.map((l, n) => ({
+      key: `case:${l.id}`,
+      label: CASE_LABEL[l.id] ?? l.id,
+      value: fmtBp(l.data[timeAt]),
+      color: CASE_COLOR[l.id as CaseId] ?? 'var(--color-fg)',
+      chars: ch,
+      drop: (n === 0 ? undefined : Math.min(n, 5) as 1 | 2 | 3 | 4 | 5),
+    }));
+  }, [view, pillars, base, caseLines, timeLines, curveAt, timeAt]);
+
   return (
     <VStack gap={1} width="100%" height="100%">
       <HStack gap={1} alignItems="center" flexWrap="wrap" width="100%">
@@ -265,10 +327,11 @@ export function CurvePreview({
         </TextLegal>
       </HStack>
 
-      {/* 차트 둘을 감싸는 상자 — 카드가 이 안에서 절대 위치로 뜬다(백테스트의
-          `.sr-plot` 과 같은 구조). `onMouseMove` 가 x 를 재고, 인덱스는 CDS
-          가 준다. */}
-      <VStack className="sr-plot" onMouseMove={onMove} width="100%">
+      {/* 커서가 짚은 자리의 값 — **그림 위 한 줄**이다 [2026-09-21 이관].
+          종전에는 그림 «안»에 카드가 떠서 경로를 덮었는데, 경로를 설계하는
+          화면에서 덮이는 것이 하필 방금 그린 구간이었다. */}
+      <ChartReadoutStrip date={stripDate} slots={stripSlots} />
+      <VStack className="sr-plot" width="100%">
       {view === 'curve' ? (
         <CurveChart
           height={height}
@@ -291,37 +354,6 @@ export function CurvePreview({
           hoverLabel={timeScrubLabel}
         />
       )}
-      {/* 커서가 짚은 자리의 값 — 시뮬 차트에는 이게 없었다. 경로를 설계하는
-          화면인데 "D+37 에 얼마" 를 읽을 길이 없었다(v1 `HoverPanel` 이 하던
-          일, 레인 P1-2). 백테스트와 **같은 카드**를 쓴다. */}
-      {hoverIdx != null && hoverIdx >= 0 ? (
-        view === 'curve' ? (
-          pillars[hoverIdx] ? (
-            <ReadoutCard title={pillars[hoverIdx].id}>
-              <ReadoutLevel k="기준" v={base[hoverIdx] ?? null} unit="%" />
-              {caseLines.map((l) => (
-                <ReadoutLevel
-                  key={l.id}
-                  k={CASE_LABEL[l.id] ?? l.id}
-                  v={l.data[hoverIdx] ?? null}
-                  unit="%"
-                />
-              ))}
-            </ReadoutCard>
-          ) : null
-        ) : timeLines.days[hoverIdx] != null ? (
-          <ReadoutCard title={`D+${timeLines.days[hoverIdx]}`}>
-            {timeLines.lines.map((l) => (
-              <ReadoutLevel
-                key={l.id}
-                k={CASE_LABEL[l.id] ?? l.id}
-                v={l.data[hoverIdx] ?? null}
-                unit="bp"
-              />
-            ))}
-          </ReadoutCard>
-        ) : null
-      ) : null}
       </VStack>
 
       <TextLegal as="span" color="fgMuted">

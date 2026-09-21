@@ -218,46 +218,11 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'up
  * 그대로 살아서 **리드아웃 줄의 칸**이 진다(`ui/ChartReadoutStrip.tsx`).
  * 없어진 것은 부품이 아니라 «값 없이 이름만 있는 범례» 라는 자리다: 그림
  * 아래에 이름만 서고 값은 떠 있는 카드에 있어서, 같은 커서를 두 자리가
- * 설명하고 있었다. `RefKey`(못 끄는 범례)는 남는다 — Lab 시나리오가 쓴다. */
-
-/** One entry of the reference legend: the line as it is drawn, then its name.
- * The swatch carries the same colour and opacity the series does, so the legend
- * is a SAMPLE of the chart — and the label wears the line's colour too
- * (Finviz/네이버가 MA 범례에 하는 그대로). 점선 견본은 없다: 둘 다 실선이고
- * 구분은 색이 진다 [OWNER 2026-08-18, 3차 확정 — `direction.css`]. */
-export function RefKey({
-  label,
-  opacity,
-  color,
-}: {
-  label: string;
-  opacity: number;
-  /** 선이 그려진 색. 안 주면 잉크 계열(아이들 커브의 오늘/전일). */
-  color?: string;
-}) {
-  return (
-    <HStack gap={0.5} alignItems="center">
-      <span
-        aria-hidden
-        style={{
-          width: 14,
-          height: 0,
-          borderTop: `2px solid ${color ?? 'var(--color-fgMuted)'}`,
-          opacity,
-        }}
-      />
-      {color ? (
-        <TextCaption as="span" noWrap style={{ color }}>
-          {label}
-        </TextCaption>
-      ) : (
-        <TextCaption as="span" color="fgMuted" noWrap>
-          {label}
-        </TextCaption>
-      )}
-    </HStack>
-  );
-}
+ * 설명하고 있었다.
+ *
+ * ⚠ `RefKey`(못 끄는 범례)도 **2026-09-21 에 내려갔다**. 마지막 사용처였던 Lab
+ * 시나리오가 고정 줄로 옮기면서 쓰는 곳이 0 이 됐고, 쓰는 곳 없는 export 는
+ * 「아직 그 문법이 산다」고 거짓말을 한다. 되살릴 일이 있으면 git 이 든다. */
 
 /** 세 통계 묶음 — 본문에서도, 확대 창의 서랍에서도 **이것 하나**를 그린다.
  * 두 벌이면 한쪽에만 열이 붙거나 단위가 갈리고, 그때 두 화면이 같은 종목을

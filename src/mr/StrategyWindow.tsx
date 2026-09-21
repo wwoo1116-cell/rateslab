@@ -54,7 +54,7 @@ import { BacktestUnavailable } from '@/lib/api';
 import { fmtBp, fmtLevel, unitSuffix } from '@/lib/format';
 import { fmtKrw, fmtKrwFromMan, manUnits } from '@/lib/krw';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
-import { ReadoutCard, ReadoutFact, ReadoutLevel, ReadoutMoney, placeReadout } from '@/ui/ReadoutCard';
+import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 import { Stat, StatColumn } from '@/ui/Stat';
 import { ThHelp } from '@/ui/ThHelp';
 
@@ -689,9 +689,13 @@ function reconSub(t: MrStrategyTrade, run: MrStrategyRun): string {
 }
 
 /** 밴드 상태 한 마디 — 측정 보드의 어휘(`MrState`)와 같은 말이다. */
+/* 낱말은 계획면의 `planText.stateText` 와 **같은 어휘**다 [OWNER 2026-09-21 —
+   데스크 표준]: 밴드 안 → 밴드 내 · 밖 → 이탈. 한 화면에서 같은 사건을 두 낱말로
+   부르면 나란히 못 읽는다. 여기만 짧은 꼴인 것은 칸이 좁아서이고(위/아래를
+   괄호로 접는다) 뜻은 같다. */
 function bandWord(out: number, run: number): string {
-  if (out === 0) return '밴드 안';
-  return `밴드 ${out > 0 ? '위' : '아래'} 밖 ${run}일째`;
+  if (out === 0) return '밴드 내';
+  return `${out > 0 ? '상단' : '하단'} 이탈 ${run}일째`;
 }
 
 export function StrategyWindow({
@@ -1133,6 +1137,59 @@ export function StrategyWindow({
     },
   ];
   const zeroLine: ScalePriceLine[] = [{ value: 0, color: (pa) => pa.line }];
+
+  /* ── 리드아웃 줄의 칸 셋 [2026-09-21 이관] ──────────────────────────────
+     세 그림이 한 커서를 나눠 쓰므로(`syncIndex`) 자리도 하나다 — 어느 그림을
+     짚든 세 줄이 같은 날을 말한다. 커서가 그림 밖이면 마지막 봉을 읽는다.
+
+     **칸은 그 그림이 그리는 것만** 적는다. 종전 카드 셋은 「상태」를 둘이,
+     「포지션」과 「그날」을 둘이 실어 같은 수가 한 창에 두 번 섰다 — 카드는
+     하나씩 떠서 안 겹쳐 보였지만 고정 줄 셋이 되면 그 중복이 눈에 남는다. */
+  const winAt = !run || !winPoints.length ? null : winPoints[
+    idx != null && idx.i >= 0 && idx.i < winPoints.length ? idx.i : winPoints.length - 1
+  ] ?? null;
+  const priceSlots: StripSlot[] = !run || !winAt ? [] : (() => {
+    const fmt = (x: number | null | undefined) => fmtLevel(x ?? null, unit);
+    const ch = slotChars((x: number) => fmtLevel(x, unit),
+      ...winPoints.map((p) => p.v), ...winPoints.map((p) => p.up),
+      ...winPoints.map((p) => p.lo));
+    return [
+      { key: 'v', label: '값', value: fmt(winAt.v), color: priceHue, chars: ch },
+      { key: 'ma', label: '중심선', value: fmt(winAt.ma),
+        color: 'var(--color-fgMuted)', opacity: 0.7, chars: ch, drop: 3 },
+      { key: 'up', label: '상단', value: fmt(winAt.up),
+        color: 'var(--color-fgMuted)', opacity: 0.45, chars: ch, drop: 1 },
+      { key: 'lo', label: '하단', value: fmt(winAt.lo),
+        color: 'var(--color-fgMuted)', opacity: 0.45, chars: ch, drop: 1 },
+    ];
+  })();
+  /* z 그림의 칸 — 「상태」가 여기 선다. 진입 규칙이 보는 바로 그 사실이고,
+     「밴드 복귀」 판에서는 그것이 신호의 전제다. */
+  const zSlots: StripSlot[] = !run || !winAt ? [] : [
+    { key: 'z', label: 'z', value: winAt.z == null ? '—' : `${winAt.z.toFixed(2)}σ`,
+      color: 'var(--color-fg)' },
+    { key: 'state', label: '상태', value: bandWord(winAt.out, winAt.outRun), drop: 1 },
+  ];
+  /* 누적 그림의 칸 — 구간 표시면 곡선의 수(재기준)와 전체 누적을 **둘 다**
+     적는다. 하나만 적으면 곡선과 판독이, 또는 판독과 성과 카드가 딴말을 한다. */
+  const eqSlots: StripSlot[] = !run || !winAt ? [] : (() => {
+    const ch = slotChars(fmtKrw, ...winPoints.map((p) => p.cum - baseCum),
+      ...winPoints.map((p) => p.pnl));
+    const out: StripSlot[] = [
+      { key: 'cum', label: span === 'all' ? '누적' : '구간 누적',
+        value: fmtKrw(winAt.cum - baseCum), color: eqHue, chars: ch },
+    ];
+    if (span !== 'all') {
+      out.push({ key: 'all', label: '전체 누적', value: fmtKrw(winAt.cum),
+        color: eqHue, opacity: 0.5, chars: ch, drop: 2 });
+    }
+    out.push({ key: 'pnl', label: '그날', value: fmtKrw(winAt.pnl), chars: ch, drop: 1 });
+    out.push({ key: 'pos', label: '포지션',
+      value: posWord(run, (idx != null && idx.i >= 0 ? idx.i : winPoints.length - 1) + w0),
+      drop: 3 });
+    return out;
+  })();
+
 
   /* 캔버스가 못 하는 말 — 짚은 봉의 한 문장 [CLAUDE.md 규칙 7: «읽을 DOM 이
      없다 → hoverLabel → .sr-a11y-only 의 aria-live 줄이 진다»]. 차트마다
@@ -1761,10 +1818,10 @@ export function StrategyWindow({
                    나머지 둘의 같은 날에 선이 선다(Backtest 의 그 문법). */}
             <VStack gap={2} width="100%">
               <Panel title="가격 · SMA · 밴드" sub={`밴드 = 평균 ±${run.params.entryZ}σ`}>
+                <ChartReadoutStrip date={winAt?.t ?? ''} slots={priceSlots} />
                 <Box
                   className="sr-plot"
                   width="100%"
-                  onMouseMove={(e: React.MouseEvent<HTMLDivElement>) => placeReadout(e.currentTarget, e.clientX)}
                   onMouseLeave={() => setIdx(null)}
                 >
                   <TimeChart
@@ -1782,20 +1839,6 @@ export function StrategyWindow({
                     syncIndex={idx && idx.chart !== 'price' ? idx.i : null}
                     {...stack}
                   />
-                  {idx?.chart === 'price' && winPoints[idx.i] ? (
-                    <ReadoutCard title={winPoints[idx.i]!.t}>
-                      <ReadoutLevel k="값" v={winPoints[idx.i]!.v} unit={unit} />
-                      <ReadoutLevel k="중심선" v={winPoints[idx.i]!.ma} unit={unit} />
-                      <ReadoutLevel k="상단" v={winPoints[idx.i]!.up} unit={unit} />
-                      <ReadoutLevel k="하단" v={winPoints[idx.i]!.lo} unit={unit} />
-                      {/* 밴드에 대해 지금 어디인지 — 진입 규칙이 보는 바로 그 사실.
-                          「밴드 복귀」 판에서는 이 줄이 신호의 전제다. */}
-                      <ReadoutFact
-                        k="상태"
-                        v={bandWord(winPoints[idx.i]!.out, winPoints[idx.i]!.outRun)}
-                      />
-                    </ReadoutCard>
-                  ) : null}
                 </Box>
               </Panel>
 
@@ -1808,10 +1851,10 @@ export function StrategyWindow({
                       ` · 진입 ${entryCount(run)} · ${exitTally(run)}`
                 }
               >
+                <ChartReadoutStrip date={winAt?.t ?? ''} slots={zSlots} />
                 <Box
                   className="sr-plot"
                   width="100%"
-                  onMouseMove={(e: React.MouseEvent<HTMLDivElement>) => placeReadout(e.currentTarget, e.clientX)}
                   onMouseLeave={() => setIdx(null)}
                 >
                   <TimeChart
@@ -1828,21 +1871,6 @@ export function StrategyWindow({
                     hideTimeAxis
                     {...stack}
                   />
-                  {idx?.chart === 'z' && winPoints[idx.i] ? (
-                    /* 종전에는 z 한 줄뿐이었다 — 「이 봉에 무슨 일이 있었나」를
-                       차트가 말하지 못해 거래 표와 눈으로 대조해야 했다. */
-                    <ReadoutCard title={winPoints[idx.i]!.t}>
-                      <ReadoutLevel k="z" v={winPoints[idx.i]!.z} unit={'ratio' as Unit} />
-                      <ReadoutFact
-                        k="상태"
-                        v={bandWord(winPoints[idx.i]!.out, winPoints[idx.i]!.outRun)}
-                      />
-                      {/* posWord 는 전체 인덱스를 받는다 — 거래·미청산 탐색이
-                          전체 목록 위라서다. 표시 창만큼 옮겨 되돌린다. */}
-                      <ReadoutFact k="포지션" v={posWord(run, idx.i + w0)} />
-                      <ReadoutMoney k="그날" v={winPoints[idx.i]!.pnl} />
-                    </ReadoutCard>
-                  ) : null}
                 </Box>
               </Panel>
 
@@ -1857,10 +1885,10 @@ export function StrategyWindow({
                   ? `${run.summary.numTrades} 거래 · 순 ${fmtKrw(run.summary.totalPnl)}`
                   : `구간 순 ${fmtKrw(winPnl)} · 걸친 거래 ${shownTrades.length}건 · 전체 순 ${fmtKrw(run.summary.totalPnl)}`}
               >
+                <ChartReadoutStrip date={winAt?.t ?? ''} slots={eqSlots} />
                 <Box
                   className="sr-plot"
                   width="100%"
-                  onMouseMove={(e: React.MouseEvent<HTMLDivElement>) => placeReadout(e.currentTarget, e.clientX)}
                   onMouseLeave={() => setIdx(null)}
                 >
                   <TimeChart
@@ -1877,22 +1905,6 @@ export function StrategyWindow({
                     hideTimeAxis
                     {...stack}
                   />
-                  {idx?.chart === 'eq' && winPoints[idx.i] ? (
-                    <ReadoutCard title={winPoints[idx.i]!.t}>
-                      {/* 구간 표시면 곡선의 수(재기준)와 전체 누적을 **둘 다**
-                          적는다 — 하나만 적으면 곡선과 판독이, 또는 판독과 성과
-                          카드가 딴말을 한다. 전체 표시에서는 같은 수라 한 줄이다. */}
-                      <ReadoutMoney
-                        k={span === 'all' ? '누적' : '구간 누적'}
-                        v={winPoints[idx.i]!.cum - baseCum}
-                      />
-                      {span !== 'all' ? (
-                        <ReadoutMoney k="전체 누적" v={winPoints[idx.i]!.cum} />
-                      ) : null}
-                      <ReadoutMoney k="그날" v={winPoints[idx.i]!.pnl} />
-                      <ReadoutFact k="포지션" v={posWord(run, idx.i + w0)} />
-                    </ReadoutCard>
-                  ) : null}
                 </Box>
               </Panel>
 

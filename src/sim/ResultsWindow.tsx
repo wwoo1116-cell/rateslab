@@ -34,7 +34,7 @@ import { directionVar } from '@/theme/tint';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
 import { ReconStack, type ReconStackDay } from '@/ui/window/ReconStack';
 import { NumericChart, type NumericLine } from '@/chart/NumericChart';
-import { ReadoutCard, ReadoutMoney, placeReadout } from '@/ui/ReadoutCard';
+import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 
 import type { CaseRuns } from './SimulationPage';
 import {
@@ -79,6 +79,25 @@ const PATH_ROWS = [...SWAP_PARTS, ...BOND_PARTS, ...FUT_PARTS] as readonly {
   key: 'val' | 'carry' | 'roll' | 'bondMtm' | 'bondCarry' | 'bondRoll' | 'fund' | 'futMtm';
   label: string;
 }[];
+/** 성분마다의 잉크 — **한 벌**이다.
+ *
+ *  선(`pathLines`)과 리드아웃 줄의 견본이 같은 색이어야 하는데, 색을 두 곳에
+ *  적으면 한쪽만 바뀌는 날이 온다(캐논 규칙 8 — 같은 것은 한 번만 만든다).
+ *  캔버스 쪽은 `palette.resolve` 로 풀고 DOM 쪽은 그대로 쓴다.
+ *
+ *  ⚠ **모듈 자리여야 한다** — 컴포넌트 안에 두면 매 렌더 새 객체가 되어
+ *  `useMemo` 의 의존이 매번 갈린다(eslint 가 그걸 잡았다, 2026-09-21). */
+const PATH_INK: Record<string, string> = {
+  val: 'var(--sr-up)',
+  carry: 'var(--sr-down)',
+  roll: 'var(--color-fgMuted)',
+  bondMtm: 'var(--sr-ref-cd)',
+  bondCarry: 'var(--sr-ref-policy)',
+  bondRoll: 'var(--sr-ref-roll)',
+  fund: 'var(--color-fg)',
+  futMtm: 'var(--sr-ref-fut)',
+};
+
 /** 북에 채권이 없으면 서지 않는 셋. */
 const BOND_SERIES = new Set<string>(BOND_PARTS.map((r) => r.key));
 /** 북에 선물이 없으면 서지 않는 것. */
@@ -249,10 +268,6 @@ export function ResultsWindow({
 }) {
   /* 성분 경로 차트의 커서. 백테스트와 같은 문법(`LinkedCharts`). */
   const [pathIdx, setPathIdx] = useState<number>();
-  /* 자리는 상자의 CSS 변수 — 상태가 아니다(`placeReadout` 머리글). */
-  const onPathMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    placeReadout(e.currentTarget, e.clientX);
-  }, []);
 
   const [shown, setShown] = useState<CaseId>(scenario.activeCase);
   const run = runs[shown];
@@ -318,29 +333,56 @@ export function ResultsWindow({
     [paths],
   );
 
-  /** 성분 선들. 색은 전부 이 리포의 CSS 변수라 `palette.resolve` 가 푼다. */
+/** 성분 선들. 색은 전부 이 리포의 CSS 변수라 `palette.resolve` 가 푼다. */
   const pathLines = useMemo<NumericLine[]>(() => {
     if (!paths) return [];
-    const line = (id: string, values: (number | null)[], css: string): NumericLine => ({
+    const line = (id: keyof typeof PATH_INK, values: (number | null)[]): NumericLine => ({
       id,
       values,
-      color: (pal) => pal.resolve(css),
+      color: (pal) => pal.resolve(PATH_INK[id]!),
     });
     return [
-      line('val', paths.val, 'var(--sr-up)'),
-      line('carry', paths.carry, 'var(--sr-down)'),
-      line('roll', paths.roll, 'var(--color-fgMuted)'),
+      line('val', paths.val),
+      line('carry', paths.carry),
+      line('roll', paths.roll),
       ...(paths.hasBond
         ? [
-            line('bondMtm', paths.bondMtm, 'var(--sr-ref-cd)'),
-            line('bondCarry', paths.bondCarry, 'var(--sr-ref-policy)'),
-            line('bondRoll', paths.bondRoll, 'var(--sr-ref-roll)'),
-            line('fund', paths.fund, 'var(--color-fg)'),
+            line('bondMtm', paths.bondMtm),
+            line('bondCarry', paths.bondCarry),
+            line('bondRoll', paths.bondRoll),
+            line('fund', paths.fund),
           ]
         : []),
-      ...(paths.hasFut ? [line('futMtm', paths.futMtm, 'var(--sr-ref-fut)')] : []),
+      ...(paths.hasFut ? [line('futMtm', paths.futMtm)] : []),
     ];
   }, [paths]);
+
+  /** 리드아웃 칸 — **그려진 성분 선 그대로**다(견본 색이 그 선의 잉크).
+   *
+   *  돈이라 자리가 넓다(억 단위 여섯 자리) — 경로 전체의 극단으로 재서 커서를
+   *  옮겨도 칸이 안 밀린다. 좁아지면 채권·선물 성분부터 값을 내려놓고 스왑
+   *  평가·캐리는 안 내려놓는다(이 창이 답하는 「어떻게 쌓였나」의 주인공). */
+  const pathSlots = useMemo<StripSlot[]>(() => {
+    if (!paths) return [];
+    const at =
+      pathIdx != null && pathIdx >= 0 && pathIdx < paths.days.length
+        ? pathIdx : paths.days.length - 1;
+    const ink = new Map(pathLines.map((l) => [l.id, PATH_INK[l.id] ?? 'var(--color-fg)']));
+    const shown = PATH_ROWS.filter((r) => drawPath(r.key));
+    const ch = slotChars(
+      fmtKrw,
+      ...shown.flatMap((r) => (paths[r.key] as (number | null)[]).filter(
+        (x): x is number => x != null)),
+    );
+    return shown.map((r, n) => ({
+      key: r.key,
+      label: r.label,
+      value: fmtKrw((paths[r.key] as (number | null)[])[at] ?? 0),
+      color: ink.get(r.key),
+      chars: ch,
+      drop: (n < 2 ? undefined : Math.min(n - 1, 6) as 1 | 2 | 3 | 4 | 5 | 6),
+    }));
+  }, [paths, pathIdx, pathLines, drawPath]);
 
   const setPathHover = useCallback((i: number | null) => setPathIdx(i ?? undefined), []);
   const dayLabel = useCallback((d: number) => `D+${d}`, []);
@@ -519,8 +561,17 @@ export function ResultsWindow({
               생기는 몫, 캐리는 실제 주고받는 이자의 몫, 롤다운은 커브가 멈춰도 잔존만기가
               줄어 생기는 몫이에요.
             </TextLegal>
-            {/* 카드가 기준으로 삼는 상자(`.sr-plot` = position:relative). */}
-            <Box className="sr-plot" width="100%" onMouseMove={onPathMove}>
+            {/* 커서가 짚은 날의 성분 — **그림 위 한 줄**이다 [2026-09-21 이관].
+                손익이 어떻게 쌓이는지 보는 창이라, 떠 있던 카드가 하필 쌓이는
+                구간을 덮고 있었다. */}
+            <ChartReadoutStrip
+              date={`D+${paths.days[
+                pathIdx != null && pathIdx >= 0 && pathIdx < paths.days.length
+                  ? pathIdx : paths.days.length - 1
+              ] ?? 0}`}
+              slots={pathSlots}
+            />
+            <Box className="sr-plot" width="100%">
               <NumericChart
                 height={260}
                 accessibilityLabel="성분 누적 경로"
@@ -531,19 +582,6 @@ export function ResultsWindow({
                 onHoverIndex={setPathHover}
                 hoverLabel={pathScrubLabel}
               />
-              {/* 커서가 짚은 날의 성분 — 레인 P1-2. 이 화면은 손익이 어떻게
-                  쌓이는지를 보는 자리인데, 특정 날의 숫자를 읽을 길이 없었다. */}
-              {pathIdx != null && pathIdx >= 0 && paths.days[pathIdx] != null ? (
-                <ReadoutCard title={`D+${paths.days[pathIdx]}`}>
-                  {PATH_ROWS.filter((r) => drawPath(r.key)).map((r) => (
-                    <ReadoutMoney
-                      key={r.key}
-                      k={r.label}
-                      v={(paths[r.key] as (number | null)[])[pathIdx] ?? null}
-                    />
-                  ))}
-                </ReadoutCard>
-              ) : null}
             </Box>
             {p ? (
               <HStack gap={1.5} flexWrap="wrap">
