@@ -29,22 +29,21 @@ import {
 } from '../src/ui/nav';
 
 describe('Strategy 세입자', () => {
-  it('세입자 넷 — Credit RV · Mean Reversion · Momentum · 모멘텀 슬리브다', () => {
-    /* 넷째는 2026-09-21 입주 [OWNER — "모멘텀도 좀 고쳐두자"]. **셋째와 다른
-       북이다**: `momentum` 은 2026-09-08 등록(선물·합성)을 비추는 거울이고
-       굴리지 않는 반면, 슬리브는 09-15 동결·09-16 채점 중인 IRS 50/50 —
-       데스크가 실제로 세울 북이다. 한 면에 합치면 어느 등록의 성적인지
-       못 읽어서 세입자를 갈랐다(`backend/app/sleeve.py` 머리). */
+  it('세입자 셋 — Credit RV · Mean Reversion · Momentum 이다', () => {
+    /* 2026-09-21 에 넷이 셋으로 줄었다 [OWNER — "원래있던 KTB 모멘텀을
+       대체하는거니까 … 그냥 Strategy/Momentum 이 더 잘 맞겠다"]. 09-09 의
+       선물·합성 거울 면은 **완전히 은퇴**했고, 그 자리를 09-15 동결·채점 중인
+       IRS 50/50 이 받는다. 둘을 나란히 두면 「어느 모멘텀이 우리 것인가」를
+       화면이 매일 되묻게 되고, 실제로 그 혼동이 났다. 은퇴한 주소는
+       `RETIRED_STRATEGY` 가 새 면으로 넘긴다 — 링크는 안 죽는다. */
     expect(STRATEGY_ITEMS.map((i) => i.id)).toEqual([
       'credit-rv',
       'mean-reversion',
       'momentum',
-      'momentum-sleeve',
     ]);
     expect(STRATEGY_ITEMS[0]!.label).toBe('Credit RV');
     expect(STRATEGY_ITEMS[1]!.label).toBe('Mean Reversion');
     expect(STRATEGY_ITEMS[2]!.label).toBe('Momentum');
-    expect(STRATEGY_ITEMS[3]!.label).toBe('모멘텀 슬리브');
     /* 기본은 첫 세입자 그대로 — 예전 `?g=strategy` 링크가 가리키던 화면이다. */
     expect(DEFAULT_STRATEGY).toBe('credit-rv');
   });

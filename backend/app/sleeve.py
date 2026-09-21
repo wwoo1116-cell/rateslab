@@ -68,6 +68,209 @@ def _lane():
     return se, sm
 
 
+def _signal_lane():
+    """신호 격자·테마·다리 성적을 세우는 자리 — 여기도 **레인 것**이다.
+
+    KTB 면이 주던 정보를 이 면으로 옮기면서 들어왔다 [OWNER 2026-09-21 — "원래
+    있던 KTB 모멘텀을 대체하는거니까 거기서 제공하던 정보들도 들어가야해"].
+    같은 값을 두 번 정의하지 않으려고 **엔진 함수를 그대로** 부른다:
+
+        `ctabacktest.signal_continuous` · `trend_tstat`   KTB 보드가 쓰는 그 함수
+        `momentum_irs_evaluate.load_irs_series`           IRS par 금리를 **−bp** 로
+        `momentum_irs_books.registered_signals`           테마 넷(IRS 달력 이월)
+        `momentum_irs_legs._book` · `momentum_irs_books.macro_books`
+
+    ⚠ **계열이 −bp 다.** 그래서 신호 +1 이 «리시브»이고, 화면이 칠할 «금리» 방향은
+    `-signal` 이다 — 선물 보드가 가격 계열에서 같은 식을 쓰는 것과 같은 결론이지만
+    이유가 다르다(저쪽은 가격↑=금리↓, 이쪽은 계열 자체가 부호를 뒤집어 놨다).
+    """
+    from app import ctabacktest as cta
+    from app import momentum as mo
+    from scripts import momentum_irs_books as mib
+    from scripts import momentum_irs_evaluate as mie
+    from scripts import momentum_irs_legs as ml
+
+    return cta, mo, mib, mie, ml
+
+
+def _sign(v: float) -> int:
+    return 0 if v == 0 else (1 if v > 0 else -1)
+
+
+def _hold_days(vals: list[float]) -> int:
+    """부호가 안 바뀌고 이어진 날 수 — 「유지」 칸(KTB 보드의 그것)."""
+    if not vals:
+        return 0
+    s = _sign(vals[-1])
+    n = 0
+    for v in reversed(vals):
+        if _sign(v) != s:
+            break
+        n += 1
+    return n
+
+
+def build_signals() -> dict[str, Any] | None:
+    """오늘의 **신호** — 테너 × 룩백 격자와 테마 넷. KTB 면이 주던 그 두 표다.
+
+    못 세우면 `None` 이다(빈 표를 그리느니 칸을 접는다). 값이 없는 것과 0 인 것은
+    다른 사실이라 화면이 그 둘을 다르게 적는다.
+    """
+    try:
+        cta, mo, mib, mie, ml = _signal_lane()
+        series = mie.load_irs_series(end=None)
+        sig = mib.registered_signals(series)
+    except BaseException as exc:                            # noqa: BLE001
+        return {"available": False, "why": f"신호를 못 세웠어요 — {exc}"}
+
+    rows: list[dict] = []
+    for t in sorted(series, key=lambda k: (len(k), k)):
+        dates, px = series[t]
+        cells = []
+        for lb in mo.LOOKBACKS:
+            v = cta.signal_continuous(px, mo.SIGNAL, lb)[-1]
+            tv = cta.trend_tstat(px, lb)[-1]
+            cells.append({"lookback": lb, "signal": round(float(v), 4),
+                          # 화면이 칠할 값은 **금리** 방향이다(모듈 머리 §−bp).
+                          "rate": round(-float(v), 4),
+                          "tstat": None if tv is None else round(float(tv), 2)})
+        comp = sum(c["signal"] for c in cells) / len(cells) if cells else 0.0
+        # 속도합의 — 다섯 룩백 중 합성과 **같은 방향**인 것의 수. 갈리면 「모른다」다.
+        agree = sum(1 for c in cells
+                    if c["signal"] != 0 and _sign(c["signal"]) == _sign(comp))
+        hold = _hold_days([float(x) for x in
+                           cta.signal_continuous(px, mo.SIGNAL, mo.LOOKBACKS[0])])
+        rows.append({"tenor": t, "asof": dates[-1],
+                     # 계열이 −bp 라 그대로 적으면 음수로 보인다 — 금리로 되돌린다.
+                     "rate": round(-float(px[-1]), 2),
+                     "cells": cells, "composite": round(float(comp), 4),
+                     "compositeRate": round(-float(comp), 4),
+                     "agree": agree, "of": len(cells), "holdDays": hold})
+
+    themes = []
+    for name, s in sig.items():
+        vals = [float(x) for x in s.to_numpy()]
+        themes.append({"theme": name, "sign": _sign(vals[-1]) if vals else 0,
+                       "holdDays": _hold_days(vals),
+                       "asof": str(s.index[-1])[:10] if len(s) else None})
+    macro_sign = (sum(t["sign"] for t in themes) / len(themes)) if themes else 0.0
+
+    return {
+        "available": True,
+        "signal": mo.SIGNAL,
+        "lookbacks": list(mo.LOOKBACKS),
+        "rows": rows,
+        "themes": themes,
+        "macroSign": round(macro_sign, 4),
+        "macroRate": round(-macro_sign, 4),
+    }
+
+
+def build_perf() -> dict[str, Any] | None:
+    """**표본내 성적** — 다리 셋(추세·거시·50/50)을 등록 창에서 채점한 표.
+
+    KTB 면이 주던 셋째 표다 [OWNER 2026-09-21]. 옮기면서 두 가지가 바뀌었다:
+
+    ① **창이 등록서의 «증거» 창이다** — 시작은 위험선호 확장 평균이 250일을 채운
+       날(2017-01-09)이고 끝은 **`app.momentum.FREEZE`(2026-09-08)**다. 자르는
+       자리가 **서버**인 이유는 KTB 면의 그것과 같다: 프런트에서 자르면 잘린
+       구간이 네트워크 탭에 그대로 남는다.
+
+       ⚠ **끝이 동결일(09-15)이 아니다.** 슬리브는 09-15 에 동결됐지만 그 판정문
+       (`Momentum-*-IRS-books-paper`)이 선 창은 09-08 까지다 — 평가 경로는
+       `load_irs_series` 의 기본 `end` 를 쓰고 집행 경로만 `end=None` 이다
+       (2026-09-17 갈래). 실측으로 확인한 차이가 작지 않다:
+
+           끝 2026-09-08   추세 0.847 · 거시 0.925 · 50/50 **1.000**  ← 등록서의 수
+           끝 2026-09-15   추세 0.847 · 거시 0.960 · 50/50 **1.168**
+
+       한 주를 더 넣었을 뿐인데 50/50 이 17% 좋아진다. 그 수를 화면에 세우면
+       **화면이 등록서와 다른 말을 한다** — 시험이 등록 수 재현을 못 박는다
+       (`tests/test_sleeve.py::TestPerfReproduces`).
+    ② **세 다리를 다 자른다** — 추세만 남기면 50/50 과의 차로 거시를 역산할 수 있다.
+
+    ## 원화 열은 **혼자 못 읽는다**
+
+    다리마다 실제로 건 위험이 다르다. 원화 낙폭만 보면 「섞으면 반이 된다」로
+    읽히는데 그중 얼마는 «덜 걸어서 덜 아팠던 것»이다(2026-09-09 재점검). 그래서
+    낙폭에는 **위험 맞춤 짝**을 붙이고(추세 다리의 실현 변동성에 맞춘 뒤), 무차원
+    비율(Martin·Sharpe)을 같이 낸다 — 이 데스크에는 자본 분모가 없으므로 **없는
+    분모를 지어내지 않는다**.
+    """
+    try:
+        cta, mo, mib, mie, ml = _signal_lane()
+        from scripts.momentum_theme_books import pnl_of
+
+        series = mie.load_irs_series(end=None)
+        sig = mib.registered_signals(series)
+        t_book = ml._book(series, signal=mo.SIGNAL, vol_window=mo.VOL_WINDOW)
+        m_books = mib.macro_books(series, sig, mo.VOL_WINDOW)
+    except BaseException as exc:                            # noqa: BLE001
+        return {"available": False, "why": f"성적을 못 세웠어요 — {exc}"}
+
+    import math
+
+    start = mib.start_of(sig)
+    end = mo.FREEZE                 # ← 동결일(09-15)이 아니다. 위 ① 의 그 이유.
+
+    def cut(sr):
+        ix = [str(x)[:10] for x in sr.index]
+        return [float(v) for t, v in zip(ix, sr.to_numpy()) if start <= t <= end]
+
+    trend = cut(pnl_of(t_book))
+    macro_each = [cut(pnl_of(b)) for b in m_books.values()]
+    n = min([len(trend)] + [len(x) for x in macro_each]) if macro_each else len(trend)
+    trend = trend[-n:] if n else trend
+    macro = [sum(col) / len(col) for col in
+             zip(*[x[-n:] for x in macro_each])] if macro_each and n else []
+    blend = [0.5 * a + 0.5 * b for a, b in zip(trend, macro)] if macro else []
+
+    ANN = 252
+
+    def stats(x: list[float], ref_vol: float | None) -> dict:
+        if len(x) < 2:
+            return {}
+        m = sum(x) / len(x)
+        sd = math.sqrt(sum((v - m) ** 2 for v in x) / (len(x) - 1))
+        vol = sd * math.sqrt(ANN)
+        cum, peak, mdd, sq = 0.0, 0.0, 0.0, 0.0
+        for v in x:
+            cum += v
+            peak = max(peak, cum)
+            dd = peak - cum
+            mdd = max(mdd, dd)
+            sq += dd * dd
+        ulcer = math.sqrt(sq / len(x))
+        ann = m * ANN
+        # ★위험 맞춤 — 다리마다 건 위험이 다르므로 **기준 다리의 변동성**에 맞춘 뒤
+        #   낙폭을 다시 잰다. 비율(Sharpe·Martin)은 척도 불변이라 안 바뀐다.
+        k = 1.0 if (not ref_vol or vol <= 0) else ref_vol / vol
+        return {
+            "annPnl": round(ann, 2), "annVol": round(vol, 2),
+            "maxDrawdown": round(mdd, 2),
+            "maxDrawdownVolMatched": round(mdd * k, 2),
+            "ulcer": round(ulcer, 2),
+            # 원화 열은 **짝이 있어야 읽힌다** — 낙폭과 같은 사정이다(캐논 가드의
+            # 그 불변식). 비율(Martin·Sharpe)은 척도 불변이라 맞춰도 안 변한다.
+            "ulcerVolMatched": round(ulcer * k, 2),
+            "martin": round(ann / ulcer, 3) if ulcer > 0 else None,
+            "sharpe": round(m / sd * math.sqrt(ANN), 3) if sd > 0 else None,
+            "days": len(x),
+        }
+
+    t_stats = stats(trend, None)
+    ref = t_stats.get("annVol")
+    rows = [{"leg": "trend", **t_stats},
+            {"leg": "macro", **stats(macro, ref)},
+            {"leg": "blend", **stats(blend, ref)}]
+    return {
+        "available": True,
+        "window": {"start": start, "end": end},
+        "refVol": ref,
+        "rows": [r for r in rows if r.get("days")],
+    }
+
+
 def read_ledger(path: Path | None = None) -> dict[str, Any]:
     """원장 상태 — 행 수·마지막 행·**채점일인데 비어 있는 날**.
 
@@ -144,13 +347,30 @@ def build_sheet(*, lane: Callable[[], tuple] | None = None,
         #  종가보다 하루 늦게 끝나는 날 거시 북 넷이 0 인 북을 오늘의 목표로
         #  내놓지 않기 위해서다(`sleeve_execution.asof_for`).
         d = se.asof_for(ix, meta)
-        w4 = sm.daily(verbose=False)
     except BaseException as exc:                            # noqa: BLE001
         # ⚠ `BaseException` 이다 — 레인 스크립트가 `SystemExit` 으로 멈춘다(배분기
         #   폴더가 없거나 집행표 CSV 가 없을 때). 웹 프로세스에서 그것을 안 잡으면
         #   요청이 통째로 죽는다.
         return {"available": False,
                 "why": f"슬리브 수를 세우지 못했어요 — {exc}"}
+
+    # ── W4 는 **따로 잡는다** — 이 북은 MR 없이도 선다 ────────────────────────
+    #
+    # [OWNER 2026-09-21 — "이거 MR이랑은 여기서는 별개도 돌아가게 해주고"]. 배율은
+    # 평균회귀가 증거금을 얼마나 쓰고 있나에 달렸고(W4), 그 경로는 **리포 밖 배분기**
+    # (`Projects\data\krw-crs`)를 읽는다. 종전에는 그것이 통째로 한 `try` 안에
+    # 있어서 배분기가 없는 날 **주문표 전체가 안 섰다** — 이 북 자신의 수는 멀쩡한데.
+    #
+    # 이제 갈래가 둘이다:
+    #     독립   이 북 혼자 — 배율 1.0. **늘 선다.**
+    #     연동   W4 를 먹인 등록 규약. 배분기가 있는 날만 선다.
+    # 화면은 둘을 나란히 적고, 연동이 없으면 그 사유를 적는다.
+    w4: dict | None = None
+    w4_why: str | None = None
+    try:
+        w4 = sm.daily(verbose=False)
+    except BaseException as exc:                            # noqa: BLE001
+        w4_why = f"평균회귀 증거금 경로를 못 읽어서 배율을 못 세웠어요 — {exc}"
 
     led_raw: dict[str, Any] = {"rows": []}
     p = ledger_path or LEDGER_PATH
@@ -162,14 +382,38 @@ def build_sheet(*, lane: Callable[[], tuple] | None = None,
     rows = led_raw.get("rows") or []
     prev = rows[-1] if rows else None
 
-    scale = float(w4["scale"])
+    scale = float(w4["scale"]) if w4 else 1.0
     legs = _legs(se, net_dv, rp, d, scale, prev)
     face_total = sum(l["face"] for l in legs)
     turnover = sum(abs(l["delta"]) for l in legs)
+    #: **독립 판** — 이 북 혼자일 때. 배율이 1 이면 연동 판과 같은 수이고, 그때도
+    #: 두 칸을 다 싣는다(같은 수라는 것 자체가 읽는 사람이 알아야 하는 사실이다).
+    solo = _legs(se, net_dv, rp, d, 1.0, prev)
+    solo_face = sum(l["face"] for l in solo)
 
     return {
         "available": True,
         "asof": d,
+        # ── 이름은 **서버가 낸다** ────────────────────────────────────────────
+        # 클라이언트가 동결일을 다시 적으면 두 번째 진실이 된다 — 등록서가 바뀐 날
+        # 화면만 옛 날짜를 말하게 되고, 그건 이 리포가 「조용히 낡는다」라고 부르는
+        # 결함이다(`guards/critique-repairs` 가 KTB 면에 대해 이미 못 박은 명제다).
+        "registry": {
+            "book": "IRS 50/50 슬리브",
+            "instrument": "IRS " + " · ".join(se.LEG_T),
+            "freeze": sm.FREEZE_DATE,
+            "note": "2026-09-08 등록(선물·합성)과 **별개의 북**이에요 — 그 면은 "
+                    "2026-09-21 에 내려갔고, 수는 판정문에 그대로 있어요.",
+        },
+        # 이 북 혼자의 답 — MR 이 없어도, 배분기가 못 읽혀도 **늘 선다**.
+        "standalone": {
+            "legs": solo, "faceTotal": solo_face,
+            "marginNeed": solo_face * sm.RATE,
+            "turnover": sum(abs(l["delta"]) for l in solo),
+        },
+        # 등록 규약(W4 연동)이 섰나 — 못 섰으면 사유가 있다.
+        "linked": w4 is not None,
+        "linkedWhy": w4_why,
         # 채점 창인가 — 동결일 다음 영업일부터다.
         "scored": d > sm.FREEZE_DATE,
         "freeze": sm.FREEZE_DATE,
@@ -182,16 +426,21 @@ def build_sheet(*, lane: Callable[[], tuple] | None = None,
         # ── W4 — 평균회귀가 증거금을 얼마나 쓰고 있나 ──────────────────────
         "scale": scale,
         "marginNeed": face_total * scale * sm.RATE,
-        "mrMargin": float(w4["mr_margin"]),
-        "headroom": float(w4["headroom"]),
+        "mrMargin": float(w4["mr_margin"]) if w4 else None,
+        "headroom": float(w4["headroom"]) if w4 else None,
         # ★★축소를 **안 하면** 이렇게 된다 — 등록서의 「평균회귀 쪽은 안 건드린다」와
         #   k_mr 을 여력에 거는 것이 한 문장에서 충돌하는 자리다(인계문 §5-1).
-        "headroomNoShrink": float(w4["headroom_no_shrink"]),
-        "scaleNoShrink": float(w4["scale_no_shrink"]),
-        "kMr": float(w4["k_mr"]),
-        "kMrLive": float(w4["k_mr_live"]),
-        "marginSource": w4["margin_source"],
-        "histDays": int(w4["hist_days"]),
-        "histHitDays": int(w4["hist_hit_days"]),
+        "headroomNoShrink": float(w4["headroom_no_shrink"]) if w4 else None,
+        "scaleNoShrink": float(w4["scale_no_shrink"]) if w4 else None,
+        "kMr": float(w4["k_mr"]) if w4 else None,
+        "kMrLive": float(w4["k_mr_live"]) if w4 else None,
+        "marginSource": w4["margin_source"] if w4 else None,
+        "histDays": int(w4["hist_days"]) if w4 else None,
+        "histHitDays": int(w4["hist_hit_days"]) if w4 else None,
         "ledger": read_ledger(p),
+        # 오늘의 신호 — KTB 면이 주던 두 표(테너 × 룩백 격자 · 테마 넷).
+        # 못 세워도 주문표는 선다(그 칸만 접힌다).
+        "signals": build_signals(),
+        # 표본내 성적 — **등록 창에서 서버가 잘라서** 낸다(그 함수 머리 §창).
+        "perf": build_perf(),
     }

@@ -61,15 +61,15 @@ describe('critique repairs, 2026-08-19', () => {
     expect(table).not.toContain('aria-label={`${BASIS_LABEL[b]} 변화 — 눌러서 정렬`}');
   });
 
-  /* 2026-09-15 에 IRS 슬리브가 따로 동결되어 등록 북이 **둘**이 됐다. Momentum 면은
-   * 그중 09-08 판(국채선물·합성 신호)을 비추는 거울이고, 이름을 안 적으면 오늘
-   * 동결된 슬리브로 읽힌다 — 실제로 그 혼동이 났다. 화면이 그 이름을 적는지 잰다. */
+  /* 2026-09-15 에 IRS 북이 따로 동결되어 등록 북이 **둘**이 됐고, 09-21 에 이 면이
+   * 그중 IRS 판으로 갈아탔다. 이름을 안 적으면 어느 등록의 성적인지 못 읽는다 —
+   * 실제로 그 혼동이 났다. 화면이 그 이름과 동결일을 적는지 잰다. */
   it('Momentum 면은 어느 등록 북을 비추는지 적는다', () => {
     // 이름은 **서버가** 낸다 — 동결일을 클라이언트가 다시 적으면 두 번째 진실이 된다.
     const page = read('src/momentum/MomentumPage.tsx');
-    expect(page).toContain('board.registry.freeze');
-    expect(page).toContain('board.registry.instrument');
-    expect(page).toContain('board.registry.note');
+    expect(page).toContain('sheet.registry.freeze');
+    expect(page).toContain('sheet.registry?.instrument');
+    expect(page).toContain('sheet.registry?.note');
     const server = read('backend/app/momentum.py');
     expect(server).toMatch(/"registry":[\s\S]{0,200}"instrument": "국채선물"/);
     expect(server).toMatch(/별개의 북/);

@@ -105,7 +105,12 @@ DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
 # v19 (2026-09-09): 모멘텀 보드에 **`headline`** 이 붙었다 [OWNER — 「Hero 하나
 # 올려서 트레이더가 바로 판단할 수 있게」]. 안 올리면 v18 캐시가 그 칸 없는 보드를
 # 계속 내주고 **히어로가 통째로 안 그려진다** — v13·v16 에서 이미 두 번 밟은 그 함정.
-SCHEMA_VERSION = 19
+# v20 (2026-09-21): Momentum 면이 IRS 북으로 갈아타면서 성적 표에 **`ulcerVolMatched`**
+# 가 붙었다 — 원화 열은 짝이 있어야 읽힌다는 그 캐논(다리마다 실제로 건 위험이
+# 달라 원화 낙폭을 그냥 견주면 「덜 걸어서 덜 아팠던 것」이 이긴다). 안 올리면
+# v19 의 `sleeve-sheet` 캐시가 그 칸 없는 표를 계속 내주고, 화면은 에러도 없이
+# 빈 칸을 그린다 — v13·v16·v19 에서 이미 세 번 밟은 그 함정이다.
+SCHEMA_VERSION = 20
 
 
 def data_hash(path: Path, asof: "object | None" = None) -> str:

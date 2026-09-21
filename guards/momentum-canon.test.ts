@@ -41,7 +41,6 @@ describe('Momentum 캐논', () => {
       "@/ui/DataState",
       "@/table/rowHeight",
       "@/table/tint",
-      "@/chart/TimeChart",
       "@coinbase/cds-web/tables",
       "@coinbase/cds-web/layout",
       "@coinbase/cds-web/typography",
@@ -62,8 +61,11 @@ describe('Momentum 캐논', () => {
   });
 
   it('룩백이 손잡이가 아니라 열이다', () => {
-    /* 서버가 목록을 주고 화면은 그 위를 돈다 — 고르는 컨트롤이 없다. */
-    expect(page).toMatch(/board\.lookbacks\.map/);
+    /* 서버가 목록을 주고 화면은 그 위를 돈다 — 고르는 컨트롤이 없다.
+       계기가 선물에서 IRS 로 바뀌어도(2026-09-21) 이 명제는 그대로 산다:
+       「룩백을 고르지 마라」가 이 레인의 규율이고, 셀렉트를 두면 화면이 그
+       규율을 어기는 도구가 된다. */
+    expect(page).toMatch(/lookbacks\.map/);
     expect(page).not.toMatch(/sr-pillbtn/);
     expect(page).not.toMatch(/<Select/);
   });
@@ -91,25 +93,29 @@ describe('Momentum 캐논', () => {
    * 「분모를 안 만든다 · Ulcer 는 MR 과 같은 잣대로」였다. */
 
   it('Ulcer 부호를 뒤집지 않는다 — 제곱해서 루트를 씌운 값이다', () => {
-    expect(page).not.toMatch(/-\s*\w*\.?card\.ulcer|-\s*perf\.ulcer/);
-    /* 서버 쪽도 같은 식이어야 한다. */
-    expect(src('backend/app/momentum.py')).toMatch(/math\.sqrt\(sum\(d \* d for d in dd_path\)/);
+    expect(page).not.toMatch(/-\s*\w*\.?card\.ulcer|-\s*perf\.ulcer|-\s*r\.ulcer/);
+    /* 서버 쪽도 같은 식이어야 한다 — 낙폭의 «크기» 라 음수가 아니다. */
+    expect(src('backend/app/sleeve.py')).toMatch(/math\.sqrt\(sq \/ len\(x\)\)/);
   });
 
   it('원화 열은 «위험 맞춤» 짝을 갖는다 — 그냥 비교하면 덜 걸어서 덜 아픈 것이 이긴다', () => {
+    /* 2026-09-21 에 계기가 IRS 로 바뀌고 성적 표가 이 면으로 옮겨 왔다. 명제는
+       그대로다 — 다리마다 실제로 건 위험이 달라(추세 1,849만 대 거시 829만) 원화
+       낙폭을 그냥 견주면 «덜 걸어서 덜 아팠던 것»이 이긴다. */
     for (const k of ['maxDrawdownVolMatched', 'ulcerVolMatched']) {
       expect(src('src/momentum/api.ts'), k).toContain(k);
+      expect(src('backend/app/sleeve.py'), k).toContain(k);
     }
     expect(page).toContain('maxDrawdownVolMatched');
     expect(page).toContain('ulcerVolMatched');
   });
 
   it('없는 자본 분모를 지어내지 않는다 — 무차원 비율로 비교한다', () => {
-    const py = src('backend/app/momentum.py');
+    const py = src('backend/app/sleeve.py');
     expect(py).not.toMatch(/AUM|capital_krw|equity_krw/i);
     /* 대신 무차원 Martin 이 있어야 한다 — 그게 분모 없이 비교하는 자리다. */
     expect(py).toMatch(/"martin"/);
-    expect(page).toContain('l.card.martin');
+    expect(page).toContain('r.martin');
   });
 
   it('말줄임·중간 줄바꿈 금지 규칙을 안 어긴다', () => {

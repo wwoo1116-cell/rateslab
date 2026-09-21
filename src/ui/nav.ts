@@ -235,7 +235,7 @@ export function isLabId(v: string | undefined): v is LabId {
  * 회사채AAA·카드채AA+·캐피탈채AA- 와 함께). 그 둘은 벤치마크로 같이 서는 것이고,
  * 데스크가 이 화면을 「크레딧 RV」로 부르는 것이 맞다는 판단이다. 화면이 그
  * 사실을 한 줄로 말한다. */
-export type StrategyId = 'credit-rv' | 'mean-reversion' | 'momentum' | 'momentum-sleeve';
+export type StrategyId = 'credit-rv' | 'mean-reversion' | 'momentum';
 
 export const DEFAULT_STRATEGY: StrategyId = 'credit-rv';
 
@@ -269,52 +269,48 @@ export const STRATEGY_ITEMS: {
        골랐다. vol 의 '〜'(상대 변동성)와는 딴 것이라 같은 그림을 안 쓴다. */
     glyph: '∿',
   },
-  /* 셋째 세입자 [OWNER 2026-09-09 — "v2 strategy tab 밑에 지금까지 한 거
-     momentum으로 붙이는 계획. 위계상으로는 RV, MR과 동일"]. **방향과 강도를
-     재는 화면이지 단독 전략이 아니다** — 선물 추세 단독은 자본비용 전액 규약에서
-     MMF 초과 −1.07 ~ +0.97%/년이었다(research\ktb-tsmom). 이웃 둘의 명구 의무를
-     같은 문법으로 진다(desc 도 명령형·추천 금지).
+  /* 셋째 세입자 — **IRS 모멘텀** [OWNER 2026-09-21 — "원래있던 KTB 모멘텀을
+     대체하는거니까 거기서 제공하던 정보들도 들어가야해. 슬리브라는 표현보다는
+     그냥 Strategy/Momentum 이 더 잘 맞겠다"].
 
-     구조는 «등록된 북» 그대로다 — AQR 병렬 50/50 의 두 다리(추세·매크로)이고,
-     추세 다리의 신호는 macross 하나다. tsmom·donchian 은 PBO 격자 차원이지 이
-     북에 안 든다(backend/app/momentum.py 머리). */
+     ## 이 자리는 **주인이 바뀌었다**
+
+     2026-09-09~09-21 동안 `momentum` 은 **선물 KTB** 등록(2026-09-08 · 합성)을
+     비추는 거울이었다. 지금은 동결·채점 중인 **IRS 50/50**(2026-09-15 동결 ·
+     09-16 채점)이 그 자리를 진다 — 데스크가 실제로 세울 북이 이쪽이기 때문이다.
+     주소(`?s=momentum`)를 그대로 물려받는 이유도 그것이다: 이 데스크에서
+     「모멘텀」이 가리키는 것이 바뀌었지 두 화면이 나란히 있는 것이 아니다.
+
+     KTB 면은 **은퇴했다**(2026-09-21). 그 등록의 수는 스크립트와 판정문에 그대로
+     있고(`scripts/momentum_evaluate.py` · `docs/`), 화면만 내렸다.
+
+     ## 이 면이 «추천» 을 하지 않는 자리
+
+     액면은 화면의 판단이 아니라 **등록된 규칙이 낸 값**이다. desc 가 이웃 둘과
+     달리 행동을 적는 것은 이 면이 측정면이 아니라 **집행면**이기 때문이고,
+     그래도 크기를 권하지는 않는다. */
   {
     id: 'momentum',
     label: 'Momentum',
-    desc: '추세가 어느 쪽으로 얼마나 강한지 — 계약별 속도 프로파일과 매크로 다리',
-    /* 오름 화살 [OWNER 2026-09-09 확인]. 변화 셀의 `directionGlyph`(↗↘)와 그림이
-       겹치지만, 거기서는 «그 값의 부호»이고 여기서는 «추세»라 뜻이 이어진다 —
-       오너가 그대로 가기로 정했다. */
+    desc: '등록된 IRS 50/50 이 오늘 세울 북과 어제와의 차이 — 신호·배율·채점 상태',
+    /* 오름 화살 [OWNER 2026-09-09 확인] — 자리의 주인이 바뀌어도 그림은 같다.
+       변화 셀의 `directionGlyph`(↗↘)와 겹치지만 거기서는 «그 값의 부호»이고
+       여기서는 «추세»라 뜻이 이어진다. */
     glyph: '↗',
-  },
-  /* 넷째 세입자 [OWNER 2026-09-21 — "모멘텀도 좀 고쳐두자.. 원래 우리 하던
-     방향있잖아"]. **셋째와 다른 북이다** — 옆의 `momentum` 은 2026-09-08 등록
-     (선물·합성)을 비추는 거울이고 굴리지 않는다. 이쪽은 2026-09-15 동결·09-16
-     채점 중인 IRS 50/50 슬리브, 즉 **데스크가 실제로 세울 북**이다. 둘을 한 면에
-     합치지 않는 이유가 그것이다: 수를 섞으면 어느 등록의 성적인지 못 읽는다
-     (`backend/app/sleeve.py` 머리).
-
-     desc 는 이웃 셋과 달리 **행동을 적는다** — 이 면은 측정면이 아니라 집행면이고,
-     그 사실이 이름줄에서 갈려야 한다. 그래도 크기를 권하지는 않는다: 액면은
-     등록된 규칙이 낸 값이고 화면은 그것을 옮겨 적을 뿐이다. */
-  {
-    id: 'momentum-sleeve',
-    label: '모멘텀 슬리브',
-    desc: '등록된 IRS 50/50 이 오늘 세울 북과 어제와의 차이 — 배율·여력·채점 상태',
-    /* 겹쳐진 층 — 「슬리브(한 겹 얹는 것)」의 그림이고, 이웃 셋의 글리프
-       (◈ ∿ ↗)와 안 겹친다. */
-    glyph: '≡',
   },
 ];
 
 export function isStrategyId(v: string | undefined): v is StrategyId {
-  return (v === 'credit-rv' || v === 'mean-reversion' || v === 'momentum'
-    || v === 'momentum-sleeve');
+  return v === 'credit-rv' || v === 'mean-reversion' || v === 'momentum';
 }
 
 /** 내려간 세입자. 지금은 없지만 자리를 비워 둔다 — `RETIRED_LAB` 과 같은 이유로,
  *  공유된 링크가 조용히 엉뚱한 데로 가면 링크를 준 사람이 거짓말을 한 셈이 된다. */
-export const RETIRED_STRATEGY: Record<string, StrategyId> = {};
+export const RETIRED_STRATEGY: Record<string, StrategyId> = {
+  /* 2026-09-21 에 쓰였다가 같은 날 이름이 바뀐 키 — 슬리브 면이 `momentum` 을
+     물려받았다. 며칠짜리 링크라도 죽이지 않는다(이 상수가 있는 이유 그대로). */
+  'momentum-sleeve': 'momentum',
+};
 
 /**
  * URL 의 세입자 키를 지금 사는 세입자로 옮긴다.

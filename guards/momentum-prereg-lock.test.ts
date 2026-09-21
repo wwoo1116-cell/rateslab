@@ -25,6 +25,8 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments } from './_source';
+
 const root = path.resolve(import.meta.dirname, '..');
 const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
 
@@ -65,8 +67,10 @@ describe('Momentum 채점 잠금', () => {
   });
 
   it('프런트는 절단을 «하지» 않는다 — 서버가 준 것만 그린다', () => {
-    const page = read('src/momentum/MomentumPage.tsx');
-    const api = read('src/momentum/api.ts');
+    /* 주석은 뺀다 — 이 면의 내력(어느 북을 비추다 갈아탔는지)을 적은 줄에
+       동결일이 나오는 것은 두 번째 진실이 아니다. 코드에 있으면 그렇다. */
+    const page = stripComments(read('src/momentum/MomentumPage.tsx'));
+    const api = stripComments(read('src/momentum/api.ts'));
     for (const s of [page, api]) {
       expect(s).not.toMatch(/2026-09-08/);
       expect(s).not.toMatch(/\.filter\([^)]*freeze/i);
@@ -75,6 +79,14 @@ describe('Momentum 채점 잠금', () => {
 
   it('화면이 잠겼다는 사실을 «말한다» — 조용히 비우지 않는다', () => {
     expect(code).toMatch(/판정일까지 안 보여드려요/);
-    expect(read('src/momentum/MomentumPage.tsx')).toMatch(/book\.lock\.note/);
+    /* 2026-09-21 에 면이 IRS 북으로 갈아타면서 잠금이 «성적 창»으로 나타난다:
+       서버가 `mo.FREEZE` 에서 끊은 창을 그대로 적는다. 날짜를 화면이 다시 적지
+       않으면서도 「여기까지만 보고 있다」가 읽혀야 한다. */
+    const page = read('src/momentum/MomentumPage.tsx');
+    expect(page).toMatch(/perf\.window\?\.start/);
+    expect(page).toMatch(/perf\.window\?\.end/);
+    expect(page).toMatch(/등록 판정문의 창이에요/);
+    /* 그 창의 끝은 **서버**가 동결 상수에서 낸다. */
+    expect(stripPy(read('backend/app/sleeve.py'))).toMatch(/end\s*=\s*mo\.FREEZE/);
   });
 });
