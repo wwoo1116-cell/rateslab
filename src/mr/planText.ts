@@ -14,6 +14,23 @@
  * 값이고(`backend/app/mrplan.py`), 이 파일은 그 수들을 우리말로 잇는다. 밴드를
  * 화면에서 다시 내면 보드와 창이 다른 수를 말하게 된다 — 가드가 그 자리를 잰다.
  *
+ * ## 낱말은 데스크 표준이다 [OWNER 2026-09-21 오후]
+ *
+ * > "오글거리거나 모호한 단어 보다는 … 채권, FICC 에 대해서 외부 리서치를 통해서
+ * >  공용으로 사용하고 일반적인 트레이더도 알아들을 수 있는 단어로 바꿔다오."
+ *
+ * 문장 꼴(「~예요」)은 그대로 두고 **명사만** 국내 금리 데스크가 실제로 쓰는
+ * 말로 맞췄다(이데일리 본드웹 계열 보도의 어휘 — 본드스왑스프레드·페이/리시브·
+ * 언와인딩·캐리·와이든/타이튼). 바꾼 자리:
+ *
+ *     늘어남 → 괴리도        (평균 대비 σ 배수 = z-score. 「늘어남」은 우리 조어다)
+ *     지금 할 일 → 시그널
+ *     밴드 안 → 밴드 내 · 상단 밖 → 상단 이탈 · 재진입 → 밴드 복귀
+ *     들고 있어요 → 보유      (「보유 n일」이 데스크 표기다)
+ *     지났어요 → 돌파
+ *     아직 못 재요 → 산출 불가 (사유는 「표본 부족」)
+ *     미청산 → 미실현
+ *
  * ## 명목은 안 적는다
  *
  * 2026-09-09 의 「트리거는 진입 레벨까지」는 청산·손절이 붙으면서 뒤집혔지만
@@ -25,7 +42,7 @@ import type { Unit } from '@/lib/api';
 import { fmtLevel, unitSuffix } from '@/lib/format';
 import { fmtKrw } from '@/lib/krw';
 
-import type { MrPlanLevel, MrPlanRow } from './api';
+import type { MrPlanLevel, MrPlanPosition, MrPlanRow } from './api';
 
 const MINUS = '−';
 
@@ -91,10 +108,10 @@ export function planLines(r: MrPlanRow): PlanLines {
   // ① 밴드가 못 선다 — 「없다」가 아니라 「못 잰다」라고 적는다.
   if (r.z == null || r.levels.length === 0) {
     return {
-      lead: '아직 못 재요',
+      lead: '산출 불가',
       /* z 가 없는 이유는 둘이다 — 창 미달 **또는 σ=0**(값이 창 안에서 한 번도
          안 움직인 계열). 창 탓으로만 적으면 평평한 계열에서 거짓이 된다. */
-      sub: `밴드가 아직 못 서요 (${r.cond.lookback}일 창)`,
+      sub: `표본 부족 — ${r.cond.lookback}일 창`,
     };
   }
 
@@ -102,9 +119,9 @@ export function planLines(r: MrPlanRow): PlanLines {
   const p = r.position;
   if (p) {
     const won = fmtKrw(p.pnl);
-    const lead = `${p.bars}일째 들고 있어요 · ${won}`;
+    const lead = `보유 ${p.bars}일 · ${won}`;
     if (p.exit == null || p.stop == null) {
-      return { lead, sub: `${p.legs} · 밴드가 못 서서 청산·손절 레벨이 없어요`,
+      return { lead, sub: `${p.legs} · 밴드 미산출로 청산·손절선 없음`,
                pnl: p.pnl };
     }
     // 방향 낱말은 **지금 값이 중심선의 어느 쪽인가**가 정한다(서버의 그 규약) —
@@ -120,7 +137,7 @@ export function planLines(r: MrPlanRow): PlanLines {
   if (!l) {
     // 문턱이 아예 없다 = 이 데스크가 할 수 있는 방향이 없다는 뜻이고, 사유는
     // 행이 따로 진다(`triggerBlocked`) — 지어내지 않는다.
-    return { lead: `${fmtZ(r.z)} 벌어졌어요`, sub: r.triggerBlocked ?? '문턱이 없어요' };
+    return { lead: `${fmtZ(r.z)} 확대`, sub: r.triggerBlocked ?? '진입선 없음' };
   }
   const word = l.side === 'above' ? '이상' : '이하';
   const touch = r.cond.entryMode === 'touch';
@@ -134,16 +151,43 @@ export function planLines(r: MrPlanRow): PlanLines {
     // 「밴드 복귀」 규칙 — 밖에 있다가 **돌아오는** 봉에 들어간다. 그래서 문턱을
     // 지났다고 진입 자리가 아니다(그 사실을 안 적으면 화면이 거짓을 말한다).
     return out
-      ? { lead: `${head} · 돌아오면 진입`,
-          sub: `${lvl(l.entry, unit)} 안으로 돌아오면 ${l.legs}` }
+      ? { lead: `${head} · 밴드 복귀 시 진입`,
+          sub: `${lvl(l.entry, unit)} 안으로 복귀하면 ${l.legs}` }
       : { lead: `${head} · 진입까지 ${gap(l.entryGap, dUnit)}`,
-          sub: `${lvl(l.entry, unit)} 밖으로 나갔다 돌아오면 ${l.legs}` };
+          sub: `${lvl(l.entry, unit)} 이탈 후 복귀하면 ${l.legs}` };
   }
   return l.entryReached
-    ? { lead: `${head} · 진입 자리예요`,
-        sub: `${lvl(l.entry, unit)} ${word} · ${gap(l.entryGap, dUnit)} 지났어요 → ${l.legs}` }
+    ? { lead: `${head} · 진입 시그널`,
+        sub: `${lvl(l.entry, unit)} ${word} · ${gap(l.entryGap, dUnit)} 돌파 → ${l.legs}` }
     : { lead: `${head} · 진입까지 ${gap(l.entryGap, dUnit)}`,
-        sub: `${lvl(l.entry, unit)} ${word}이면 ${l.legs}` };
+        sub: `${lvl(l.entry, unit)} ${word} 시 ${l.legs}` };
+}
+
+/** 보유 포지션의 **매력도 한 줄** [OWNER 2026-09-21 오후 — "원래 진입하는 조건이
+ *  매력도고 그 위치에 대한 순위를 유지해주면 됨"].
+ *
+ *  새 척도를 만들지 않는다. 델타를 더 열지 말지는 **그 계열을 애초에 사게 한 그
+ *  조건**이 지금도 서 있느냐로 판단한다 — 진입선을 아직 넘어 있으면 더 실을 자리,
+ *  밴드로 돌아왔으면 더 실을 이유가 없다. 순위(|z|)도 진입 후보와 **같은 한 줄**을
+ *  쓴다. 그래서 이 함수가 보는 것은 `levels` 이지 포지션이 아니다. */
+export function entryNote(r: MrPlanRow): string {
+  const l = pickLevel(r);
+  if (!l) return r.triggerBlocked ?? '진입선 없음';
+  const d = gap(l.entryGap, r.dUnit);
+  if (r.cond.entryMode === 'touch') {
+    const out = r.state.kind === 'above' || r.state.kind === 'below';
+    return out ? '밴드 복귀 시 추가' : `진입선까지 ${d}`;
+  }
+  return l.entryReached ? `진입선 ${d} 돌파 · 추가 가능` : `진입선까지 ${d}`;
+}
+
+/** 청산·손절선에 붙는 **부등호 낱말** — 지금 값이 중심선의 어느 쪽인가가 정한다.
+ *
+ *  위쪽이면 내려와야 청산이고 더 올라야 손절이다(서버의 `exits_now` 규약).
+ *  표의 두 열과 문장이 같은 낱말을 써야 해서 여기 한 벌로 둔다. */
+export function exitWords(p: MrPlanPosition): { exit: string; stop: string } {
+  const above = (p.z ?? 0) >= 0;
+  return above ? { exit: '이하', stop: '이상' } : { exit: '이상', stop: '이하' };
 }
 
 /** 상태 한 낱말 — **판정이지 행동이 아니다**.
@@ -151,11 +195,13 @@ export function planLines(r: MrPlanRow): PlanLines {
  *  앱에 한 벌이다: 계획면의 문장, 통합 스트립의 툴팁, 그리고 보드가 쓰던 그
  *  어휘가 전부 이것이다. 두 화면이 같은 사건을 다르게 부르면 나란히 못 읽는다. */
 export function stateText(s: MrPlanRow['state']): string {
-  if (s.kind === 'below') return `하단 밖 ${s.days}일째`;
-  if (s.kind === 'above') return `상단 밖 ${s.days}일째`;
-  if (s.kind === 'reentry-low') return `하단 재진입 ${s.days}일째`;
-  if (s.kind === 'reentry-high') return `상단 재진입 ${s.days}일째`;
-  return '밴드 안';
+  if (s.kind === 'below') return `하단 이탈 ${s.days}일째`;
+  if (s.kind === 'above') return `상단 이탈 ${s.days}일째`;
+  /* 「재진입」은 밴드로 돌아온 것인지 밴드를 또 뚫은 것인지가 안 갈린다 —
+     데스크 말로 **복귀**다. 어느 쪽에서 돌아왔는지는 괄호가 진다. */
+  if (s.kind === 'reentry-low') return `밴드 복귀 ${s.days}일째 (하단)`;
+  if (s.kind === 'reentry-high') return `밴드 복귀 ${s.days}일째 (상단)`;
+  return '밴드 내';
 }
 
 /** 「지난 1년」 한 줄 — 표의 손익 칸 밑에 서는 뒷말.
@@ -170,7 +216,7 @@ export function perfNote(r: MrPlanRow): string {
        평가**이기 때문이다(실측 2026-09-21: IRS 3Y-10Y 가 −336만원·0건, 442일째
        보유 중). 「1년 거래 없어요」만 적으면 읽는 사람이 「거래가 없는데 왜
        손익이 있나」에서 멈춘다 — 그 답을 이 줄이 적는다. */
-    return r.perf1y.totalPnl === 0 ? '1년 거래 없어요' : '미청산 평가만 · 1년 거래 없어요';
+    return r.perf1y.totalPnl === 0 ? '1년 거래 0건' : '미실현 평가만 · 1년 거래 0건';
   }
   const wr = r.perf1y.winRate;
   return `1년 ${n}건${wr == null ? '' : ` · 승률 ${Math.round(wr * 100)}%`}`;

@@ -69,7 +69,9 @@ import {
 import { BandChart } from './BandChart';
 import { BookWindow } from './BookWindow';
 import { condWord, SplitColumn } from './parts';
-import { fmtZ, gap, lvl, perfNote, planLines, stateText } from './planText';
+import {
+  entryNote, exitWords, fmtZ, gap, lvl, perfNote, planLines, stateText,
+} from './planText';
 import { StrategyWindow } from './StrategyWindow';
 
 /* `Cond`(조건 바 한 칸)와 `ThHelp`(열 머리 뜻풀이)는 공용이다(`ui/Cond`·
@@ -77,15 +79,15 @@ import { StrategyWindow } from './StrategyWindow';
 
 const MINUS = '−';
 
-/** 통합 줄의 상태 — **개수**다. 「밖 3 · 재진입 1 · 안 5」.
+/** 통합 줄의 상태 — **개수**다. 「이탈 3 · 복귀 1 · 밴드 내 5」.
  *  0 인 것은 안 적는다(없는 일을 0 으로 적으면 줄만 길어진다 — `exitTally` 의
  *  그 규율). 전부 안이면 그 사실을 한 낱말로 말한다. */
 function watchText(w: MrWatch): string {
   const out = w.outLow + w.outHigh;
   const parts = [
-    out ? `밖 ${out}` : null,
-    w.reentry ? `재진입 ${w.reentry}` : null,
-    w.inside ? `밴드 안 ${w.inside}` : null,
+    out ? `이탈 ${out}` : null,
+    w.reentry ? `복귀 ${w.reentry}` : null,
+    w.inside ? `밴드 내 ${w.inside}` : null,
   ].filter((x): x is string => x !== null);
   return parts.join(' · ') || '—';
 }
@@ -107,6 +109,135 @@ function HeroDelta({ d, unit }: { d: number; unit: string }) {
    했다(실측: 표 1,098 대 카드 안폭 981). 밴드 안 어디인지는 만기별 스트립
    (`BookDetail`)이 여전히 트랙으로 말한다 — 거기서는 아홉 줄의 모양이 답이라
    그림이 일을 한다. */
+
+/** 보유 포지션 한 줄 — **나오는 문 둘**과 「더 실을 자리인가」.
+ *
+ *  진입 후보 줄과 부품은 전부 같다(이름 2줄 스택 · 틴트 변화 셀 · tabular 우측 ·
+ *  60px 행). 다른 것은 **무엇을 세는가**뿐이다. 캐논 규칙 1 그대로 — 같은 모양을
+ *  다시 만들지 않는다.
+ *
+ *  ⚠ 부등호 낱말(이하/이상)은 `exitWords` 한 벌이 정한다. 손으로 적으면 중심선을
+ *  넘어가 있는 줄에서 청산과 손절이 뒤집힌다 — 서버가 `|z|` 로 재는 그 자리다. */
+function HeldRow({ r, on, onPick }: { r: MrPlanRow; on: boolean; onPick: (id: string) => void }) {
+  const p = r.position;
+  if (!p) return null;
+  const w = exitWords(p);
+  const unit = r.unit;
+  const dUnit = r.dUnit;
+  return (
+    <TableRow
+      tabIndex={0}
+      aria-current={on ? 'true' : undefined}
+      style={{ height: ROW_H, cursor: 'pointer' }}
+      onClick={() => onPick(r.id)}
+      onKeyDown={(e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPick(r.id);
+        }
+      }}
+    >
+      <TableCell className="sr-num" justifyContent="flex-end">
+        <Text font="label2" as="span" tabularNumbers noWrap>{r.rank}</Text>
+      </TableCell>
+      <TableCell>
+        <VStack as="span" className="sr-name-stack">
+          <Text font="label1" as="span" noWrap>{r.label}</Text>
+          {/* 정의 자리에 **방향**을 적는다 — 보유 줄에서 먼저 묻는 것이 「무엇을
+              들고 있나」라서, 계열 정의보다 다리가 앞이다. */}
+          <Text font="legal" as="span" color="fgMuted" noWrap>{p.legs}</Text>
+        </VStack>
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        <Text font="label2" as="span" tabularNumbers noWrap>
+          {fmtLevel(r.v, unit as Unit)}
+        </Text>
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end" style={tintStyle(r.d1)}>
+        <Text font="label2" as="span" tabularNumbers noWrap className={directionClass(r.d1)}>
+          {directionGlyph(r.d1)}
+          {directionGlyph(r.d1) ? ' ' : ''}
+          {unsignedDelta(fmtDelta(r.d1, dUnit as Unit))}
+        </Text>
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        <VStack as="span" className="sr-name-stack">
+          <Text font="label2" as="span" tabularNumbers noWrap>{fmtZ(r.z)}</Text>
+          <Text font="legal" as="span" color="fgMuted" noWrap>{entryNote(r)}</Text>
+        </VStack>
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        <VStack as="span" className="sr-name-stack">
+          <Text font="label2" as="span" tabularNumbers noWrap>{lvl(p.entryV, unit)}</Text>
+          <Text font="legal" as="span" color="fgMuted" noWrap>{p.entryT}</Text>
+        </VStack>
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        <VStack as="span" className="sr-name-stack">
+          <Text
+            font="label2"
+            as="span"
+            tabularNumbers
+            noWrap
+            className={directionClass(p.pnl)}
+          >
+            {fmtKrw(p.pnl)}
+          </Text>
+          <Text font="legal" as="span" color="fgMuted" noWrap>보유 {p.bars}일</Text>
+        </VStack>
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        <VStack as="span" className="sr-name-stack">
+          <Text font="label2" as="span" tabularNumbers noWrap>
+            {p.exit == null ? MINUS : lvl(p.exit, unit)}
+          </Text>
+          <Text font="legal" as="span" color="fgMuted" noWrap>
+            {p.exit == null ? '밴드 미산출' : `${w.exit} · ${gap(p.exitGap, dUnit)} 남음`}
+          </Text>
+        </VStack>
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        <VStack as="span" className="sr-name-stack">
+          <Text font="label2" as="span" tabularNumbers noWrap>
+            {p.stop == null ? MINUS : lvl(p.stop, unit)}
+          </Text>
+          <Text font="legal" as="span" color="fgMuted" noWrap>
+            {p.stop == null ? '밴드 미산출' : `${w.stop} · ${gap(p.stopGap, dUnit)} 남음`}
+          </Text>
+        </VStack>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+/** 표 하나를 여는 **구역 머리** — 「무엇을 세는 표인가」와 몇 줄인가.
+ *
+ *  카드 머리(`label1`)보다 한 급 아래(`label2`)다 — 카드 안의 구역이지 새 카드가
+ *  아니다. 얼라인은 카드 머리의 그 리듬을 따르되 위쪽만 줄인다(구역 사이의 숨).
+ *  두 표가 각자 열이 다르므로 이 줄이 없으면 아래 표의 머리가 위 표의 이어지는
+ *  행으로 읽힌다(실측 2026-09-21). */
+function SectionHead({ label, n, note }: { label: string; n: number; note: string }) {
+  return (
+    <HStack
+      alignItems="baseline"
+      gap={1}
+      width="100%"
+      paddingX={2}
+      paddingTop={1}
+      paddingBottom={0.5}
+    >
+      <Text font="label2" as="h3" noWrap>
+        {label}
+      </Text>
+      <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+        {n}
+      </Text>
+      <Text font="legal" as="span" color="fgMuted">
+        {note}
+      </Text>
+    </HStack>
+  );
+}
 
 /** 상태 칸 — **두 줄 문장**이다 [OWNER 2026-09-21 — "토스스타일의 문장으로"].
  *
@@ -169,7 +300,7 @@ function BookDetail({ watch }: { watch: MrWatch }) {
           <Text font="caption" as="span" color="fgMuted" noWrap>위치</Text>
         </Box>
         <Box width={68} display="flex" justifyContent="flex-end">
-          <Text font="caption" as="span" color="fgMuted" noWrap>늘어남</Text>
+          <Text font="caption" as="span" color="fgMuted" noWrap>괴리도</Text>
         </Box>
       </HStack>
       {watch.legs.map((g) => (
@@ -246,7 +377,7 @@ function PlanStats({ r, place }: { r: MrPlanRow; place: 'strip' | 'card' }) {
           <Stat
             label="회계"
             value={r.real ? '실가격' : '엔진 근사'}
-            note={r.real ? '자산스왑 대사' : '롤다운·조달이 없어요'}
+            note={r.real ? '자산스왑 대사' : '롤다운·조달 항 없음'}
           />
         </StatColumn>
         <StatColumn title="지난 1년">
@@ -276,7 +407,7 @@ function PlanStats({ r, place }: { r: MrPlanRow; place: 'strip' | 'card' }) {
             key={l.dir}
             label={`${l.short} 진입`}
             value={`${lv(l.entry)} ${l.side === 'above' ? '이상' : '이하'}`}
-            note={`${l.legs} · ${gp(l.entryGap)} ${l.entryReached ? '지났어요' : '남았어요'}`}
+            note={`${l.legs} · ${gp(l.entryGap)} ${l.entryReached ? '돌파' : '남음'}`}
           />
         ))}
         {r.levels.length === 0 ? (
@@ -321,8 +452,8 @@ function PlanStats({ r, place }: { r: MrPlanRow; place: 'strip' | 'card' }) {
           </>
         ) : (
           <Stat
-            label="들고 있는 다리"
-            value="없어요"
+            label="보유 포지션"
+            value="없음"
             note="이 조건으로는 지금 비어 있어요"
           />
         )}
@@ -370,7 +501,7 @@ export function MrPage() {
     load();
   }, [load]);
 
-  /* ── 채점이 끝날 때까지 다시 묻는다 ──────────────────────────────────────
+  /* ── 산출이 끝날 때까지 다시 묻는다 ──────────────────────────────────────
      25계열이 약 1분이라 첫 응답은 부분이다. `pending` 이 0 이 되면 **멈춘다** —
      끝난 뒤에도 도는 폴링은 서버를 계속 깨우고, 화면은 그 사실을 말하지 않는다. */
   useEffect(() => {
@@ -392,6 +523,18 @@ export function MrPage() {
   const headAsof =
     plan && plan.asof.bss === plan.asof.fut ? plan.asof.bss : null;
   const rows = useMemo(() => plan?.rows ?? [], [plan]);
+  /* ── 진입 후보 / 보유 포지션 [OWNER 2026-09-21 오후 — "진입 시그널을 띄우는거랑
+     손절, 청산 시그널을 띄우는거랑 패널을 분리해주면 좋겠다"] ──────────────
+     한 표에 섞여 있을 때는 같은 「시그널」 열이 줄마다 다른 것을 뜻했다 — 어떤
+     줄은 들어갈 자리를, 어떤 줄은 나올 자리를 적었고 열 이름 하나가 둘 다를
+     감당하고 있었다. 둘은 **다른 결정**이라 표를 가른다.
+
+     ⚠ 순위는 안 다시 매긴다 — `r.rank` 는 25계열 전체의 |z| 한 줄이고, 그것이
+     곧 매력도다 [OWNER — "원래 진입하는 조건이 매력도고 그 위치에 대한 순위를
+     유지해주면 됨"]. 표 안에서 1,2,3 으로 다시 세면 보유 2위가 전체 8위라는
+     사실이 사라진다. */
+  const entryRows = useMemo(() => rows.filter((r) => !r.position), [rows]);
+  const heldRows = useMemo(() => rows.filter((r) => r.position), [rows]);
   const sel: MrPlanRow | undefined = rows.find((r) => r.id === selId) ?? rows[0];
   const selHist = sel ? histories[sel.id] : undefined;
   /* 통합 줄이 골라져 있는가 — 이 줄은 계열이 아니라 집계라 `rows` 에 없고,
@@ -412,7 +555,7 @@ export function MrPage() {
         /* 아직 안 구워진 계열은 404 다 — 결함이 아니라 「아직」이라고 적는다. */
         if (!dead) {
           setHistErr(e instanceof BacktestUnavailable
-            ? '이 계열은 아직 채점 중이에요'
+            ? '이 계열은 아직 산출 중이에요'
             : e instanceof Error ? e.message : String(e));
         }
       });
@@ -471,7 +614,7 @@ export function MrPage() {
           <Cond k="비용" v={`편도 ${plan.params.costBp}bp`} />
           <Cond k="Delta" v={`${(plan.params.notional / 10_000).toLocaleString()}만원/bp`} />
           {plan.pending > 0 ? (
-            <Cond k="채점" v={`${plan.done}/${plan.total}`} strong />
+            <Cond k="산출" v={`${plan.done}/${plan.total}`} strong />
           ) : null}
           {refreshing ? (
             <Text font="legal" as="span" color="fgMuted" noWrap>
@@ -504,7 +647,7 @@ export function MrPage() {
         </Text>
         {plan.pending > 0 ? (
           <Text font="legal" as="span" color="fgMuted">
-            {plan.total}계열 중 {plan.done}계열을 채점했어요 — 순위는 채점된 것들
+            {plan.total}계열 중 {plan.done}계열을 산출했어요 — 순위는 산출된 것들
             안에서예요. 몇 초 뒤에 다시 볼게요.
           </Text>
         ) : null}
@@ -525,7 +668,7 @@ export function MrPage() {
       {rows[0] ? (
         <VStack flexShrink={0} gap={0} width="100%">
           <Text font="label1" as="span" color="fgMuted" noWrap>
-            지금 모니터링할 테너예요
+            괴리도 1위예요
           </Text>
           <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
             <button
@@ -584,7 +727,7 @@ export function MrPage() {
             paddingBottom={0.5}
           >
             <Text font="label1" as="h2" noWrap>
-              밴드 위치 랭킹
+              괴리도 순위
             </Text>
           </HStack>
           {/* 표는 Main/Backtest 의 그 방언이다: CDS Table · 60px 행 · 이름은
@@ -594,6 +737,11 @@ export function MrPage() {
           <VStack gap={0} width="100%" minHeight={0} flexGrow={1}>
             <div className="sr-rv-rank-fill">
               <div className="sr-rv-rank-scroll">
+                <SectionHead
+                  label="진입 후보"
+                  n={entryRows.length}
+                  note="아직 안 들어간 계열이에요 — 진입선과 남은 거리를 적어요."
+                />
                 <Table bordered={false}>
                   {/* 머리는 스크롤을 따라온다 — Main 의 `<TableHeader sticky>`. */}
                   <TableHeader sticky>
@@ -618,26 +766,26 @@ export function MrPage() {
                       </TableCell>
                       <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
                         <ThHelp
-                          label="늘어남"
-                          help="지금 값이 그 계열의 조건(격자 1등)이 쓰는 평균에서 σ 몇 개만큼 떨어져 있는지예요. 이 표의 정렬 축이에요."
+                          label="괴리도"
+                          help="지금 값이 그 계열의 조건(격자 1등)이 쓰는 평균에서 σ 몇 개만큼 떨어져 있는지예요(z-score). 이 화면의 정렬 축이고, 두 표가 같은 한 줄을 씁니다."
                         />
                       </TableCell>
                       <TableCell as="th" scope="col">
                         <ThHelp
-                          label="지금 할 일"
-                          help="포지션이 있으면 청산·손절 레벨을, 없으면 진입 문턱과 남은 거리를 적어요. 레벨은 오늘 밴드라 매일 바뀌어요."
+                          label="시그널"
+                          help="진입선과 남은 거리예요. 레벨은 오늘 밴드라 매일 바뀝니다."
                         />
                       </TableCell>
                       <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
                         <ThHelp
                           label="1년 손익"
-                          help="같은 조건으로 지난 1년만 채점한 순손익이에요. 조건 자체는 전체 표본에서 골랐어요."
+                          help="같은 조건으로 지난 1년만 돌린 순손익이에요. 조건도 같은 1년에서 골랐어요."
                         />
                       </TableCell>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {rows.map((r) => (
+                    {entryRows.map((r) => (
                       <TableRow
                         key={r.id}
                         tabIndex={0}
@@ -809,6 +957,87 @@ export function MrPage() {
                     ) : null}
                   </TableBody>
                 </Table>
+
+                {/* ── ② 보유 포지션 — **나오는 문**의 표 ────────────────────
+                    진입 후보 표와 열이 다르다. 여기서 묻는 것은 「얼마면 들어가나」가
+                    아니라 「언제 나오나, 그리고 더 실을 자리인가」다. 매력도 열을
+                    따로 만들지 않는다 — 진입선이 곧 매력도이고, 그 줄이 괴리도
+                    밑에 선다 [OWNER 2026-09-21 오후].
+
+                    표본이 비면 표 자체를 안 세운다(빈 머리만 서면 「자료가 없다」와
+                    「포지션이 없다」가 같아 보인다). */}
+                {heldRows.length > 0 ? (
+                  <>
+                    <SectionHead
+                      label="보유 포지션"
+                      n={heldRows.length}
+                      note="백테스트가 표본 끝에 들고 있는 다리예요 — 청산·손절선은 오늘 밴드라 매일 바뀝니다."
+                    />
+                    <Table bordered={false}>
+                      <TableHeader sticky>
+                        <TableRow>
+                          <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
+                            <ThHelp
+                              label="순위"
+                              help="25계열 전체 괴리도 순위 그대로예요 — 이 표 안에서 다시 매기지 않아요."
+                            />
+                          </TableCell>
+                          <TableCell as="th" scope="col">
+                            <Text font="caption" as="span" color="fgMuted">계열</Text>
+                          </TableCell>
+                          <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
+                            <Text font="caption" as="span" color="fgMuted" title={levelHeadTitle(headAsof)}>
+                              {levelHeadText(headAsof)}
+                            </Text>
+                          </TableCell>
+                          <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
+                            <Text font="caption" as="span" color="fgMuted">{BASIS_LABEL.d1}</Text>
+                          </TableCell>
+                          <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
+                            <ThHelp
+                              label="괴리도"
+                              help="지금의 σ 배수와, 그 밑에 진입선이 아직 서 있는지예요. 진입선을 넘어 있으면 더 실을 자리이고, 밴드로 돌아왔으면 더 실을 이유가 없어요."
+                            />
+                          </TableCell>
+                          <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
+                            <ThHelp
+                              label="진입"
+                              help="들어간 레벨과 날짜예요. 백테스트가 같은 조건으로 표본을 끝까지 돌렸을 때 아직 안 닫힌 다리예요."
+                            />
+                          </TableCell>
+                          <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
+                            <ThHelp
+                              label="평가손익"
+                              help="편도 0.5bp 비용까지 반영한 미실현 손익이에요. 보유일이 밑에 서요."
+                            />
+                          </TableCell>
+                          <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
+                            <ThHelp
+                              label="청산선"
+                              help="이 레벨에 닿으면 나가요(|z| ≤ exitZ). 밑은 남은 거리예요."
+                            />
+                          </TableCell>
+                          <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
+                            <ThHelp
+                              label="손절선"
+                              help="이 레벨을 넘으면 끊어요(|z| ≥ stopZ). 밑은 남은 거리예요."
+                            />
+                          </TableCell>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {heldRows.map((r) => (
+                          <HeldRow
+                            key={r.id}
+                            r={r}
+                            on={sel != null && r.id === sel.id}
+                            onPick={setSelId}
+                          />
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </>
+                ) : null}
               </div>
             </div>
           </VStack>
@@ -922,7 +1151,7 @@ export function MrPage() {
               <Text font="body" as="span" color="fgMuted">
                 {plan.excluded.length === plan.total
                   ? '계열을 하나도 못 구웠어요 — 위의 사유를 보세요.'
-                  : '채점이 끝나는 대로 계열이 여기 서요.'}
+                  : '산출이 끝나는 대로 계열이 여기 서요.'}
               </Text>
             )}
              </VStack>
@@ -946,8 +1175,8 @@ export function MrPage() {
               <Stat label="만기" value={`${watch.n}개`} />
               <Stat label="밴드 밖" value={`${watch.outLow + watch.outHigh}개`}
                 note={`아래 ${watch.outLow} · 위 ${watch.outHigh}`} />
-              <Stat label="재진입" value={`${watch.reentry}개`} />
-              <Stat label="밴드 안" value={`${watch.inside}개`} />
+              <Stat label="밴드 복귀" value={`${watch.reentry}개`} />
+              <Stat label="밴드 내" value={`${watch.inside}개`} />
             </StatColumn>
             <StatColumn title="지금">
               <Stat label="평균 |z|"

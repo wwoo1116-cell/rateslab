@@ -766,7 +766,10 @@ describe('1순위를 바로 띄운다 — rv 히어로의 문법으로', () => {
 
   it('히어로가 rv 의 부품·활자를 쓴다', () => {
     const code = page();
-    expect(code).toMatch(/지금 모니터링할 테너예요/);
+    /* 2026-09-21 오후에 낱말이 바뀌었다 [OWNER — 공용 용어]: 「테너」는 여기서
+       틀린 말이었다(BSS 2Y·IRS 3Y-10Y 는 만기가 아니라 스프레드다). 명제는
+       그대로 — **1순위가 히어로에 선다**. */
+    expect(code).toMatch(/괴리도 1위예요/);
     expect(code).toMatch(/className="sr-rv-linkbtn"/);
     expect(code).toMatch(/font="display3"/);
   });
@@ -814,11 +817,13 @@ describe('1순위를 바로 띄운다 — rv 히어로의 문법으로', () => {
   });
 
   it('못 구운 계열을 세어서 말한다 — 빈 표를 조용히 내지 않는다', () => {
-    /* 25계열이 2~3분이라 첫 응답은 부분이다. 그 사실을 화면이 적고, 폴링은
-       `pending` 이 0 이면 **멈춘다**(끝난 뒤에도 도는 폴링은 서버를 계속 깨운다). */
+    /* 25계열이 약 1분이라(실측 66초) 첫 응답은 부분이다. 그 사실을 화면이 적고,
+       폴링은 `pending` 이 0 이면 **멈춘다**(끝난 뒤에도 도는 폴링은 서버를 계속
+       깨운다). 「채점」은 2026-09-21 오후에 **「산출」**로 바뀌었다 — 데스크 말이
+       아니었다. */
     const code = page();
     expect(code).toMatch(/plan\.pending > 0/);
-    expect(code).toMatch(/계열을 채점했어요/);
+    expect(code).toMatch(/계열을 산출했어요/);
     expect(code).toMatch(/if \(!plan \|\| plan\.pending <= 0\) return;/);
   });
 });

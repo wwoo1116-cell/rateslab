@@ -44,12 +44,15 @@ describe('통합 줄은 랭킹이 아니다', () => {
     /* 지도의 일부로 그리면(예: rows 에 밀어 넣기) 순위가 매겨진다.
        ⚠ 종전 판정은 `page.indexOf('))}')` 로 **파일의 첫** `))}` 를 집었는데
        그건 `BookDetail` 안 스트립 map 의 끝이라(192줄) 통합 줄을 랭킹 map
-       **안**으로 밀어 넣어도 초록이었다(2026-09-02 검사). 이제 `rows.map(` 의
-       여는 괄호부터 짝이 맞는 닫는 괄호까지를 잘라 **그 안에 없음**을 본다. */
+       **안**으로 밀어 넣어도 초록이었다(2026-09-02 검사). 이제 `entryRows.map(` 의
+       여는 괄호부터 짝이 맞는 닫는 괄호까지를 잘라 **그 안에 없음**을 본다.
+       ⚠ 2026-09-21 오후에 표가 둘로 갈리면서 랭킹 map 의 이름이 `rows.map` →
+       `entryRows.map` 이 됐다. 명제는 그대로다 — 통합 줄은 **집계**라 |z| 순위에
+       낄 물건이 아니고, 그래서 map «밖»이어야 한다. */
     expect(page).toMatch(/\{watch \?/);
     expect(page).toMatch(/className="sr-mr-book"/);
-    const open = page.indexOf('rows.map(');
-    expect(open, 'rows.map(').toBeGreaterThan(0);
+    const open = page.indexOf('entryRows.map(');
+    expect(open, 'entryRows.map(').toBeGreaterThan(0);
     let depth = 0;
     let close = -1;
     for (let i = page.indexOf('(', open); i < page.length; i++) {

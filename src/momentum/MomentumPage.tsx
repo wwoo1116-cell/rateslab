@@ -105,7 +105,7 @@ function SignalPanel({ sig }: { sig: SleeveSignals }) {
     <VStack gap={1.5} width="100%">
       <VStack gap={0.5} width="100%">
         <HStack gap={1} alignItems="baseline" justifyContent="space-between">
-          <Text font="label2" as="h3" noWrap>추세 다리</Text>
+          <Text font="label2" as="h3" noWrap>추세 신호</Text>
           <Text font="legal" as="span" color="fgMuted" noWrap>
             테너 {sig.rows?.length ?? 0} · 룩백 {lookbacks.length} · {sig.signal}
           </Text>
@@ -129,12 +129,15 @@ function SignalPanel({ sig }: { sig: SleeveSignals }) {
               </TableCell>
               <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
                 <ThHelp
-                  label="속도합의"
+                  label="신호 일치"
                   help="다섯 룩백 중 합성과 같은 방향인 것의 수예요. 갈리면 «모른다»에 가까워요."
                 />
               </TableCell>
               <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
-                <Text font="caption" as="span" color="fgMuted">유지</Text>
+                <ThHelp
+                  label="부호 유지"
+                  help="합성 신호가 지금 방향을 며칠째 유지하고 있는지예요. 「유지」 하나로는 무엇이 유지되는지가 안 읽혀서 부호를 적어요."
+                />
               </TableCell>
             </TableRow>
           </TableHeader>
@@ -171,7 +174,7 @@ function SignalPanel({ sig }: { sig: SleeveSignals }) {
 
       <VStack gap={0.5} width="100%">
         <HStack gap={1} alignItems="baseline" justifyContent="space-between">
-          <Text font="label2" as="h3" noWrap>매크로 다리</Text>
+          <Text font="label2" as="h3" noWrap>거시 신호</Text>
           <Text font="legal" as="span" color="fgMuted" noWrap>
             테마 {sig.themes?.length ?? 0} · 부호 북 등가중
           </Text>
@@ -200,7 +203,11 @@ function SignalPanel({ sig }: { sig: SleeveSignals }) {
   );
 }
 
-/** 다리의 우리말 — 서버의 열쇠를 화면에서 **한 번만** 옮긴다. */
+/** 구성의 우리말 — 서버의 열쇠를 화면에서 **한 번만** 옮긴다.
+ *
+ *  ⚠ 2026-09-21 오후에 「다리」에서 **「구성」**으로 바꿨다 [OWNER — 공용 용어].
+ *  이 레인에서 「다리」는 스프레드의 한 변(3Y 페이 · 10Y 리시브)이고, 추세·거시는
+ *  그게 아니라 **신호 가족**이다. 한 화면에서 같은 낱말이 둘을 가리키고 있었다. */
 const LEG_WORD: Record<string, string> = { trend: '추세', macro: '거시', blend: '50/50' };
 
 /** **표본내 성적** — 다리 셋. 원화 열은 위험 맞춤 짝과 무차원 비율을 같이 세운다.
@@ -218,7 +225,7 @@ function PerfPanel({ perf }: { perf: SleevePerf }) {
   return (
     <VStack gap={0.5} width="100%">
       <HStack gap={1} alignItems="baseline" justifyContent="space-between">
-        <Text font="label2" as="h3" noWrap>표본내 성적</Text>
+        <Text font="label2" as="h3" noWrap>표본내 성과</Text>
         <Text font="legal" as="span" color="fgMuted" noWrap>
           {perf.window?.start} ~ {perf.window?.end} · 등록 판정문의 창이에요
         </Text>
@@ -227,7 +234,7 @@ function PerfPanel({ perf }: { perf: SleevePerf }) {
         <TableHeader>
           <TableRow>
             <TableCell as="th" scope="col">
-              <Text font="caption" as="span" color="fgMuted">다리</Text>
+              <Text font="caption" as="span" color="fgMuted">구성</Text>
             </TableCell>
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
               <Text font="caption" as="span" color="fgMuted">연손익</Text>
@@ -241,19 +248,19 @@ function PerfPanel({ perf }: { perf: SleevePerf }) {
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
               <ThHelp
                 label="위험맞춤 낙폭"
-                help="다리마다 실제로 건 위험이 달라요. 추세 다리의 변동성에 맞춘 뒤의 낙폭이에요 — Sharpe·Martin 은 비율이라 안 변하지만 낙폭은 변해요."
+                help="구성마다 실제로 건 위험이 달라요. 추세 구성의 변동성에 맞춘 뒤의 낙폭이에요 — Sharpe·Martin 은 비율이라 안 변하지만 낙폭은 변해요."
               />
             </TableCell>
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
               <ThHelp
                 label="Ulcer"
-                help="낙폭이 얼마나 깊고 오래갔나를 한 수로 압축한 값이에요. 원화라 다리끼리 그대로 비교하면 안 되고, 옆의 위험맞춤 값이나 무차원인 Martin 을 보세요."
+                help="낙폭이 얼마나 깊고 오래갔나를 한 수로 압축한 값이에요. 원화라 구성끼리 그대로 비교하면 안 되고, 옆의 위험맞춤 값이나 무차원인 Martin 을 보세요."
               />
             </TableCell>
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
               <ThHelp
                 label="위험맞춤 Ulcer"
-                help="추세 다리의 변동성에 맞춘 뒤의 Ulcer 예요. 원화 열은 짝이 있어야 읽혀요 — 맞추지 않으면 덜 걸어서 덜 아팠던 다리가 이겨요."
+                help="추세 구성의 변동성에 맞춘 뒤의 Ulcer 예요. 원화 열은 짝이 있어야 읽혀요 — 맞추지 않으면 덜 걸어서 덜 아팠던 구성이 이겨요."
               />
             </TableCell>
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
@@ -415,7 +422,7 @@ export function MomentumPage() {
           <Cond k="증거금 상한" v="100억" />
           {sheet.building ? (
             <Text font="legal" as="span" color="fgMuted" noWrap>
-              표를 굽는 중이에요…
+              표를 산출 중이에요…
             </Text>
           ) : refreshing ? (
             <Text font="legal" as="span" color="fgMuted" noWrap>
@@ -453,7 +460,7 @@ export function MomentumPage() {
           /* MR 배분기를 못 읽은 날 — **이 북 자신의 수는 멀쩡하다**. 그 둘을
              가르지 않으면 화면이 「모멘텀이 안 선다」로 읽힌다. */
           <Text font="body" as="span" color="fgMuted" maxWidth={760}>
-            {sheet.linkedWhy} — 아래는 <b>이 북 혼자</b>의 수예요(배율 1.000).
+            {sheet.linkedWhy} — 아래는 <b>단독 기준</b>의 수예요(배율 1.000).
           </Text>
         ) : null}
         {!sheet.available && sheet.why ? (
@@ -470,21 +477,21 @@ export function MomentumPage() {
           {/* ── 히어로 — 오늘 칠 것 한 줄 ──────────────────────────────────── */}
           <VStack flexShrink={0} gap={0} width="100%">
             <Text font="label1" as="span" color="fgMuted" noWrap>
-              오늘 칠 것이에요
+              금일 주문
             </Text>
             <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
               <Text font="display3" as="span" tabularNumbers noWrap>
-                {legs.some((l) => l.trade) ? `회전 ${uk(sheet.turnover)}` : '칠 것 없어요'}
+                {legs.some((l) => l.trade) ? `회전 ${uk(sheet.turnover)}` : '금일 주문 없음'}
               </Text>
               <Text font="body" as="span" color="fgMuted">
                 {legs
                   .filter((l) => l.trade)
                   .map((l) => `${l.tenor} ${orderWord(l)}`)
-                  .join(' · ') || `1억 미만 차이라 안 쳐요`}
+                  .join(' · ') || `1억 미만 차이라 주문 없음`}
               </Text>
             </HStack>
             <Text font="legal" as="span" color="fgMuted">
-              세울 북 {uk(sheet.faceAfter)} · 증거금 {uk(sheet.marginNeed)} · 배율{' '}
+              포지션 규모 {uk(sheet.faceAfter)} · 증거금 {uk(sheet.marginNeed)} · 배율{' '}
               {sheet.scale?.toFixed(3)}
             </Text>
           </VStack>
@@ -542,7 +549,7 @@ export function MomentumPage() {
                           <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
                             <ThHelp
                               label="주문"
-                              help="목표가 아니라 어제와의 차이예요. 1억 미만은 호가 단위와 수수료를 못 이겨서 안 쳐요."
+                              help="목표가 아니라 어제와의 차이예요. 1억 미만은 호가 단위와 수수료를 못 이겨서 주문을 안 내요."
                             />
                           </TableCell>
                         </TableRow>
@@ -607,7 +614,7 @@ export function MomentumPage() {
               <HStack alignItems="center" justifyContent="space-between" gap={1}
                 paddingX={2} paddingTop={1.5} paddingBottom={0.5}>
                 <Text font="label1" as="h2" noWrap>
-                  오늘 이 수가 선 자리
+                  산출 근거
                 </Text>
               </HStack>
               <VStack gap={1.5} paddingX={2} paddingBottom={2} width="100%" flexGrow={1} minHeight={0}>
@@ -615,9 +622,9 @@ export function MomentumPage() {
                   {/* ★**독립 판이 먼저다** [OWNER 2026-09-21 「MR 이랑 별개도
                       돌아가게」] — 이 북 혼자의 답이 이 화면의 바닥이고, 배율은
                       그 위에 얹히는 제약이다. 순서가 그 위계를 말한다. */}
-                  <StatColumn title="이 북 혼자">
+                  <StatColumn title="단독 기준">
                     <Stat
-                      label="세울 북"
+                      label="포지션 규모"
                       value={uk(sheet.standalone?.faceTotal)}
                       note="배율 안 먹인 값"
                     />
