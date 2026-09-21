@@ -183,6 +183,13 @@ export const momentumHistoryUrl = (key: string) =>
   liveUrl(`/api/momentum/history/${encodeURIComponent(key)}`);
 /** **표본내** 장부 — 동결일 이후는 서버가 잘라서 낸다(채점 잠금). */
 export const momentumBookUrl = () => liveUrl("/api/momentum/book");
+/** 등록 **슬리브**의 아침 주문표 [OWNER 2026-09-21] — 보드가 비추는 북과 **다른
+ * 북**이다(저쪽은 2026-09-08 등록의 거울, 이쪽은 09-15 동결·채점 중인 IRS 50/50).
+ * 손잡이가 없어 query 도 없다: 크기는 등록된 규칙이 낸다.
+ *
+ * 한 번 세우는 데 **44초**라(실측 2026-09-21) 첫 응답은 `building: true` 로 곧바로
+ * 돌아오고 배경이 굽는다 — 화면이 그 사실을 적고 몇 초 뒤 다시 묻는다. */
+export const momentumSleeveUrl = () => liveUrl("/api/momentum/sleeve");
 
 /** 거래 하나의 실가격 일별 대사 — 자산스왑으로 세워 민평 노드를 범프한
  * 테너별 KRD. **거래를 누를 때만** 도는 별도 패스라 라우트도 따로다

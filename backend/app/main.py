@@ -81,6 +81,7 @@ from . import mrregime as mrg
 from . import mrseries as mrs
 from . import payloads
 from . import rv as rv_mod
+from . import sleeve
 from . import schedule_cache
 # 백테스트 엔진은 이제 `mixedbook` 을 통해서만 부른다 — 스왑만 있는 북은 저쪽이
 # 그대로 위임한다. 여기서 `run_backtest` 를 직접 들고 있으면 «스왑 전용 길» 이
@@ -3070,6 +3071,100 @@ def momentum_book() -> dict:
     탭에 그대로 남는다.
     """
     return cached("momentum-book", _dataset.data_key, momentum.build_book)
+
+
+# ── 모멘텀 **슬리브** 집행면 [OWNER 2026-09-21] ──────────────────────────────
+#
+# 산술은 `app/sleeve.py` 가 진다(그 머리에 「왜 화면이 필요했나」). 여기 있는 것은
+# 배관뿐이다 — MR 계획면과 같은 꼴이고 이유도 같다: 한 번 세우는 데 **44초**라
+# (실측 2026-09-21) 한 요청 안에서 못 끝낸다.
+#
+# 다른 것 하나 — **캐시 키가 자료 키만이 아니다.** 이 표는 리포 밖 배분기와 굽는
+# 산출물(`output/sleeve_execution_daily.csv`)에도 기대므로, 그 파일들이 갈리면
+# 키도 갈려야 한다. 안 그러면 스크립트를 다시 돌려도 화면이 옛 표를 계속 낸다 —
+# 이 리포가 반복해서 밟는 **조용한 스테일** 그대로다.
+
+_sleeve_lock = threading.Lock()
+_sleeve_thread: threading.Thread | None = None
+#: 마지막 실패 사유 — **조용히 「굽는 중」으로 두지 않는다.**
+#: 빌더가 죽으면 다음 요청이 또 깨우고 또 죽으므로, 화면에는 영원히 「굽는 중」만
+#: 서고 아무도 이유를 모른다(이 리포가 「조용한 실패」라고 부르는 그것). 실측
+#: 2026-09-21: 캐시 **이름**에 키를 넣어 윈도에서 못 쓰는 파일명(`:`·`|`)이 됐는데
+#: 열 번을 불러도 화면은 같은 문장이었다.
+_sleeve_error: str | None = None
+
+#: 디스크 캐시의 **이름**. 키는 이름이 아니라 **해시**로 넘긴다 — `cached(name,
+#: hash, …)` 의 첫 인자가 그대로 파일명이 되기 때문이다(위 실측).
+SLEEVE_CACHE = "sleeve-sheet"
+
+
+def _sleeve_key() -> str:
+    """자료 키 + 이 표가 읽는 파일들의 자취. 파일이 없으면 그 사실도 키에 든다."""
+    parts = [_dataset.data_key]
+    for p in (Path(__file__).resolve().parent.parent / "output" / "sleeve_execution_daily.csv",
+              sleeve.LEDGER_PATH):
+        try:
+            st = p.stat()
+            parts.append(f"{p.name}:{int(st.st_mtime)}:{st.st_size}")
+        except OSError:
+            parts.append(f"{p.name}:none")
+    return "|".join(parts)
+
+
+def _sleeve_start(key: str) -> bool:
+    """빌더가 안 돌고 있으면 깨운다 — `start()` 는 **자물쇠 안**이다.
+
+    밖에 두면 스레드가 둘 뜬다(MR 계획면에서 감사가 잡은 그 틈 — `is_alive()` 가
+    아직 거짓인 구간이 실재한다).
+    """
+    global _sleeve_thread
+    with _sleeve_lock:
+        if _sleeve_thread is not None and _sleeve_thread.is_alive():
+            return True
+
+        def work() -> None:
+            global _sleeve_thread, _sleeve_error
+            try:
+                cached(SLEEVE_CACHE, key, sleeve.build_sheet)
+                with _sleeve_lock:
+                    _sleeve_error = None
+            except BaseException as exc:                   # noqa: BLE001
+                logging.getLogger("sauron.sleeve").warning(
+                    "[sleeve] 못 구웠어요: %s", exc)
+                with _sleeve_lock:
+                    _sleeve_error = str(exc)
+            finally:
+                with _sleeve_lock:
+                    _sleeve_thread = None
+
+        t = threading.Thread(target=work, name="sleeve-build", daemon=True)
+        _sleeve_thread = t
+        t.start()
+    return True
+
+
+@router.get("/api/momentum/sleeve")
+def momentum_sleeve() -> dict:
+    """등록 슬리브의 **아침 주문표** — 오늘 칠 것은 「어제와의 차이」다.
+
+    `/api/momentum/board` 가 비추는 북과 **다른 북**이다: 저쪽은 2026-09-08 등록
+    (선물·합성)의 거울이고 이쪽은 2026-09-15 동결·09-16 채점 중인 IRS 50/50 이다.
+    같은 탭에 나란히 서지만 수를 섞으면 안 된다.
+
+    첫 요청은 `building: true` 로 곧바로 돌아오고 배경이 굽는다(44초). 화면이 그
+    사실을 적고 몇 초 뒤 다시 묻는다 — 빈 표를 조용히 내지 않는다.
+    """
+    key = _sleeve_key()
+    got = peek(SLEEVE_CACHE, key)
+    if got is not None:
+        return {"building": False, **got}
+    building = _sleeve_start(key)
+    with _sleeve_lock:
+        why = _sleeve_error
+    # 직전 시도가 죽었으면 그 사유를 낸다 — 「굽는 중」만 되풀이하지 않는다.
+    return {"building": building, "available": False,
+            "why": (f"슬리브 표를 굽다가 멈췄어요 — {why}" if why
+                    else "슬리브 표를 굽고 있어요 — 44초쯤 걸려요.")}
 
 
 @router.get("/api/volatility")

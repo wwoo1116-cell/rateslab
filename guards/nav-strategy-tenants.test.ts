@@ -29,15 +29,22 @@ import {
 } from '../src/ui/nav';
 
 describe('Strategy 세입자', () => {
-  it('세입자 셋 — Credit RV · Mean Reversion · Momentum(2026-09-09 입주)이다', () => {
+  it('세입자 넷 — Credit RV · Mean Reversion · Momentum · 모멘텀 슬리브다', () => {
+    /* 넷째는 2026-09-21 입주 [OWNER — "모멘텀도 좀 고쳐두자"]. **셋째와 다른
+       북이다**: `momentum` 은 2026-09-08 등록(선물·합성)을 비추는 거울이고
+       굴리지 않는 반면, 슬리브는 09-15 동결·09-16 채점 중인 IRS 50/50 —
+       데스크가 실제로 세울 북이다. 한 면에 합치면 어느 등록의 성적인지
+       못 읽어서 세입자를 갈랐다(`backend/app/sleeve.py` 머리). */
     expect(STRATEGY_ITEMS.map((i) => i.id)).toEqual([
       'credit-rv',
       'mean-reversion',
       'momentum',
+      'momentum-sleeve',
     ]);
     expect(STRATEGY_ITEMS[0]!.label).toBe('Credit RV');
     expect(STRATEGY_ITEMS[1]!.label).toBe('Mean Reversion');
     expect(STRATEGY_ITEMS[2]!.label).toBe('Momentum');
+    expect(STRATEGY_ITEMS[3]!.label).toBe('모멘텀 슬리브');
     /* 기본은 첫 세입자 그대로 — 예전 `?g=strategy` 링크가 가리키던 화면이다. */
     expect(DEFAULT_STRATEGY).toBe('credit-rv');
   });

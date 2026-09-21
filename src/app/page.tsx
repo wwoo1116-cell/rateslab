@@ -48,6 +48,7 @@ import { BondTypeFilter } from '@/ui/BondTypeFilter';
 import { SimulationPage, type CaseRuns } from '@/sim/SimulationPage';
 import { MomentumPage } from '@/momentum/MomentumPage';
 import { MrPage } from '@/mr/MrPage';
+import { SleevePage } from '@/sleeve/SleevePage';
 import { RvPage } from '@/rv/RvPage';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
 import { StartFilter } from '@/ui/StartFilter';
@@ -633,8 +634,10 @@ const BANNER_H = 34;
               <RvPage />
             ) : strategy === 'mean-reversion' ? (
               <MrPage />
-            ) : (
+            ) : strategy === 'momentum' ? (
               <MomentumPage />
+            ) : (
+              <SleevePage />
             )}
           </ErrorBoundary>
         ) : section === 'lab' && !isGroupTab ? (

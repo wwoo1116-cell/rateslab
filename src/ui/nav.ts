@@ -235,7 +235,7 @@ export function isLabId(v: string | undefined): v is LabId {
  * 회사채AAA·카드채AA+·캐피탈채AA- 와 함께). 그 둘은 벤치마크로 같이 서는 것이고,
  * 데스크가 이 화면을 「크레딧 RV」로 부르는 것이 맞다는 판단이다. 화면이 그
  * 사실을 한 줄로 말한다. */
-export type StrategyId = 'credit-rv' | 'mean-reversion' | 'momentum';
+export type StrategyId = 'credit-rv' | 'mean-reversion' | 'momentum' | 'momentum-sleeve';
 
 export const DEFAULT_STRATEGY: StrategyId = 'credit-rv';
 
@@ -287,10 +287,29 @@ export const STRATEGY_ITEMS: {
        오너가 그대로 가기로 정했다. */
     glyph: '↗',
   },
+  /* 넷째 세입자 [OWNER 2026-09-21 — "모멘텀도 좀 고쳐두자.. 원래 우리 하던
+     방향있잖아"]. **셋째와 다른 북이다** — 옆의 `momentum` 은 2026-09-08 등록
+     (선물·합성)을 비추는 거울이고 굴리지 않는다. 이쪽은 2026-09-15 동결·09-16
+     채점 중인 IRS 50/50 슬리브, 즉 **데스크가 실제로 세울 북**이다. 둘을 한 면에
+     합치지 않는 이유가 그것이다: 수를 섞으면 어느 등록의 성적인지 못 읽는다
+     (`backend/app/sleeve.py` 머리).
+
+     desc 는 이웃 셋과 달리 **행동을 적는다** — 이 면은 측정면이 아니라 집행면이고,
+     그 사실이 이름줄에서 갈려야 한다. 그래도 크기를 권하지는 않는다: 액면은
+     등록된 규칙이 낸 값이고 화면은 그것을 옮겨 적을 뿐이다. */
+  {
+    id: 'momentum-sleeve',
+    label: '모멘텀 슬리브',
+    desc: '등록된 IRS 50/50 이 오늘 세울 북과 어제와의 차이 — 배율·여력·채점 상태',
+    /* 겹쳐진 층 — 「슬리브(한 겹 얹는 것)」의 그림이고, 이웃 셋의 글리프
+       (◈ ∿ ↗)와 안 겹친다. */
+    glyph: '≡',
+  },
 ];
 
 export function isStrategyId(v: string | undefined): v is StrategyId {
-  return v === 'credit-rv' || v === 'mean-reversion' || v === 'momentum';
+  return (v === 'credit-rv' || v === 'mean-reversion' || v === 'momentum'
+    || v === 'momentum-sleeve');
 }
 
 /** 내려간 세입자. 지금은 없지만 자리를 비워 둔다 — `RETIRED_LAB` 과 같은 이유로,
