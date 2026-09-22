@@ -2308,6 +2308,25 @@ thead th {
   outline-offset: 2px;
 }
 
+/* 테두리 pill — **페이지 바탕 위의 행동 버튼** [트레이더 2026-09-22 — "페이퍼북
+   초기화버튼이랑 이런거 다 어디로 갔냐"].
+
+   기본 `.sr-pillbtn` 은 일부러 조용하다(투명 · 뮤트 · 호버에서만 채움). 그 조용함이
+   조건 바에서 대가를 치른다: 버튼이 옆의 사실 칩들과 **글자만으로 구별이 안 돼서**
+   찾질 못한다. 실제로 화면에 있는 초기화 버튼을 못 찾는 일이 났다.
+
+   위의 `[data-fill]` 로는 못 푼다 — 그 채움은 `--sr-control` 이고 조건 바의 바탕은
+   `--sr-page` 인데 **라이트에서 둘이 같은 색**이다(그 주석이 이미 적어 둔 그 이유).
+   그래서 채움이 아니라 **선**으로 세운다. 선은 어느 바탕에서도 보인다. */
+.sr-pillbtn[data-outline] {
+  border: 1px solid var(--color-bgLine);
+  color: var(--color-fg);
+}
+
+.sr-pillbtn[data-outline]:hover {
+  border-color: var(--color-fg);
+}
+
 /* 사분면 산점 — 손 SVG. 눈금·사분면 라벨은 뮤트 잉크(토큰), 등폭 숫자.
    크기는 useMeasure 실측이라 svg 는 그냥 블록이다 — meet 비율 끼움은 남는
    쪽을 여백으로 버렸다 [OWNER "패널을 꽉 채우기"]. */

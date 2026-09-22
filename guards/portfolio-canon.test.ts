@@ -132,10 +132,17 @@ describe('자를 두 벌 만들지 않는다', () => {
   it('비용·Delta 가 계획면과 **같은 수**다', () => {
     /* 다르면 두 화면이 같은 거래에 다른 돈을 매긴다 — 그러면 대조가 안 된다.
        `test_paper.py` 가 파이썬 쪽에서 같은 명제를 재고, 여기서는 그 상수가
-       화면에 **하드코딩되지 않았는지**를 본다(서버가 준 것을 그린다). */
+       화면에 **하드코딩되지 않았는지**를 본다(서버가 준 것을 그린다).
+
+       ★2026-09-22: 규칙 북·수동 북이 **화면에서** 빠졌다 [OWNER — "규칙북이랑
+       수동북 없애고 이렇게 개별 포지션 쌓는 칸만 남기자 지금은 일단"]. 서버
+       (`paper.py`)는 그대로라 아래 파이썬 쪽 명제는 한 줄도 안 줄었고, 화면 쪽
+       기댓값만 **지금 서 있는 칸**으로 좁혔다: 북 전체 명목(`sheet.notional`)
+       대신 다리마다의 명목(`l.notional`)이다. 「지금은 일단」이므로 북이 돌아오면
+       그 줄도 같이 돌아온다. */
     const p = page();
     expect(p).toMatch(/sheet\.costBp/);
-    expect(p).toMatch(/sheet\.notional/);
+    expect(p).toMatch(/l\.notional/);
     expect(p).not.toMatch(/0\.5bp['"`]/);
   });
 
@@ -149,10 +156,13 @@ describe('자를 두 벌 만들지 않는다', () => {
 
   it('누적을 **서버가** 굴린다 (§16)', () => {
     expect(py()).toMatch(/def _roll/);
-    /* 화면은 `cum` 을 읽기만 한다 — `reduce`·누적 루프가 없다. */
+    /* 화면은 서버가 낸 손익을 **읽기만** 한다 — `reduce`·누적 루프가 없다.
+       일별 누적 곡선(`d.cum`)은 규칙·수동 북과 같이 화면에서 빠졌고(위 주석),
+       지금 이 명제가 서는 자리는 포지션 카드다: 다리 손익도 그 합계도 서버 값이다. */
     const p = page();
     expect(p).not.toMatch(/\.reduce\(/);
-    expect(p).toMatch(/d\.cum/);
+    expect(p).toMatch(/l\.pnl/);
+    expect(p).toMatch(/sheet\.position\.pnl/);
   });
 
   it('실가격과 근사를 **섞어 더하지 않는다**', () => {
@@ -161,8 +171,12 @@ describe('자를 두 벌 만들지 않는다', () => {
     const code = py();
     expect(code).toMatch(/def merge_split/);
     expect(code).toMatch(/if any\(v is None for v in vals\)/);
-    /* 화면은 `null` 을 그대로 캐논 부품에 넘긴다(그 부품이 «—» 와 사유를 안다). */
-    expect(page()).toMatch(/<SplitColumn split=/);
+    /* 화면은 `null` 을 **0 으로 안 채운다** — 못 잰 칸에는 «—» 가 선다.
+       종전에는 분해 부품(`<SplitColumn split=`)이 그 일을 했고, 그 칸이 화면에서
+       빠진 지금은 포지션 표의 마크·손익 칸이 같은 규율을 진다. */
+    const p = page();
+    expect(p).toMatch(/l\.mark == null \? MINUS/);
+    expect(p).toMatch(/l\.pnl == null \? MINUS/);
   });
 });
 
@@ -189,9 +203,11 @@ describe('부품은 캐논이다 — 새 탭이라고 새 문법을 쓰지 않�
       '@/ui/ThHelp',           // 표 머리의 뜻풀이
       '@/ui/ControlCard',      // Field·Segmented — 32px 등고
       '@/ui/controlHeight',    // 그 32 를 따로 안 적는다
-      '@/chart/TimeChart',     // x = 날짜인 차트는 이것 하나
-      '@/mr/parts',            // 분해는 계획면의 그 부품
       '@/lib/josa',            // 조사는 한 곳에서만 정한다
+      /* `@/chart/TimeChart`(x = 날짜 차트)·`@/mr/parts`(분해)는 규칙·수동 북과
+         같이 화면에서 빠졌다 [OWNER 2026-09-22 — "지금은 일단"]. 목록에 남겨
+         두면 **안 쓰는 부품을 임포트하라**는 가드가 되므로 뺀다 — 북이 돌아오면
+         둘도 같이 돌아온다. 그때 새로 만들지 말고 이 줄을 되살릴 것. */
     ]) {
       expect(p, m).toContain(m);
     }
