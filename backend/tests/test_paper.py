@@ -584,3 +584,74 @@ class TestReset:
         assert ok.json()["available"] is True
         assert ok.json()["archivedTo"].startswith("paper_book_")
         assert paper.load(tmp_path / "book.json")["legs"] == []
+
+
+# ── 체결일은 **오늘**이지 자료의 날이 아니다 [OWNER 2026-09-22] ─────────────
+#
+# > "포트폴리오에 포지션 쌓아서 매수하는 건 민평 종가가 들어온 기준이 아니라,
+# >  실제로 오늘임. 예를 들면 현재 시스템상 민평 종가는 9월 21일까지 들어와있지만,
+# >  오늘 장중에 내가 스왑 금리를 보고 포지션을 진입했다면 그건 22일날 진입한거임"
+#
+# 이 북의 진입은 **장중 체결**이고 마크는 **종가**다. 둘은 다른 시계이고, 마크가
+# 체결일보다 **앞설 수 있다**. 그때 「마크 − 내 레벨」은 손익이 아니라 시간을
+# 거꾸로 센 수인데, 부호까지 그럴듯해서 화면만 보고는 못 가른다.
+
+class Test체결일과_마크의_날:
+    def _leg(self, entry, level=4.10, exit_=None, exit_lv=None):
+        return {"n": 1, "kind": "irs", "tenor": "3Y", "side": "pay",
+                "rateSign": 1, "entry": entry, "level": level,
+                "notional": 1e10, "dv01": 2_950_000.0, "tag": "", "note": "",
+                "exit": exit_, "exitLevel": exit_lv}
+
+    def test_마크가_체결일보다_앞서면_안_매긴다(self):
+        """★이 파일의 핵심. 0 이 아니라 **「아직」**이다 — 규칙 북이 `index_at`
+        에서 밟은 그 병의 포지션 카드 판이다."""
+        got = paper.score_leg(self._leg("2026-09-22"), 4.15, mark_t="2026-09-21")
+        assert got["pnl"] is None, f'지어낸 손익이 섰어요: {got["pnl"]}'
+        assert got["why"] and "아직" in got["why"]
+        # 레벨과 그 날은 **그대로 올린다** — 화면이 간극을 보여야 한다.
+        assert got["mark"] == 4.15 and got["markT"] == "2026-09-21"
+
+    def test_마크가_체결일에_닿으면_그날_매겨진다(self):
+        """「아직」은 영원이 아니다 — 종가가 오면 저절로 선다."""
+        got = paper.score_leg(self._leg("2026-09-22"), 4.15, mark_t="2026-09-22")
+        assert got["pnl"] is not None and got["why"] is None
+        assert got["bp"] == pytest.approx(5.0)
+
+    def test_지난_날_체결은_그대로_매겨진다(self):
+        got = paper.score_leg(self._leg("2026-09-15"), 4.15, mark_t="2026-09-21")
+        assert got["pnl"] is not None and got["why"] is None
+
+    def test_청산한_다리는_마크의_날과_무관하다(self):
+        """청산 레벨은 **내가 적은 것**이라 종가를 안 쓴다(`close_leg` 의 그 규약).
+        여기까지 「아직」으로 막으면 오늘 열고 오늘 닫은 거래가 안 매겨진다."""
+        got = paper.score_leg(
+            self._leg("2026-09-22", exit_="2026-09-22", exit_lv=4.15),
+            4.99, mark_t="2026-09-21")
+        assert got["pnl"] is not None and got["why"] is None
+        assert got["bp"] == pytest.approx(5.0)          # 4.15 − 4.10, 마크와 무관
+
+    def test_마크를_안_주면_종전과_같다(self):
+        """`mark_t` 는 선택이다 — 옛 호출부를 안 깬다."""
+        got = paper.score_leg(self._leg("2026-09-22"), 4.15)
+        assert got["pnl"] is not None and got["why"] is None
+
+    def test_장부가_오늘을_따로_싣는다(self):
+        """`asof`(자료의 날)와 `today`(실제 달력)는 **다른 칸**이다. 화면의
+        체결일 기본값이 `asof` 였던 것이 이 결함의 뿌리다."""
+        import datetime as dt
+
+        sheet = paper.build_sheet(leg_of=lambda *a, **k: {}, store=dict(paper.EMPTY))
+        assert sheet["today"] == dt.date.today().isoformat()
+
+    def test_체결일이_미래면_거절한다(self):
+        """미래 날짜는 **영원히 「아직」**이 된다(마크가 늘 그보다 앞서므로) —
+        그 다리가 왜 안 매겨지는지 아무도 모른다. 들어올 때 막는다."""
+        import datetime as dt
+
+        today = dt.date.today()
+        paper.check_entry(today.isoformat())                   # 오늘은 통과
+        paper.check_entry((today - dt.timedelta(days=30)).isoformat())   # 과거도 통과
+        for bad in ((today + dt.timedelta(days=1)).isoformat(), "", "22/09/2026"):
+            with pytest.raises(paper.LegRejected):
+                paper.check_entry(bad)

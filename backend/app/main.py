@@ -3518,6 +3518,10 @@ def paper_add_leg(body: dict) -> dict:
 
     try:
         paper.check_leg(kind, tenor, side)
+        # ★체결일도 **여기서** 본다 [OWNER 2026-09-22]. 아래 `_paper_dv01` 이
+        # 그 날의 커브를 읽으므로, 깨진 날짜가 거기까지 가면 사유가 「커브를 못
+        # 읽었다」로 바뀌어 진짜 원인이 가려진다.
+        paper.check_entry(entry)
     except paper.LegRejected as exc:
         # 422 다 — 요청이 깨진 것이 아니라 **이 데스크가 안 하는 거래**다.
         raise HTTPException(status_code=422, detail=str(exc)) from exc

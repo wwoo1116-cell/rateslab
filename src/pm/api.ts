@@ -91,7 +91,13 @@ export interface PaperSheet {
   available: boolean;
   why?: string;
   opened: string | null;
+  /** **자료의 날** — 마지막 종가가 찍힌 날이다. 「오늘」이 아니다. */
   asof: string | null;
+  /** **오늘**(서버의 실제 달력). 체결은 장중에 일어나고 마크는 종가라 둘이
+   *  다를 수 있다 [OWNER 2026-09-22 — "민평 종가는 9월 21일까지 들어와있지만 …
+   *  오늘 장중에 진입했다면 그건 22일날 진입한거임"]. 체결일·청산일의 기본값은
+   *  **이쪽**이다 — `asof` 를 쓰면 오늘 한 거래가 어제 날짜로 장부에 들어간다. */
+  today: string;
   costBp: number;
   notional: number;
   rule: {
@@ -122,8 +128,15 @@ export interface PaperSheet {
     legs: PaperPositionLeg[];
     open: number;
     closed: number;
-    /** 한 다리라도 오늘 레벨을 못 읽었으면 **`null`** 이다(0 이 아니다). */
+    /** 한 다리라도 못 매겼으면 **`null`** 이다(0 이 아니다). 오늘 체결한 다리가
+     *  늘 그 자리에 선다 — 마크는 종가라 하루 뒤에 온다. */
     pnl: number | null;
+    /** **매겨진 다리만의 소계.** 합계(`pnl`)가 `null` 일 때도 카드가 말할 것이
+     *  있게 하는 칸이고, 합계와 **다른 칸**이라 둘을 섞을 수 없다. */
+    scoredPnl: number | null;
+    /** 매겨진 다리 수 · 아직인 다리 수 — 화면이 「3다리 중 2다리」를 적는다. */
+    scored: number;
+    pending: number;
     /** **부호를 지고** 더한 DV01 — 페이와 리시브가 상쇄되는 것이 이 북의 알맹이다. */
     netDv01: number;
     grossDv01: number;
@@ -155,6 +168,11 @@ export interface PaperPositionLeg {
   open: boolean;
   /** 오늘 시장 레벨(%). 못 읽었으면 `null` — 「아직」이지 0 이 아니다. */
   mark: number | null;
+  /** 그 마크가 **어느 날의 종가**인가. 체결일보다 앞서면 서버가 손익을 안 매긴다
+   *  (「어제 종가 − 오늘 체결가」는 손익이 아니라 시간을 거꾸로 센 수다 —
+   *  `backend/app/paper.py::score_leg` 머리). 그때 `pnl` 은 `null` 이고 사유가
+   *  `why` 에 선다. */
+  markT: string | null;
   bp: number | null;
   gross: number | null;
   cost: number | null;

@@ -149,11 +149,31 @@ def check_bond_sell_why() -> str:
             "엔진도 그 방향을 안 싣습니다. 그 다리는 선물 매도로 세우세요.")
 
 
+def check_entry(entry: str, today: str | None = None) -> None:
+    """체결일이 말이 되는 날인가 — 아니면 사유를 들고 죽는다(422).
+
+    ★**미래는 못 받는다** [OWNER 2026-09-22]. 이 칸이 종전에는 화면의 `asof`(자료의
+    날)를 기본값으로 받았고 서버는 빈 문자열만 막았다 — 그래서 오타 하나가 장부에
+    아직 오지 않은 날의 거래를 넣을 수 있었고, 그 다리는 **영원히 「아직」**으로
+    서서 왜 안 매겨지는지 아무도 모른다(마크가 늘 그 날보다 앞서므로).
+
+    과거는 막지 않는다 — 어제 체결을 오늘 적는 것은 정상이다.
+    """
+    try:
+        d = _dt.date.fromisoformat(entry)
+    except (TypeError, ValueError):
+        raise LegRejected(f"체결일이 YYYY-MM-DD 가 아니에요: {entry!r}") from None
+    now = _dt.date.fromisoformat(today) if today else _dt.date.today()
+    if d > now:
+        raise LegRejected(f"체결일이 미래예요: {entry} (오늘 {now.isoformat()})")
+
+
 def add_leg(store: dict[str, Any], *, kind: str, tenor: str, side: str,
             entry: str, level: float, notional: float, dv01: float,
             tag: str = "", note: str = "") -> dict[str, Any]:
     """다리 하나를 쌓는다. `exit` 는 비워 둔다(아직 들고 있다)."""
     check_leg(kind, tenor, side)
+    check_entry(entry)
     store.setdefault("legs", [])
     store["legs"] = [*store["legs"], {
         "n": len(store["legs"]) + 1,
@@ -217,19 +237,42 @@ def reset(store: dict[str, Any], path: Path | None = None) -> str | None:
     return kept_name
 
 
-def score_leg(leg: dict, mark: float | None, cost_bp: float = COST_BP) -> dict:
+def score_leg(leg: dict, mark: float | None, cost_bp: float = COST_BP,
+              mark_t: str | None = None) -> dict:
     """다리 하나의 손익 — **내 레벨에서 시장 레벨까지**.
 
         손익 = rateSign × (나간 레벨 − 들어온 레벨) × 100bp × DV01 − 비용
 
     `mark` 가 `None` 이면 오늘 값을 못 읽은 것이다. 그때 0 을 적으면 「안 벌었다」가
     되므로 **`None` 을 그대로 올린다** — 화면이 「아직」을 적는다(이 리포의 그 규율).
+
+    ## ★ 마크가 체결일보다 **앞서면** 안 매긴다 [OWNER 2026-09-22]
+
+    > "민평 종가는 9월 21일까지 들어와있지만, 오늘 장중에 내가 스왑 금리를 보고
+    >  포지션을 진입했다면 그건 22일날 진입한거임"
+
+    이 북의 진입은 **장중 체결**이고 마크는 **종가**다. 둘의 날이 다를 수 있고,
+    특히 **마크가 체결일보다 하루 앞설 수 있다** — 그때 `마크 − 내 레벨` 은
+    「어제 종가에서 오늘 체결가를 뺀 것」이라 손익이 아니라 **시간을 거꾸로 센
+    수**다. 부호까지 그럴듯해서 화면만 보고는 못 가른다.
+
+    「아직」과 「0」은 다른 말이라는 이 리포의 규율이 그대로 적용된다(규칙 북이
+    `index_at` 에서 밟은 그 자리와 같은 병이다 — 거기서는 **등록일 뒤에 봉이
+    없는데** 마지막 봉을 마크로 썼다). 종가가 체결일에 닿으면 그날 저절로 매겨진다.
+
+    `mark_t` 를 안 주면 종전대로 판다 — 옛 호출부(시험 포함)를 안 깬다.
     """
-    out = {**leg, "mark": mark, "open": leg.get("exit") is None}
+    out = {**leg, "mark": mark, "markT": mark_t, "open": leg.get("exit") is None}
     end = leg["exitLevel"] if leg.get("exit") else mark
     if end is None:
         return {**out, "pnl": None, "gross": None, "cost": None, "bp": None,
                 "why": "오늘 레벨을 못 읽었어요"}
+    # 청산한 다리는 내가 적은 청산 레벨로 닫히므로 마크의 날과 무관하다.
+    if (not leg.get("exit") and mark_t is not None
+            and leg.get("entry") and mark_t < str(leg["entry"])):
+        return {**out, "pnl": None, "gross": None, "cost": None, "bp": None,
+                "why": f'아직이에요 — 체결일 {leg["entry"]} 뒤 종가가 없어요'
+                       f' (마지막 종가 {mark_t})'}
     bp = (float(end) - float(leg["level"])) * 100.0
     gross = leg["rateSign"] * bp * float(leg["dv01"])
     cost = cost_bp * float(leg["dv01"]) * (1.0 if out["open"] else 2.0)
@@ -568,18 +611,28 @@ def build_sheet(*, leg_of: Callable[..., dict],
     # 값을 매긴 계열이고 이것은 「내 레벨에서 지금 레벨까지」 한 수다 — 없는 일별
     # 곡선을 지어내면 위의 차이 그래프가 거짓말을 한다. 합치는 것은 오너 결정이다.
     pos_legs: list[dict] = []
+    mark_days: list[str] = []
     for lg in st.get("legs", []):
-        mark = None
+        mark = mark_t = None
         if mark_of is not None:
             try:
-                _, mark = mark_of(lg["kind"], lg["tenor"])
+                # ★마크의 **날짜를 버리지 않는다** [OWNER 2026-09-22]. `mark_of` 는
+                # 처음부터 `(날짜, 값)` 을 냈는데 여기서 날짜를 `_` 로 흘리고
+                # 있었다 — 그래서 「어제 종가 대 오늘 체결가」를 손익이라 적을 수
+                # 있었다(`score_leg` 머리의 그 문단).
+                mark_t, mark = mark_of(lg["kind"], lg["tenor"])
             except BaseException as exc:                 # noqa: BLE001
                 failed.append({"id": f"leg{lg['n']}", "why": str(exc)})
-        pos_legs.append(score_leg(lg, mark, cost_bp=cost_bp))
+        if mark_t:
+            mark_days.append(mark_t)
+        pos_legs.append(score_leg(lg, mark, cost_bp=cost_bp, mark_t=mark_t))
 
     rule_daily = merge_daily(rule_legs)
     man_daily = merge_daily(man_legs)
-    asof = max([d["t"] for d in rule_daily + man_daily], default=None)
+    # ★`asof` 는 **자료의 날**이다 — 「오늘」이 아니다. 규칙·수동 북이 비면 봉이
+    # 없어서 `None` 이 되므로, 포지션 카드가 읽는 마크의 날로 받친다. 둘 다 없으면
+    # 그때는 정말 모르는 것이라 `None` 이다(지어내지 않는다).
+    asof = max([d["t"] for d in rule_daily + man_daily] + mark_days, default=None)
 
     def _today(rows: list[dict]) -> float:
         return next((r["pnl"] for r in rows if r["t"] == asof), 0.0)
@@ -589,6 +642,12 @@ def build_sheet(*, leg_of: Callable[..., dict],
     return {
         "opened": st.get("opened"),
         "asof": asof,
+        # ★**오늘**(실제 달력)은 `asof` 와 다른 것이다 [OWNER 2026-09-22 — "민평
+        # 종가는 9월 21일까지 들어와있지만 … 오늘 장중에 진입했다면 그건 22일날
+        # 진입한거임"]. 체결은 장중에 일어나고 마크는 종가라, 화면의 체결일 기본값이
+        # 자료의 날이면 **오늘 한 거래가 어제 날짜로 장부에 들어간다.**
+        # 두 칸을 나란히 실어서 화면이 둘을 섞지 않게 한다.
+        "today": _dt.date.today().isoformat(),
         "costBp": cost_bp,
         "notional": NOTIONAL,
         "rule": {
@@ -614,8 +673,20 @@ def build_sheet(*, leg_of: Callable[..., dict],
             "legs": pos_legs,
             "open": sum(1 for l in pos_legs if l["open"]),
             "closed": sum(1 for l in pos_legs if not l["open"]),
+            # 하나라도 못 매기면 합계는 **`None`** 이다 — 이 리포의 「0 으로
+            # 안 채운다」 그대로고, 안 그러면 「아직」인 다리를 0 으로 세어 합이
+            # 조용히 틀린다. 오늘 체결한 다리가 늘 그 자리에 선다(마크가 종가라
+            # 하루 뒤에 온다 — `score_leg` 머리).
             "pnl": (None if not pos_legs or any(l["pnl"] is None for l in pos_legs)
                     else round(sum(l["pnl"] for l in pos_legs), 2)),
+            # ★그렇다고 카드가 아무 말도 못 하면 안 된다 [2026-09-22]. **매겨진
+            # 다리만의 소계**를 따로 싣고, 몇 개가 아직인지 같이 적는다 — 합계와
+            # 다른 칸이라 둘을 섞을 수 없고, 화면이 「3다리 중 2다리」를 말한다.
+            "scoredPnl": (None if not any(l["pnl"] is not None for l in pos_legs)
+                          else round(sum(l["pnl"] for l in pos_legs
+                                         if l["pnl"] is not None), 2)),
+            "scored": sum(1 for l in pos_legs if l["pnl"] is not None),
+            "pending": sum(1 for l in pos_legs if l["pnl"] is None),
             #: DV01 합은 **부호를 지고** 더한다 — 페이와 리시브가 상쇄되는 것이
             #: 이 북의 알맹이라(BSS 가 그렇다) 절대값 합은 거짓을 말한다.
             "netDv01": round(sum(l["rateSign"] * l["dv01"] for l in pos_legs

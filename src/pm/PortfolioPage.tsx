@@ -150,11 +150,20 @@ function PositionTable({ legs, asof, busy, onClose }: {
                 <Text font="label2" as="span" tabularNumbers noWrap>{l.level.toFixed(3)}</Text>
               </TableCell>
               <TableCell className="sr-num" justifyContent="flex-end">
-                <Text font="label2" as="span" tabularNumbers noWrap color="fgMuted">
-                  {l.open
-                    ? (l.mark == null ? MINUS : l.mark.toFixed(3))
-                    : (l.exitLevel == null ? MINUS : l.exitLevel.toFixed(3))}
-                </Text>
+                {/* ★레벨 **아래에 그 날**을 적는다 [OWNER 2026-09-22]. 마크는
+                    종가라 체결일과 다른 날일 수 있고, 특히 오늘 체결한 다리는
+                    마크가 하루 앞선다 — 날을 안 적으면 「지금」이 정말 지금인
+                    줄 읽는다. 체결일과 같은 날이면 군더더기라 안 적는다. */}
+                <VStack as="span" className="sr-name-stack" alignItems="flex-end">
+                  <Text font="label2" as="span" tabularNumbers noWrap color="fgMuted">
+                    {l.open
+                      ? (l.mark == null ? MINUS : l.mark.toFixed(3))
+                      : (l.exitLevel == null ? MINUS : l.exitLevel.toFixed(3))}
+                  </Text>
+                  <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+                    {l.open && l.markT && l.markT !== l.entry ? `${l.markT} 종가` : ''}
+                  </Text>
+                </VStack>
               </TableCell>
               <TableCell className="sr-num" justifyContent="flex-end">
                 {/* 색은 **손익 부호**를 따른다 — Δ 의 부호가 아니다. 같은 +2bp 가
@@ -193,9 +202,14 @@ function PositionTable({ legs, asof, busy, onClose }: {
               </TableCell>
               <TableCell className="sr-num" justifyContent="flex-end">
                 {l.open && l.mark != null ? (
+                  /* ★버튼이 **어느 날 종가로** 닫는지 말한다 [OWNER 2026-09-22].
+                     「지금 레벨」이라고만 적혀 있었는데 그 값은 마지막 **종가**라,
+                     종가가 하루 늦은 날에는 오늘 청산을 어제 레벨로 적으면서
+                     화면은 「지금」이라고 말하고 있었다. 청산일은 오늘이다.
+                     ▶내가 적는 청산 레벨 칸은 아직 없다 — 오너 결정. */
                   <button type="button" className="sr-pillbtn" disabled={busy || !asof}
                     onClick={() => onClose(l.n, l.mark as number)}>
-                    지금 레벨로 닫기
+                    {l.markT ? `${l.markT} 종가로 닫기` : '지금 레벨로 닫기'}
                   </button>
                 ) : (
                   <Text font="legal" as="span" color="fgMuted" noWrap>
@@ -297,7 +311,14 @@ export function PortfolioPage() {
       <VStack className="sr-rv-bar" flexShrink={0} gap={0.5} width="100%">
         <HStack gap={1.5} alignItems="center" flexWrap="wrap">
           <Cond k="장부 개설" v={sheet.opened ?? '아직 없어요'} strong />
-          <Cond k="기준일" v={sheet.asof ?? '—'} />
+          {/* ★두 날을 **나란히** 적는다 [OWNER 2026-09-22 — "민평 종가는 9월
+              21일까지 들어와있지만 … 오늘 장중에 진입했다면 그건 22일날 진입한거임"].
+              체결은 장중이고 마크는 종가라 둘이 다를 수 있고, 한 칸만 적으면
+              읽는 사람이 그 차이를 못 본다. 같은 날이면 한 칸으로 접는다. */}
+          <Cond k="오늘" v={sheet.today} strong />
+          {sheet.asof && sheet.asof !== sheet.today ? (
+            <Cond k="마지막 종가" v={sheet.asof} />
+          ) : null}
           <Cond k="포지션" v={`${sheet.position.open}다리 · 청산 ${sheet.position.closed}`} />
           <Cond k="비용" v={`편도 ${sheet.costBp}bp`} />
           {/* 규칙 북·수동 북 칩 둘은 그 카드들과 같이 내렸다 [OWNER 2026-09-22].
@@ -396,7 +417,15 @@ export function PortfolioPage() {
             </HStack>
             <Text font="legal" as="span" color="fgMuted" tabularNumbers>
               {`순 DV01 ${fmtKrw(sheet.position.netDv01)}/bp · 총 ${fmtKrw(sheet.position.grossDv01)}/bp`}
-              {sheet.position.pnl == null ? '' : ` · 합계 ${fmtKrw(sheet.position.pnl)}`}
+              {/* 합계는 **전부 매겨졌을 때만** 선다(하나라도 「아직」이면 0 으로
+                  채우는 셈이 된다). 그때는 매겨진 다리의 소계를 «몇 중 몇»과 같이
+                  적는다 — 다른 칸이라 둘을 섞을 수 없다 [2026-09-22]. */}
+              {sheet.position.pnl != null
+                ? ` · 합계 ${fmtKrw(sheet.position.pnl)}`
+                : sheet.position.scoredPnl != null
+                  ? ` · 매겨진 ${sheet.position.scored}다리 ${fmtKrw(sheet.position.scoredPnl)}`
+                    + ` · 아직 ${sheet.position.pending}다리`
+                  : ''}
             </Text>
           </HStack>
           <PositionTable
@@ -404,7 +433,9 @@ export function PortfolioPage() {
             asof={sheet.asof}
             busy={busy}
             onClose={(n, level) =>
-              write(() => closeLeg(n, sheet.asof ?? '', level),
+              /* 청산일도 **오늘**이다(체결일과 같은 이유). 청산 레벨은 여전히
+                 내가 적는다 — 아래 버튼이 넘기는 값이 그것이다. */
+              write(() => closeLeg(n, sheet.today, level),
                     `${n}번 다리를 닫았어요.`)}
           />
           {/* 담는 줄 — 얼라인 캐논 그대로(라벨 위 · 32px 등고 · 바닥 정렬 ·
@@ -495,7 +526,11 @@ export function PortfolioPage() {
                 <TextInput size="s" fontSize="legal" height={CONTROL_H}
                   accessibilityLabel="체결일 (YYYY-MM-DD)"
                   value={legEntry}
-                  placeholder={sheet.asof ?? '2026-09-21'}
+                  /* ★`asof`(자료의 날)가 아니라 **오늘**이다 — 종전에는 이 기본값
+                     때문에 오늘 장중에 한 거래가 어제 날짜로 장부에 들어갔다.
+                     하드코딩돼 있던 '2026-09-21' 폴백도 같이 없앤다(서버가 늘
+                     오늘을 실어 준다). */
+                  placeholder={sheet.today}
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegEntry(e.target.value)}
                 />
               </Field>
@@ -526,7 +561,7 @@ export function PortfolioPage() {
                     kind: legKind,
                     tenor: legTenor,
                     side: legSide,
-                    entry: legEntry || (sheet.asof ?? ''),
+                    entry: legEntry || sheet.today,
                     level,
                     ...(sizeMode === 'notional'
                       ? { notional: size * 1e8 }
