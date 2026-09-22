@@ -33,6 +33,7 @@ z·밴드·상태는 전부 **트레일링 창**이라 마지막 점의 값은 �
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import time
 from functools import lru_cache
 from typing import Any
@@ -40,6 +41,8 @@ from typing import Any
 from sqlalchemy import text
 
 from .mysqldb import engine
+
+log = logging.getLogger("app.mrseries")
 
 CAT_KTB = "국고채커브"
 CAT_IRS = "스왑-IRS(종합ALL)"
@@ -68,6 +71,12 @@ _watermark_memo: tuple[float, str] | None = None
 
 
 def _watermark() -> str:
+    """두 출처의 워터마크를 **한 열쇠로** 묶는다 [2026-09-22].
+
+    국고 다리가 민평(`credit_matrix`)에서도 오므로 열쇠가 그 표의 적재도 알아야
+    한다. 안 그러면 민평만 갱신된 날 번들이 안 갈리고 화면이 어제 값을 낸다 —
+    이 수리가 잡으려던 바로 그 병을 열쇠 쪽에서 다시 만드는 셈이 된다.
+    """
     global _watermark_memo
     now = time.monotonic()
     if _watermark_memo is not None and now - _watermark_memo[0] < _WATERMARK_TTL_S:
@@ -75,6 +84,13 @@ def _watermark() -> str:
     with engine().connect() as conn:
         row = conn.execute(text("SELECT MAX(trade_date) FROM imx_data.timeseries")).fetchone()
     mark = "" if row is None or row[0] is None else str(row[0])
+    try:
+        from . import creditmatrix as _cm
+        cm_d, cm_n = _cm.watermark()
+        mark = f"{mark}|{cm_d}|{cm_n}"
+    except BaseException:                                   # noqa: BLE001
+        # 민평을 못 읽어도 긴 표본만으로 선다 — 열쇠에 그 사실을 적어 둔다.
+        mark = f"{mark}|cm-err"
     _watermark_memo = (now, mark)
     return mark
 
@@ -102,7 +118,86 @@ def _bundle(_watermark_key: str) -> dict[str, Any]:
             irs.setdefault(want_i[item], {})[day] = float(val)
         elif cat == CAT_CD and item == CD_ITEM:
             cd[day] = float(val)
-    return {"ktb": ktb, "irs": irs, "cd": cd}
+    return {"ktb": _merge_govt(ktb), "irs": irs, "cd": cd}
+
+
+#: 민평이 국고를 갖는 첫날. 그 앞은 긴 표본만 있고, 그 뒤는 민평이 정본이다.
+#: 이 경계가 **이음매의 자리**이고, 어떤 룩백 창(최장 250일)에도 안 닿는다.
+GOVT_SPLICE_FROM = "2020-01-02"
+
+
+def _merge_govt(imx: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
+    """국고 커브를 **하나의 창구**로 [OWNER 2026-09-22 "하나로 통합해서 SQL에서"].
+
+    ## 왜 필요했나 — 같은 상품이 화면마다 다른 수였다
+
+    국고 출처가 앱에 둘이었다: Main·Backtest·Simulation·RV 는 민평
+    (`credit_matrix`), MR/Strategy 의 BSS 만 긴 표본(`imx_data.timeseries`
+    국고채커브). 그리고 그 긴 표본이 **정수년이 아닌 만기에서 멈췄다** —
+    2026-09-11 이후 3월·6월·9월·1.5년·2.5년·15년이하에 새 행이 없다(전수 확인).
+    그래서 BSS 6M·9M·1.5Y 가 열흘 낡은 값이었는데, 보드의 asof 는 가족 단위라
+    그 사실이 화면에 안 드러났다.
+
+    ## 왜 이 방향인가 — 실측이 정했다
+
+    두 출처의 겹치는 1,644~1,650일을 만기마다 쟀다:
+
+        2Y~10Y        중앙 0.000bp · 최대 ≤0.8bp · 1bp 넘은 날 **0**
+        6M·9M·1Y·1.5Y 중앙 0.100bp · 최대 1.2~3.5bp · 1bp 넘은 날 7~39
+
+    긴 쪽은 사실상 같은 계열이고 **짧은 쪽만 꼬리가 있다**(종전 주석의
+    「중앙 0.00~0.10bp」는 참이지만 꼬리를 뺀 말이었다). 그래서 둘을 날짜로
+    번갈아 쓰면 그 꼬리가 **살아 있는 창 안에서** 이음매가 된다.
+
+    답은 하나다: **민평이 있는 날은 언제나 민평**(다른 화면과 같은 수),
+    그 앞(2020-01-02 이전)만 긴 표본이 뒤를 잇는다. 이음매는 2020-01 에 놓여
+    최장 룩백(250일)에도 안 닿는다. 긴 표본의 2014~2019 는 그대로 산다.
+
+    ## 잃는 것 — 연말 여섯 날 (알고 버린다)
+
+    민평에 없고 긴 표본에만 있는 날이 **2020 이후 여섯**이고 전부 **연말 마지막
+    거래일**이다(2020-12-31 · 2021-12-31 · 2022-12-30 · 2023-12-29 · 2024-12-31 ·
+    2025-12-31). 둘은 산출 시점이 다른 물건이라, 민평이 안 찍은 날의 국고 마크를
+    긴 표본으로 **지어내지 않는다** — 그렇게 채우면 1년에 한 번 출처가 갈리는
+    봉이 살아 있는 창 안에 들어온다(짧은 만기에서 그 차가 최대 3.5bp다).
+    1,650일 중 여섯이라 0.36% 이고, 그 대가로 민평 구간은 **단일 출처**가 된다.
+
+    민평을 못 읽으면 **긴 표본만으로 선다** — 조용히 비는 것보다 낫다.
+    """
+    try:
+        from . import creditmatrix as cm
+        m = cm.load()
+    except BaseException as exc:                            # noqa: BLE001
+        log.warning("[mrseries] 민평을 못 읽어 긴 표본만 씁니다: %s", exc)
+        return imx
+
+    dates = [d.isoformat() if hasattr(d, "isoformat") else str(d)[:10] for d in m.dates]
+    out: dict[str, dict[str, float]] = {}
+    for tenor in set(imx) | {t for t in m.tenors_for("KTB")}:
+        merged = {d: v for d, v in (imx.get(tenor) or {}).items()
+                  if d < GOVT_SPLICE_FROM}
+        if m.has("KTB", tenor):
+            for i, v in enumerate(m.series("KTB", tenor)):
+                if v is not None:
+                    merged[dates[i]] = float(v)
+        elif not merged:
+            # 민평에 없고 긴 표본에도 2020 이후가 없으면 그 만기는 비운다 —
+            # 낡은 값을 오늘 값처럼 내놓지 않는다(이 수리의 요점이다).
+            merged = dict(imx.get(tenor) or {})
+        if merged:
+            out[tenor] = merged
+    return out
+
+
+def watermark() -> str:
+    """이 모듈이 읽는 **모든 출처**의 적재 지문 — 캐시 열쇠에 쓰라고 공개한다.
+
+    BSS 를 굽는 자리(`main._mr_payload`·`/api/mr/plan`)의 열쇠가 종전에는
+    `_dataset.data_key`(= `mkt_irs_close` 워터마크) 하나였다. 그건 **IRS 다리만**
+    아는 열쇠라, 국고가 움직이고 IRS 가 그대로인 날 BSS 가 캐시에서 옛 값으로
+    나온다 — 2026-09-22 전수조사에서 잡은 「조용히 낡는다」의 사촌이다.
+    """
+    return _watermark()
 
 
 def bundle() -> dict[str, Any]:
@@ -145,11 +240,22 @@ def legs(sid: str, *, need_cd: bool = False) -> tuple[list[str], list[float], li
 
 
 def points(sid: str) -> dict[str, Any]:
-    """`mr.series_points` 가 먹는 모양 — 값은 **bp**(국고 − 스왑, ×100)."""
+    """`mr.series_points` 가 먹는 모양 — 값은 **bp**(국고 − 스왑, ×100).
+
+    ★다리 레벨을 같이 싣는다 [트레이더 2026-09-22 — "두개나 3개를 엮는 상품의
+    경우에는 각각의 레벨을 표시해줄 것"]. 종전에는 BSS 만 `{t, v}` 뿐이었다 —
+    퓨처스왑은 `[선물, IRS]`, 커브는 `[긴, 짧은]` 을 이미 싣고 있었으니 **두 다리
+    상품 중 BSS 만 빠져 있던** 셈이다(플라이는 `2·벨리−윙` 이라 대사표의 부호
+    규약과 안 맞아 의도적으로 뺀 것이고 그 근거는 `combo_points` 에 있다).
+
+    차례는 **`[국고, 스왑]`** 이다 — 값이 `국고 − 스왑` 이므로 그 차례라야
+    「다리0 − 다리1 = 값」이 대사표에서 닫힌다(커브가 `[긴, 짧은]` 인 것과 같은 규약).
+    """
     dates, govt, swap, _cd = legs(sid)
     return {
         "id": sid, "unit": "bp",
-        "points": [{"t": d, "v": round((govt[i] - swap[i]) * 100.0, 4)}
+        "points": [{"t": d, "v": round((govt[i] - swap[i]) * 100.0, 4),
+                    "legs": [govt[i], swap[i]]}
                    for i, d in enumerate(dates)],
     }
 
