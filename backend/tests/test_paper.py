@@ -348,7 +348,17 @@ class TestPlumbing:
         from app.main import app
         paths = {r.path for r in app.routes if "paper" in getattr(r, "path", "")}
         assert paths == {"/api/paper", "/api/paper/enroll", "/api/paper/retire",
-                         "/api/paper/trade", "/api/paper/close"}
+                         "/api/paper/trade", "/api/paper/close",
+                         # 손으로 쌓는 다리 [OWNER 2026-09-22] — 계열+방향이 아니라
+                         # 계기 하나에 내가 체결한 레벨. `instruments` 가 서버에서
+                         # 목록을 내는 이유는 «못 하는 거래는 고를 수조차 없어야»
+                         # 하기 때문이다(선물 2Y 를 화면이 만들어 내던 자리).
+                         "/api/paper/leg", "/api/paper/leg/close",
+                         "/api/paper/instruments",
+                         # 초기화는 **지우기가 아니다** — 옛 장부를 보관하고 새로
+                         # 연다(`paper.reset`). 아래 「지우는 라우트는 없다」가
+                         # 여전히 서는 이유가 그것이다.
+                         "/api/paper/reset"}
 
     def test_지우는_라우트는_없다(self):
         """진 기록을 지우는 것이 생존 편향이 장부에 들어오는 가장 흔한 길이다."""
@@ -392,3 +402,185 @@ class TestSplit:
         assert got["funding"] is None
         assert got["mtm"] == pytest.approx(2.0)
         assert got["total"] == pytest.approx(11.0)
+
+
+class TestLegs:
+    """손으로 쌓는 다리 [OWNER 2026-09-22].
+
+    > "포지션은 써서 넣을 수 있게 … IRS pay receive 하나 씩 쌓는 방식으로"
+    > "ex. BSS라고 하면, 국채선물 2년 금리 몇에 매수 / IRS Pay 2년 금리 몇에 매도"
+
+    계열+방향(`trades`)과 다른 물건이라 시험도 따로 선다. 여기서 재는 것은 **부호
+    규약**과 **못 하는 거래의 거절**이다 — 값을 매기는 식은 한 줄이라 그 한 줄이
+    계기 셋에서 같은 뜻인지가 전부다.
+    """
+
+    def leg(self, **kw):
+        st = dict(paper.EMPTY, legs=[])
+        base = dict(kind="irs", tenor="2Y", side="pay", entry="2026-09-21",
+                    level=3.00, notional=1e10, dv01=1_900_000.0)
+        paper.add_leg(st, **{**base, **kw})
+        return st["legs"][-1]
+
+    def test_IRS_페이는_금리가_오르면_번다(self):
+        l = self.leg(side="pay")
+        assert l["rateSign"] == +1
+        got = paper.score_leg(l, mark=3.10, cost_bp=0.0)       # +10bp
+        assert got["bp"] == pytest.approx(10.0)
+        assert got["gross"] == pytest.approx(10.0 * 1_900_000.0)
+
+    def test_리시브는_부호가_뒤집힌다(self):
+        a = paper.score_leg(self.leg(side="pay"), mark=3.10, cost_bp=0.0)
+        b = paper.score_leg(self.leg(side="receive"), mark=3.10, cost_bp=0.0)
+        assert a["gross"] == pytest.approx(-b["gross"])
+
+    def test_선물_매수와_현물_매수는_같은_쪽이다(self):
+        """가격을 사는 다리는 **금리가 내리면** 번다 — 낱말이 달라도 부호는 같다."""
+        f = self.leg(kind="fut", tenor="3Y", side="buy")
+        b = self.leg(kind="bond", tenor="2Y", side="buy")
+        assert f["rateSign"] == b["rateSign"] == -1
+
+    def test_BSS_처럼_쌓으면_금리위험이_상쇄된다(self):
+        """오너 예시 그대로 — 선물 매수 + IRS 페이. 순 DV01 이 둘의 **차**다."""
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="fut", tenor="3Y", side="buy", entry="2026-09-21",
+                      level=2.95, notional=1e10, dv01=2_800_000.0, tag="BSS 2Y")
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2026-09-21",
+                      level=3.00, notional=1e10, dv01=1_900_000.0, tag="BSS 2Y")
+        net = sum(l["rateSign"] * l["dv01"] for l in st["legs"])
+        assert net == pytest.approx(1_900_000.0 - 2_800_000.0)
+
+    def test_현물_국고_매도는_아예_안_받는다(self):
+        """[OWNER 2026-09-22 「아예 막는다」] — 엔진의 `TRADABLE_DIRS` 와 같은 규칙."""
+        with pytest.raises(paper.LegRejected) as e:
+            self.leg(kind="bond", side="sell")
+        assert "대차매도" in str(e.value)
+
+    def test_없는_선물_만기는_안_받는다(self):
+        """2년 국채선물은 KRX 에도 이 리포에도 없다 — 오너 예시의 그 자리다."""
+        with pytest.raises(paper.LegRejected) as e:
+            self.leg(kind="fut", tenor="2Y", side="buy")
+        assert "3Y" in str(e.value)
+
+    def test_오늘_레벨을_못_읽으면_0_이_아니라_None(self):
+        """0 은 「안 벌었다」이고 None 은 「아직 모른다」다 — 이 리포의 그 규율."""
+        got = paper.score_leg(self.leg(), mark=None)
+        assert got["pnl"] is None and got["why"]
+
+    def test_닫힌_다리는_내가_적은_청산_레벨을_쓴다(self):
+        """진입을 종가로 안 매겼으니 청산도 그래야 한다. 시장 레벨은 안 본다."""
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2026-09-01",
+                      level=3.00, notional=1e10, dv01=1_000_000.0)
+        paper.close_leg(st, 1, "2026-09-10", 3.20)
+        got = paper.score_leg(st["legs"][0], mark=9.99, cost_bp=0.0)
+        assert got["open"] is False
+        assert got["bp"] == pytest.approx(20.0)                # 9.99 를 안 본다
+
+    def test_비용은_열린_다리에_편도_닫힌_다리에_왕복(self):
+        o = paper.score_leg(self.leg(), mark=3.00, cost_bp=0.5)
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2026-09-01",
+                      level=3.00, notional=1e10, dv01=1_900_000.0)
+        paper.close_leg(st, 1, "2026-09-10", 3.00)
+        c = paper.score_leg(st["legs"][0], mark=3.00, cost_bp=0.5)
+        assert c["cost"] == pytest.approx(2 * o["cost"])
+
+
+class TestWriteResponseShape:
+    """**쓰기 응답도 읽기와 같은 모양이어야 한다** [수리 2026-09-22].
+
+    화면은 `if (!sheet.available)` 하나로 전체를 에러 면으로 바꾼다. 그런데 종전에
+    `available` 은 GET 라우트가 «감싸면서» 달던 칸이라 쓰기 다섯에는 없었고,
+    그래서 **쓰기가 성공할 때마다 화면이 「못 세웠어요」로 죽었다.** 서버 로그는
+    전부 200 이라 어디에도 안 드러난다 — 이 리포가 반복해서 밟는 그 «조용한 실패»다.
+
+    한 칸 빠진 것이라 시험도 한 줄이면 된다. 다섯을 다 도는 이유는, 여섯째 쓰기가
+    생길 때 이 줄이 빨개지는 것이 유일한 알림이라서다.
+    """
+
+    def test_쓰기_응답이_읽기와_같은_칸을_진다(self, monkeypatch, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from app import main as M
+
+        monkeypatch.setattr(paper, "STORE", tmp_path / "book.json")
+        c = TestClient(M.app)
+
+        read = c.get("/api/paper").json()
+        assert read["available"] is True
+
+        # 쓰기 다섯. 등록은 계획면 캐시를 요구하므로(409) 여기서는 **모양**만 본다 —
+        # 성공한 응답은 반드시 `available` 을 진다.
+        wrote = c.post("/api/paper/leg", json=dict(
+            kind="irs", tenor="2Y", side="pay", entry="2026-09-21",
+            level=3.97, notional=1e10))
+        assert wrote.status_code == 200, wrote.text
+        assert wrote.json()["available"] is True, "쓰기 응답에 available 이 빠지면 화면이 죽는다"
+
+        closed = c.post("/api/paper/leg/close",
+                        json=dict(n=1, exit="2026-09-21", level=4.00))
+        assert closed.status_code == 200
+        assert closed.json()["available"] is True
+
+    def test_쓰기_라우트_전부가_같은_헬퍼를_지난다(self):
+        """다섯이 `_paper_sheet()` 하나를 지나야 칸이 갈리지 않는다."""
+        import inspect
+
+        from app import main as M
+
+        for name in ("paper_enroll", "paper_retire", "paper_trade",
+                     "paper_close", "paper_add_leg", "paper_close_leg"):
+            src = inspect.getsource(getattr(M, name))
+            assert "_paper_sheet()" in src, f"{name} 이 장부를 따로 세우고 있다"
+
+
+class TestReset:
+    """초기화 [OWNER 2026-09-22] — **지우기가 아니라 치우기**다.
+
+    「지우는 라우트는 없다」와 「초기화가 필요하다」는 둘 다 참이라, 옛 장부를
+    파일로 남기고 새 장부를 연다. 치운 것을 못 찾으면 그건 결국 삭제다.
+    """
+
+    def test_옛_장부가_파일로_남는다(self, tmp_path):
+        p = tmp_path / "book.json"
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2026-09-21",
+                      level=3.97, notional=1e10, dv01=1.9e6)
+        paper.save(st, p)
+
+        st2 = paper.load(p)
+        kept_name = paper.reset(st2, p)
+        paper.save(st2, p)
+
+        assert kept_name and kept_name.startswith("paper_book_")
+        # ★보관본 이름은 **장부에 안 들어간다** — 들어가면 다음 보관본까지 따라간다.
+        assert "archivedTo" not in paper.load(p)
+        assert paper.load(p)["legs"] == []
+        kept = list((p.parent / "paper_archive").glob("paper_book_*.json"))
+        assert len(kept) == 1, "옛 장부가 어디에도 없으면 그건 삭제다"
+        assert json.loads(kept[0].read_text(encoding="utf-8"))["legs"][0]["level"] == 3.97
+
+    def test_빈_장부를_초기화하면_보관본을_안_만든다(self, tmp_path):
+        p = tmp_path / "book.json"
+        st = paper.load(p)
+        assert paper.reset(st, p) is None
+        assert not (p.parent / "paper_archive").exists()
+
+    def test_확인_낱말이_없으면_안_지운다(self, monkeypatch, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from app import main as M
+
+        monkeypatch.setattr(paper, "STORE", tmp_path / "book.json")
+        c = TestClient(M.app)
+        c.post("/api/paper/leg", json=dict(kind="irs", tenor="2Y", side="pay",
+                                           entry="2026-09-21", level=3.97, notional=1e10))
+        assert c.post("/api/paper/reset", json={}).status_code == 400
+        assert len(paper.load(tmp_path / "book.json")["legs"]) == 1
+
+        ok = c.post("/api/paper/reset", json={"confirm": "초기화"})
+        assert ok.status_code == 200
+        assert ok.json()["available"] is True
+        assert ok.json()["archivedTo"].startswith("paper_book_")
+        assert paper.load(tmp_path / "book.json")["legs"] == []

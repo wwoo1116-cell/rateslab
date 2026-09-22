@@ -98,7 +98,7 @@ from . import cashbond
 from . import creditmatrix
 from . import funding
 from .curves import TENOR_T, build_basis_curves
-from .dataset import load_dataset_merged
+from .dataset import TENOR_YEARS, load_dataset_merged
 from .derive import basis_dates, derived_ids, ohlc_buckets, series_history
 from .theta import theta_table
 from .dv01 import build_dv01_table, pv01
@@ -3287,9 +3287,111 @@ def _paper_account(*, sid: str, leg: dict, trades: list[dict],
     return True
 
 
+# ── 손으로 쌓는 다리의 재료 [OWNER 2026-09-22] ──────────────────────────────
+#
+# 다리 하나를 값 매기려면 둘이 필요하다: **오늘 레벨**과 **DV01**. 세 계기가
+# 저마다 다른 모듈에 있어서 여기가 그 셋을 한 창구로 모은다 — 화면이 계기마다
+# 다른 자리를 두드리면 단위가 갈리는 날 아무도 모른다.
+#
+# 단위는 전부 **%(금리)**로 맞춘다. 선물도 가격이 아니라 **내재금리**다 —
+# 오너의 예시가 「국채선물 2년 금리 몇에」라 금리로 적는 물건이고, 세 다리가
+# 같은 단위라야 한 표에서 더할 수 있다(`paper.score_leg` 의 그 식).
+
+def _paper_years(tenor: str) -> float:
+    """만기 라벨 → 연수. 사전은 `dataset.TENOR_YEARS` 하나다 — 여기서 다시 적으면
+    커브와 장부가 다른 만기를 말하는 날이 온다."""
+    y = TENOR_YEARS.get(tenor)
+    if y is None:
+        raise HTTPException(status_code=400, detail=f"모르는 만기예요: {tenor}")
+    return y
+
+
+def _paper_mark(kind: str, tenor: str,
+                memo: dict | None = None) -> tuple[str | None, float | None]:
+    """오늘 레벨 (asof, %) — 못 읽으면 `(None, None)` 이다(0 이 아니다).
+
+    `memo` 는 **한 장 안에서** 같은 출처를 두 번 안 읽기 위한 것이다. 선물 번들은
+    부를 때마다 SQL 두 스캔이고(`mr._fut_bundle`), 다리가 여섯이면 여섯 번이 된다.
+    """
+    memo = {} if memo is None else memo
+    key = (kind if kind != "bond" else "irs", tenor) if kind != "fut" else ("fut", tenor)
+    if kind in ("irs", "bond"):
+        # 국고와 스왑을 **한 창구**에서 받는다 — BSS 가 읽는 그 번들이라
+        # 두 다리가 서로 다른 날의 값을 보는 일이 없다(`mrseries.legs` 머리).
+        cached_legs = memo.get(("bss", tenor))
+        if cached_legs is None:
+            cached_legs = mrs.legs(f"BSS-{tenor}")
+            memo[("bss", tenor)] = cached_legs
+        dates, ktb, irs, _cd = cached_legs
+        if not dates:
+            return None, None
+        row = ktb if kind == "bond" else irs
+        return dates[-1], float(row[-1])
+    # ⚠ 선물 번들은 `{unit, points:[{t, v, …}]}` 꼴이고 **`v` 가 이미 %**다
+    #   (`mr._fut_bundle` — FUT 는 내재금리, FSW 만 bp). `dates/vals` 로 읽거나
+    #   100 으로 나누면 조용히 100배 틀린다(실측으로 밟았다 2026-09-22).
+    sid = "FUT-KTB3" if tenor == "3Y" else "FUT-KTB10"
+    pts = memo.get(("fut", sid))
+    if pts is None:
+        pts = mr_mod.series_points(sid).get("points") or []
+        memo[("fut", sid)] = pts
+    if not pts:
+        return None, None
+    return pts[-1]["t"], float(pts[-1]["v"])
+
+
+def _paper_dv01(kind: str, tenor: str, on: str, level: float,
+                notional: float) -> float:
+    """명목(원) → DV01(원/bp). 계기마다 **그 모듈의 식**을 그대로 부른다."""
+    if kind == "fut":
+        return futures.dv01_of(notional, level, tenor)
+    if kind == "bond":
+        # 진입일에 par 로 발행한 3개월 이표채 — `cashbond` 의 그 정의다.
+        # ⚠ `cashbond` 의 수익률은 **소수**(0.0378)다. %를 그대로 넘기면 290% 로
+        #   가격해서 DV01 이 조용히 5~6배 작아진다(실측으로 밟았다 2026-09-22).
+        #   `futures.dv01_of` 는 반대로 **%**를 받는다 — 모듈마다 다르다.
+        n = max(1, int(round(_paper_years(tenor) * 4)))
+        return notional * cashbond.dv01_at(level / 100.0, level / 100.0, n, 0.0)
+    pv01 = _mr_pv01_at(dt.date.fromisoformat(on), _paper_years(tenor))
+    if pv01 is None:
+        raise HTTPException(status_code=409,
+                            detail=f"{on} 커브가 없어서 IRS {tenor} pv01 을 못 냈어요")
+    return notional * pv01 * 1e-4
+
+
+def _paper_notional(kind: str, tenor: str, on: str, level: float,
+                    dv01: float) -> float:
+    """DV01(원/bp) → 명목(원). 위의 **정확한 역**이다 [OWNER 「둘 다 적는다」]."""
+    if kind == "fut":
+        return futures.face_for_dv01(dv01, level, tenor)
+    if kind == "bond":
+        n = max(1, int(round(_paper_years(tenor) * 4)))
+        per = cashbond.dv01_at(level / 100.0, level / 100.0, n, 0.0)   # 소수다
+        if per <= 0:
+            raise HTTPException(status_code=409, detail="현물 DV01 이 0 이에요")
+        return dv01 / per
+    pv01 = _mr_pv01_at(dt.date.fromisoformat(on), _paper_years(tenor))
+    if not pv01:
+        raise HTTPException(status_code=409,
+                            detail=f"{on} 커브가 없어서 IRS {tenor} pv01 을 못 냈어요")
+    return dv01 / (pv01 * 1e-4)
+
+
 def _paper_sheet() -> dict:
-    """한 장 굽기 — 등록한 것만 도는 물건이라 **동기**로 끝난다."""
-    return paper.build_sheet(leg_of=_paper_leg, account_of=_paper_account)
+    """한 장 굽기 — 등록한 것만 도는 물건이라 **동기**로 끝난다.
+
+    ★`available` 을 **여기서** 단다 [수리 2026-09-22]. 종전에는 GET 라우트만
+    `{"available": True, **sheet}` 로 감쌌고 쓰기 라우트 다섯은 `{"ok": True,
+    **_paper_sheet()}` 라 그 칸이 **없었다**. 화면은 `if (!sheet.available)` 로
+    전체를 에러 면으로 바꾸므로, **쓰기가 성공할 때마다 화면이 「페이퍼 북을 못
+    세웠어요」로 죽었다** — 서버 로그는 전부 200 이라 어디에도 안 드러난다.
+    다리를 담다가 밟았고(2026-09-22), 어제 등록/해지가 같은 날인 것도 이것일 수
+    있다. 한 자리에서 달아야 다섯이 같이 낫는다.
+    """
+    memo: dict = {}
+    return {"available": True,
+            **paper.build_sheet(leg_of=_paper_leg, account_of=_paper_account,
+                                mark_of=lambda k, t: _paper_mark(k, t, memo))}
 
 
 @router.get("/api/paper")
@@ -3300,7 +3402,7 @@ def paper_book() -> dict:
     등록하는 순간 조건이 얼고, 그 뒤로는 시장만 움직인다.
     """
     try:
-        return {"available": True, **_paper_sheet()}
+        return _paper_sheet()                          # `available` 은 그 안에서 단다
     except BaseException as exc:                       # noqa: BLE001
         logging.getLogger("sauron.paper").warning("[paper] 못 세웠어요: %s", exc)
         return {"available": False, "why": f"페이퍼 북을 못 세웠어요 — {exc}"}
@@ -3354,6 +3456,126 @@ def paper_trade(body: dict) -> dict:
                     note=str(body.get("note") or ""))
     paper.save(st)
     return {"ok": True, **_paper_sheet()}
+
+
+@router.post("/api/paper/leg")
+def paper_add_leg(body: dict) -> dict:
+    """다리 하나를 쌓는다 — **계기 하나 · 내가 체결한 레벨** [OWNER 2026-09-22].
+
+    > "포지션은 써서 넣을 수 있게 … IRS pay receive 하나 씩 쌓는 방식으로"
+
+    받는 것: `kind`(irs|bond|fut) · `tenor` · `side` · `entry` · `level`(%) ·
+    그리고 **`notional`(원) 또는 `dv01`(원/bp) 중 하나**.
+
+    ## 둘 중 하나만 받는 이유 [OWNER 「둘 다 적는다」]
+
+    화면은 둘을 다 보여 주지만 **사람은 하나만 친다**. 둘 다 받아 두면 서로 안
+    맞는 쌍이 장부에 들어오고, 그 뒤로는 어느 쪽이 참인지 아무도 모른다. 여기서
+    한쪽을 받아 다른 쪽을 **그 계기의 식으로** 채운다(`_paper_dv01` 의 정확한 역).
+
+    레벨이 **진입일 커브**로 환산되는 것도 그래서다 — 「지금 커브로 6년 내내
+    환산」이 이미 한 번 손익을 스케일한 전례가 있다(`_mr_pv01_at` 머리).
+    """
+    kind = str(body.get("kind") or "")
+    tenor = str(body.get("tenor") or "")
+    side = str(body.get("side") or "")
+    entry = str(body.get("entry") or "")
+    if not entry:
+        raise HTTPException(status_code=400, detail="체결일(entry)이 있어야 해요")
+    if body.get("level") is None:
+        raise HTTPException(status_code=400, detail="체결 레벨(level)이 있어야 해요")
+    level = float(body["level"])
+
+    try:
+        paper.check_leg(kind, tenor, side)
+    except paper.LegRejected as exc:
+        # 422 다 — 요청이 깨진 것이 아니라 **이 데스크가 안 하는 거래**다.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    notional, dv01 = body.get("notional"), body.get("dv01")
+    if (notional is None) == (dv01 is None):
+        raise HTTPException(
+            status_code=400,
+            detail="명목(notional)이나 DV01 중 **하나만** 주세요 — 나머지는 서버가 채워요")
+    if notional is not None:
+        notional = float(notional)
+        dv01 = _paper_dv01(kind, tenor, entry, level, notional)
+    else:
+        dv01 = float(dv01)
+        notional = _paper_notional(kind, tenor, entry, level, dv01)
+
+    st = paper.load()
+    paper.add_leg(st, kind=kind, tenor=tenor, side=side, entry=entry,
+                  level=level, notional=notional, dv01=dv01,
+                  tag=str(body.get("tag") or ""), note=str(body.get("note") or ""))
+    paper.save(st)
+    return {"ok": True, **_paper_sheet()}
+
+
+@router.post("/api/paper/leg/close")
+def paper_close_leg(body: dict) -> dict:
+    """다리 하나를 닫는다. **청산 레벨도 내가 적는다** — 진입을 종가로 안 매겼다."""
+    n = body.get("n")
+    exit_t = str(body.get("exit") or "")
+    if n is None or not exit_t:
+        raise HTTPException(status_code=400, detail="n·exit 가 있어야 해요")
+    if body.get("level") is None:
+        raise HTTPException(status_code=400, detail="청산 레벨(level)이 있어야 해요")
+    st = paper.load()
+    paper.close_leg(st, int(n), exit_t, float(body["level"]))
+    paper.save(st)
+    return {"ok": True, **_paper_sheet()}
+
+
+@router.post("/api/paper/reset")
+def paper_reset(body: dict) -> dict:
+    """장부를 새로 시작한다 [OWNER 2026-09-22 "포트폴리오 전체 초기화 버튼도"].
+
+    **지우지 않는다 — 치운다.** 옛 장부는 `backend/data/paper_archive/` 에 시각
+    도장을 찍어 남고, 응답이 그 파일 이름을 돌려준다(`archivedTo`). 「지우는
+    라우트는 없다」는 이 리포의 시험이 박아 둔 규율이고(생존 편향), 연습 장부를
+    치우는 일과 진 기록을 없애는 일은 다르다.
+
+    실수로 누르는 것을 막기 위해 **확인 낱말**을 요구한다 — 화면이 한 번 더 묻고,
+    서버가 그 답을 검사한다. 버튼 하나로 장부가 사라지면 그건 사고가 아니라 설계다.
+    """
+    if str(body.get("confirm") or "") != "초기화":
+        raise HTTPException(
+            status_code=400,
+            detail="확인 낱말이 있어야 해요 — 「초기화」를 그대로 보내 주세요.")
+    st = paper.load()
+    kept = paper.reset(st)
+    paper.save(st)
+    out = _paper_sheet()
+    if kept:
+        out = {**out, "archivedTo": kept}
+    return {"ok": True, **out}
+
+
+@router.get("/api/paper/instruments")
+def paper_instruments() -> dict:
+    """쓸 수 있는 계기 목록 — **서버가 낸다**.
+
+    화면이 만기 목록을 자기 손으로 적으면, 선물에 2Y 를 넣는 것 같은 일이
+    화면에서만 가능해진다(오너 예시가 바로 그 자리였다). 못 하는 거래는 고를
+    수조차 없어야 한다.
+    """
+    dates, *_ = mrs.legs("BSS-3Y")
+    swap = [t for t in cashbond.ASW_TENORS]
+    return {
+        "asof": dates[-1] if dates else None,
+        "kinds": [
+            {"kind": "irs", "label": "IRS", "tenors": swap,
+             "sides": [{"v": "pay", "label": "페이"},
+                       {"v": "receive", "label": "리시브"}]},
+            {"kind": "bond", "label": "국고 현물", "tenors": swap,
+             "sides": [{"v": "buy", "label": "매수"}],
+             "why": paper.check_bond_sell_why()},
+            {"kind": "fut", "label": "국채선물", "tenors": list(paper.FUT_TENORS),
+             "sides": [{"v": "buy", "label": "매수"},
+                       {"v": "sell", "label": "매도"}]},
+        ],
+    }
 
 
 @router.post("/api/paper/close")

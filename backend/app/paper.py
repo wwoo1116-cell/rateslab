@@ -52,6 +52,7 @@ import json
 import os
 import tempfile
 from datetime import date
+import datetime as _dt
 from pathlib import Path
 from typing import Any, Callable
 
@@ -68,7 +69,171 @@ NOTIONAL = 1_000_000.0
 
 #: 빈 장부. `opened` 는 **첫 등록 때** 박힌다(파일을 만든 날이 아니다 — 아무것도
 #: 등록 안 한 날부터 세면 표본밖 길이가 부풀어 오른다).
-EMPTY: dict[str, Any] = {"opened": None, "enrolled": [], "trades": []}
+EMPTY: dict[str, Any] = {"opened": None, "enrolled": [], "trades": [], "legs": []}
+
+
+# ── 손으로 쌓는 다리 [OWNER 2026-09-22] ─────────────────────────────────────
+#
+# > "포지션은 써서 넣을 수 있게 … IRS pay receive 하나 씩 쌓는 방식으로"
+# > "ex. BSS라고 하면, 국채선물 2년 금리 몇에 매수 / IRS Pay 2년 금리 몇에 매도"
+#
+# ## 왜 `trades`(계열+방향) 로는 안 되는가
+#
+# 그쪽은 「어느 계열을 어느 날 어느 방향으로」를 받아 **그날 종가**로 값을 매긴다.
+# 데스크가 실제로 쥐는 것은 그게 아니다 — 계기가 따로고(BSS 를 선물로 세울 수도
+# 있다), 체결 레벨이 종가가 아니다. 「금리 몇에」를 적을 자리가 없었다.
+#
+# 그래서 다리는 **계기 하나**다: 무엇을 · 어느 쪽으로 · 얼마에 · 얼마나.
+# 묶음(`tag`)은 그 다리들을 사람이 부르는 이름이고(예 「BSS 2Y」), 산술에는
+# 안 쓴다 — 묶음이 산술을 지면 「BSS 란 무엇인가」를 화면이 다시 정의하게 된다.
+#
+# ## 부호 규약 하나로 세 계기를 묶는다
+#
+# 계기마다 낱말이 다르다(페이/리시브 · 매수/매도). 산술까지 셋으로 갈리면
+# 손익 부호가 계기마다 따로 놀고, 그건 이 리포가 반복해서 밟은 결함이다.
+# 그래서 저장하는 것은 **「금리가 오르면 버는가」** 하나다(`rateSign`).
+# 낱말은 화면이 지고, 여기서는 그 낱말을 부호로 **한 번만** 옮긴다.
+LEG_KINDS = ("irs", "bond", "fut")
+
+#: (계기, 낱말) → rateSign. +1 = 금리 상승에서 번다.
+SIDE_SIGN: dict[tuple[str, str], int] = {
+    ("irs", "pay"): +1, ("irs", "receive"): -1,
+    ("bond", "buy"): -1, ("bond", "sell"): +1,
+    ("fut", "buy"): -1, ("fut", "sell"): +1,
+}
+
+#: 사람이 읽는 낱말 — 화면과 장부가 같은 말을 쓰게 한 곳에 둔다.
+SIDE_WORD = {("irs", "pay"): "페이", ("irs", "receive"): "리시브",
+             ("bond", "buy"): "매수", ("bond", "sell"): "매도",
+             ("fut", "buy"): "매수", ("fut", "sell"): "매도"}
+KIND_WORD = {"irs": "IRS", "bond": "국고 현물", "fut": "국채선물"}
+
+#: 선물은 3Y·10Y 만 있다(`futures.FUT_TENORS`). **2년 국채선물은 없다** — KRX 에도
+#: 이 리포에도. 오너 예시의 「국채선물 2년」이 그 자리였다.
+FUT_TENORS = ("3Y", "10Y")
+
+
+class LegRejected(ValueError):
+    """다리를 안 받는다. **사유가 곧 메시지**다 — 화면이 그대로 적는다."""
+
+
+def check_leg(kind: str, tenor: str, side: str) -> None:
+    """받을 수 있는 다리인가. 못 받으면 사유를 들고 죽는다.
+
+    ★**현물 국고 매도는 막는다** [OWNER 2026-09-22 — "아예 막는다"]. 이 데스크에
+    이미 있던 규칙이고(`mr.TRADABLE_DIRS["bss"] = (-1,)` · cashbond 「국고채는
+    매도는 없는거고」 [OWNER 2026-08-14]), 손으로 적는 자리라고 예외를 두면
+    장부와 엔진이 서로 다른 세상을 기록한다.
+    """
+    if kind not in LEG_KINDS:
+        raise LegRejected(f"모르는 계기예요: {kind}")
+    if (kind, side) not in SIDE_SIGN:
+        raise LegRejected(f"{KIND_WORD[kind]} 에 없는 방향이에요: {side}")
+    if kind == "bond" and side == "sell":
+        raise LegRejected(
+            "국고 현물 매도는 이 데스크가 안 하는 거래예요 — 대차매도를 안 하기로 "
+            "했고(2026-08-14) 엔진도 그 방향을 안 싣습니다. 선물 매도로 세우세요.")
+    if kind == "fut" and tenor not in FUT_TENORS:
+        raise LegRejected(
+            f"국채선물은 {' · '.join(FUT_TENORS)} 만 있어요 — {tenor} 선물은 "
+            "KRX 에도 없습니다.")
+
+
+def check_bond_sell_why() -> str:
+    """현물 매도가 왜 목록에 없는가 — **사유는 서버 것이다**(rv exclusions 문법).
+
+    막아 놓고 이유를 안 적으면 다음 사람이 「빠뜨렸나」로 읽고 다시 넣는다.
+    """
+    return ("현물 국고 매도는 안 해요 — 대차매도를 안 하기로 했고(2026-08-14) "
+            "엔진도 그 방향을 안 싣습니다. 그 다리는 선물 매도로 세우세요.")
+
+
+def add_leg(store: dict[str, Any], *, kind: str, tenor: str, side: str,
+            entry: str, level: float, notional: float, dv01: float,
+            tag: str = "", note: str = "") -> dict[str, Any]:
+    """다리 하나를 쌓는다. `exit` 는 비워 둔다(아직 들고 있다)."""
+    check_leg(kind, tenor, side)
+    store.setdefault("legs", [])
+    store["legs"] = [*store["legs"], {
+        "n": len(store["legs"]) + 1,
+        "kind": kind, "tenor": tenor, "side": side,
+        "rateSign": SIDE_SIGN[(kind, side)],
+        "entry": entry, "level": float(level),
+        "notional": float(notional), "dv01": float(dv01),
+        "tag": tag, "note": note,
+        "exit": None, "exitLevel": None,
+    }]
+    if store.get("opened") is None:
+        store["opened"] = entry
+    return store
+
+
+def close_leg(store: dict[str, Any], n: int, exit_t: str,
+              exit_level: float) -> dict[str, Any]:
+    """다리 하나를 닫는다 — 지우는 것이 아니라 **닫는 것**이다(`close_trade` 와 같은 규율).
+
+    청산 레벨도 **내가 적는다**. 진입을 종가로 안 매겼으니 청산도 그래야 한다.
+    """
+    store.setdefault("legs", [])
+    store["legs"] = [{**l, "exit": exit_t, "exitLevel": float(exit_level)}
+                     if l["n"] == n else l for l in store["legs"]]
+    return store
+
+
+def reset(store: dict[str, Any], path: Path | None = None) -> str | None:
+    """장부를 새로 시작한다 — **지우는 것이 아니라 치우는 것**이다
+    [OWNER 2026-09-22 "포트폴리오 전체 초기화 버튼도 만들어줘"].
+
+    ## 왜 삭제가 아닌가
+
+    이 리포에는 「지우는 라우트는 없다」가 시험으로 박혀 있다
+    (`tests/test_paper.py::test_지우는_라우트는_없다`) — 진 기록을 지우는 것이
+    생존 편향이 장부에 들어오는 가장 흔한 길이라서다. 그 규율과 「초기화가 필요한
+    현실」은 둘 다 참이다: 지금 장부는 **연습 중**이고, 연습을 치우는 것과 진
+    거래를 없애는 것은 다른 일이다.
+
+    그래서 옛 장부를 **파일로 남기고** 새 장부를 연다. 치운 것이 어디 있는지
+    아무도 못 찾으면 그건 결국 삭제다.
+
+    ⚠ 이웃(`enroll`·`add_leg` …)과 달리 **보관본 이름을 돌려준다**. 장부에 넣지
+    않는 이유가 있다: 그건 «이 장부가 무엇을 들고 있나» 가 아니라 «방금 한 번 무슨
+    일이 있었나» 라, 넣으면 파일에 눌러앉아 다음 보관본에까지 따라 들어간다
+    (첫 판에서 실제로 그렇게 됐다 — 실측 2026-09-22).
+    """
+    p = (path or STORE)
+    old = load(p)
+    if old.get("opened") or old.get("enrolled") or old.get("trades") or old.get("legs"):
+        stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        keep = p.parent / "paper_archive" / f"paper_book_{stamp}.json"
+        keep.parent.mkdir(parents=True, exist_ok=True)
+        keep.write_text(json.dumps(old, ensure_ascii=False, indent=1),
+                        encoding="utf-8")
+        kept_name = keep.name
+    else:
+        kept_name = None
+    store.clear()
+    store.update({"opened": None, "enrolled": [], "trades": [], "legs": []})
+    return kept_name
+
+
+def score_leg(leg: dict, mark: float | None, cost_bp: float = COST_BP) -> dict:
+    """다리 하나의 손익 — **내 레벨에서 시장 레벨까지**.
+
+        손익 = rateSign × (나간 레벨 − 들어온 레벨) × 100bp × DV01 − 비용
+
+    `mark` 가 `None` 이면 오늘 값을 못 읽은 것이다. 그때 0 을 적으면 「안 벌었다」가
+    되므로 **`None` 을 그대로 올린다** — 화면이 「아직」을 적는다(이 리포의 그 규율).
+    """
+    out = {**leg, "mark": mark, "open": leg.get("exit") is None}
+    end = leg["exitLevel"] if leg.get("exit") else mark
+    if end is None:
+        return {**out, "pnl": None, "gross": None, "cost": None, "bp": None,
+                "why": "오늘 레벨을 못 읽었어요"}
+    bp = (float(end) - float(leg["level"])) * 100.0
+    gross = leg["rateSign"] * bp * float(leg["dv01"])
+    cost = cost_bp * float(leg["dv01"]) * (1.0 if out["open"] else 2.0)
+    return {**out, "bp": bp, "gross": gross, "cost": cost, "pnl": gross - cost,
+            "why": None}
 
 
 # ── 저장 ────────────────────────────────────────────────────────────────────
@@ -360,6 +525,7 @@ def merge_daily(legs: list[dict]) -> list[dict]:
 
 def build_sheet(*, leg_of: Callable[..., dict],
                 account_of: Callable[..., bool] | None = None,
+                mark_of: Callable[[str, str], tuple[str | None, float | None]] | None = None,
                 store: dict[str, Any] | None = None,
                 cost_bp: float = COST_BP) -> dict[str, Any]:
     """페이퍼 북 한 장 — 규칙 북 · 수동 북 · 둘의 차이.
@@ -395,6 +561,21 @@ def build_sheet(*, leg_of: Callable[..., dict],
         except BaseException as exc:       # noqa: BLE001
             failed.append({"id": sid, "why": str(exc)})
 
+    # ── 손으로 쌓은 다리 [OWNER 2026-09-22] ─────────────────────────────
+    #
+    # 규칙 북·수동 북과 **다른 물건**이라 일별로 안 합친다. 저 둘은 엔진이 날마다
+    # 값을 매긴 계열이고 이것은 「내 레벨에서 지금 레벨까지」 한 수다 — 없는 일별
+    # 곡선을 지어내면 위의 차이 그래프가 거짓말을 한다. 합치는 것은 오너 결정이다.
+    pos_legs: list[dict] = []
+    for lg in st.get("legs", []):
+        mark = None
+        if mark_of is not None:
+            try:
+                _, mark = mark_of(lg["kind"], lg["tenor"])
+            except BaseException as exc:                 # noqa: BLE001
+                failed.append({"id": f"leg{lg['n']}", "why": str(exc)})
+        pos_legs.append(score_leg(lg, mark, cost_bp=cost_bp))
+
     rule_daily = merge_daily(rule_legs)
     man_daily = merge_daily(man_legs)
     asof = max([d["t"] for d in rule_daily + man_daily], default=None)
@@ -426,6 +607,19 @@ def build_sheet(*, leg_of: Callable[..., dict],
             "legs": man_legs,
             "split": merge_split(man_legs),
             "daily": man_daily,
+        },
+        #: 손으로 쌓은 다리 — 묶음(tag)은 사람이 부르는 이름이고 산술에 안 쓴다.
+        "position": {
+            "legs": pos_legs,
+            "open": sum(1 for l in pos_legs if l["open"]),
+            "closed": sum(1 for l in pos_legs if not l["open"]),
+            "pnl": (None if not pos_legs or any(l["pnl"] is None for l in pos_legs)
+                    else round(sum(l["pnl"] for l in pos_legs), 2)),
+            #: DV01 합은 **부호를 지고** 더한다 — 페이와 리시브가 상쇄되는 것이
+            #: 이 북의 알맹이라(BSS 가 그렇다) 절대값 합은 거짓을 말한다.
+            "netDv01": round(sum(l["rateSign"] * l["dv01"] for l in pos_legs
+                                 if l["open"]), 2),
+            "grossDv01": round(sum(abs(l["dv01"]) for l in pos_legs if l["open"]), 2),
         },
         # 이 화면이 실제로 묻는 물음 — 내 판단이 규칙보다 나은가.
         "diff": {"today": round(_today(man_daily) - _today(rule_daily), 2),

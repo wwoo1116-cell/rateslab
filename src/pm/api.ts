@@ -21,7 +21,8 @@
 import { BacktestUnavailable } from '@/lib/api';
 import type { MrSplit } from '@/mr/api';
 import {
-  paperCloseUrl, paperEnrollUrl, paperRetireUrl, paperTradeUrl, paperUrl,
+  paperCloseUrl, paperEnrollUrl, paperInstrumentsUrl, paperLegCloseUrl,
+  paperLegUrl, paperResetUrl, paperRetireUrl, paperTradeUrl, paperUrl,
 } from '@/lib/staticPaths';
 
 /** 하루 한 점. `cum` 은 **서버가 굴린** 누적이다. */
@@ -112,9 +113,69 @@ export interface PaperSheet {
     split: MrSplit | null;
     daily: PaperDay[];
   };
+  /** 손으로 쌓은 다리 [OWNER 2026-09-22 — "IRS pay receive 하나 씩 쌓는 방식"].
+   *
+   *  위 둘과 **다른 물건**이라 일별 곡선이 없다. 저 둘은 엔진이 날마다 값을 매긴
+   *  계열이고 이것은 「내 레벨에서 지금 레벨까지」 한 수다 — 없는 곡선을 지어내면
+   *  차이 그래프가 거짓말을 한다. */
+  position: {
+    legs: PaperPositionLeg[];
+    open: number;
+    closed: number;
+    /** 한 다리라도 오늘 레벨을 못 읽었으면 **`null`** 이다(0 이 아니다). */
+    pnl: number | null;
+    /** **부호를 지고** 더한 DV01 — 페이와 리시브가 상쇄되는 것이 이 북의 알맹이다. */
+    netDv01: number;
+    grossDv01: number;
+  };
   /** 이 화면이 실제로 묻는 물음 — 내 판단이 규칙보다 나은가. */
   diff: { today: number; cum: number };
   failed: { id: string; why: string }[];
+}
+
+/** 손으로 쌓은 다리 하나 — **계기 하나 · 내가 체결한 레벨**.
+ *
+ *  `rateSign` 이 이 물건의 전부다: +1 이면 금리가 오를 때 번다. 계기마다 낱말이
+ *  다르지만(페이/리시브 · 매수/매도) 산술은 이 부호 하나를 지난다. */
+export interface PaperPositionLeg {
+  n: number;
+  kind: 'irs' | 'bond' | 'fut';
+  tenor: string;
+  side: string;
+  rateSign: number;
+  entry: string;
+  /** 내가 체결한 레벨(%). 종가가 아니다 — 그게 이 북의 존재 이유다. */
+  level: number;
+  notional: number;
+  dv01: number;
+  tag: string;
+  note: string;
+  exit: string | null;
+  exitLevel: number | null;
+  open: boolean;
+  /** 오늘 시장 레벨(%). 못 읽었으면 `null` — 「아직」이지 0 이 아니다. */
+  mark: number | null;
+  bp: number | null;
+  gross: number | null;
+  cost: number | null;
+  pnl: number | null;
+  why: string | null;
+}
+
+/** 쓸 수 있는 계기 — **서버가 낸다**.
+ *
+ *  화면이 만기 목록을 손으로 적으면 선물에 2Y 를 넣는 일이 화면에서만 가능해진다
+ *  (오너 예시가 그 자리였다 — 2년 국채선물은 KRX 에도 없다). `why` 는 빠진
+ *  방향의 사유다(현물 매도). */
+export interface PaperInstruments {
+  asof: string | null;
+  kinds: {
+    kind: 'irs' | 'bond' | 'fut';
+    label: string;
+    tenors: string[];
+    sides: { v: string; label: string }[];
+    why?: string;
+  }[];
 }
 
 export async function fetchPaper(): Promise<PaperSheet> {
@@ -160,3 +221,28 @@ export const addTrade = (t: {
 }) => post(paperTradeUrl(), t);
 export const closeTrade = (n: number, exit: string) =>
   post(paperCloseUrl(), { n, exit });
+
+/** 다리 하나 쌓기. **명목과 DV01 중 하나만** 준다 — 나머지는 서버가 그 계기의
+ *  식으로 채운다. 둘 다 보내면 400 이고, 그건 규율이다: 안 맞는 쌍이 장부에
+ *  들어오면 그 뒤로 어느 쪽이 참인지 아무도 모른다. */
+export const addLeg = (l: {
+  kind: string; tenor: string; side: string; entry: string; level: number;
+  notional?: number; dv01?: number; tag?: string; note?: string;
+}) => post(paperLegUrl(), l);
+
+/** 다리 하나 닫기. **청산 레벨도 내가 적는다** — 진입을 종가로 안 매겼다. */
+export const closeLeg = (n: number, exit: string, level: number) =>
+  post(paperLegCloseUrl(), { n, exit, level });
+
+/** 장부를 새로 시작한다 — **지우지 않는다**. 옛 장부는 서버가 파일로 남기고
+ *  `archivedTo` 로 그 이름을 돌려준다. 확인 낱말은 서버가 검사한다(실수 방지). */
+export const resetBook = (): Promise<PaperSheet & { archivedTo?: string }> =>
+  post(paperResetUrl(), { confirm: '초기화' }) as Promise<
+    PaperSheet & { archivedTo?: string }>;
+
+export async function fetchInstruments(): Promise<PaperInstruments> {
+  const r = await fetch(paperInstrumentsUrl());
+  if (r.status === 404) throw new BacktestUnavailable();
+  if (!r.ok) throw new Error(`instruments: HTTP ${r.status}`);
+  return r.json() as Promise<PaperInstruments>;
+}

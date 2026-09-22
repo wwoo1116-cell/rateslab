@@ -202,6 +202,14 @@ export const paperEnrollUrl = () => liveUrl("/api/paper/enroll");
 export const paperRetireUrl = () => liveUrl("/api/paper/retire");
 export const paperTradeUrl = () => liveUrl("/api/paper/trade");
 export const paperCloseUrl = () => liveUrl("/api/paper/close");
+/* 손으로 쌓는 다리 [OWNER 2026-09-22] — 계열+방향이 아니라 계기 하나에 내가
+ * 체결한 레벨. `instruments` 가 따로 있는 이유는 **못 하는 거래는 고를 수조차
+ * 없어야** 하기 때문이다(선물 2Y·현물 매도를 화면이 만들어 내던 자리). */
+export const paperLegUrl = () => liveUrl("/api/paper/leg");
+export const paperLegCloseUrl = () => liveUrl("/api/paper/leg/close");
+export const paperInstrumentsUrl = () => liveUrl("/api/paper/instruments");
+/* 초기화는 **지우기가 아니다** — 옛 장부를 보관하고 새로 연다. */
+export const paperResetUrl = () => liveUrl("/api/paper/reset");
 
 /** 거래 하나의 실가격 일별 대사 — 자산스왑으로 세워 민평 노드를 범프한
  * 테너별 KRD. **거래를 누를 때만** 도는 별도 패스라 라우트도 따로다
