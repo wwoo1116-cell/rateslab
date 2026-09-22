@@ -181,8 +181,10 @@ def assemble(
             pools[f"credit:{bt}"] = p
 
     # ── 스프레드 풀 [OWNER 2026-08-18 — "스프레드 표면"]. 부호·정렬은 universe
-    # 의 표 행과 같다(§16): BSS = 국고 − IRS(inner join — 한쪽만 찍힌 날의
-    # 스프레드를 지어내지 않는다), 신용 스프레드 = 크레딧 − 국고(같은 달력).
+    # 의 표 행과 같다(§16): BSS = IRS − 국고(inner join — 한쪽만 찍힌 날의
+    # 스프레드를 지어내지 않는다 · 부호 규약은 [OWNER 2026-09-22] «스왑 −
+    # 채권현물»), 신용 스프레드 = 크레딧 − 국고(같은 달력 — 이쪽은 **안 뒤집는다**,
+    # 크레딧 스프레드는 스왑 대 현물이 아니다).
     # 둘 다 ×100 = bp.
     ktb = curves.get("KTB", {})
     irs_idx = {d: i for i, d in enumerate(dataset.dates)}
@@ -197,7 +199,7 @@ def assemble(
             j = irs_idx.get(d)
             a = gs[i]
             b = ss[j] if j is not None else None
-            vals.append(None if a is None or b is None else (a - b) * 100.0)
+            vals.append(None if a is None or b is None else (b - a) * 100.0)
         bss_by_tenor[tlbl] = vals
     p = _pool("BSS", SWAP_TENORS, cdates, bss_by_tenor, unit="bp", with_inversion=False)
     if p:

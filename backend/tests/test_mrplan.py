@@ -174,11 +174,16 @@ class TestLevels:
         assert lv[-1]["entryGap"] == pytest.approx(-1.0)
 
     def test_못_하는_방향은_안_싣는다(self):
-        """BSS 의 하단은 국고 매도다 — 이 데스크가 못 하는 거래의 문턱을 권하지 않는다."""
+        """BSS 의 하단은 국고 매도다 — 이 데스크가 못 하는 거래의 문턱을 권하지 않는다.
+
+        ★2026-09-22 규약 뒤집기로 **살아남는 방향이 `-1` 에서 `+1` 로** 옮겨
+        앉았다. 막히는 거래는 같은 거래(국고 대차매도)이고 그것을 가리키는
+        부호만 바뀌었다 — 그 불변량은 `test_mr_convention.py` 가 잰다.
+        """
         lv = mrp.levels_for("bss", ma=30.0, sd=2.0, v=30.0, entry_z=2.0,
                             exit_z=0.5, stop_z=2.5, scale=1.0)
-        assert [x["dir"] for x in lv] == [-1]
-        assert lv[0]["legs"] == mr_mod.DIR_LEGS["bss"]["minus"]["legs"]
+        assert [x["dir"] for x in lv] == [1]
+        assert lv[0]["legs"] == mr_mod.DIR_LEGS["bss"]["plus"]["legs"]
 
     def test_퍼센트_계열은_레벨은_자기_단위_거리는_bp(self):
         """100배 함정 — 선물 계열에서만 거리가 100배 작아지던 그 자리."""
@@ -365,8 +370,9 @@ class TestBuildSeries:
     def test_진입_레벨은_보드_트리거와_같은_수다(self):
         """한 화면이 같은 문턱을 두 수로 말하지 않는다."""
         out, _c, _s, _d, _v = self._built()
-        lv = [x for x in out["levels"] if x["dir"] == -1][0]
-        tr = [t for t in out["triggers"] if t["dir"] == -1][0]
+        # BSS 가 할 수 있는 방향은 `+1` 하나다(2026-09-22 규약 뒤집기).
+        lv = [x for x in out["levels"] if x["dir"] == 1][0]
+        tr = [t for t in out["triggers"] if t["dir"] == 1][0]
         assert lv["entry"] == pytest.approx(tr["level"], abs=1e-4)
         assert lv["entryGap"] == pytest.approx(tr["gap"], abs=1e-4)
         assert lv["entryReached"] == tr["reached"]
@@ -400,21 +406,25 @@ class TestBuildSeries:
         건너뛴다(그 판이 실제로 한 번 서 있었다).
         """
         vals_u = _ou(900, seed=7)
-        vals_u[-1] = vals_u[-1] + 12.0            # |z| ≥ 2 → 그 봉에 진입
+        # ★**아래로** 민다(2026-09-22 규약 뒤집기). 엔진은 「늘어난 쪽의 반대」에
+        # 걸므로 위로 밀면 `dir -1` 이 나오는데, BSS 에서 그쪽은 이제 국고
+        # 대차매도라 막혀 있다 — 막힌 방향으로 밀면 다리가 아예 안 열리고 이
+        # 시험은 「우연히 건너뛰는 판」이 된다(이 docstring 이 경계하는 바로 그것).
+        vals_u[-1] = vals_u[-1] - 12.0            # |z| ≥ 2 → 그 봉에 진입
         leg_of, calls, _d, vals = _leg_of("BSS-3Y", "BSS 3Y", "bss", "bp", vals_u)
         # 손절을 아주 멀리 둬서 같은 봉에 손절로 안 닫히게 한다(우선순위: 손절 > 청산).
         grid_of, _seen = _grid_of([_cell(cdarRatio=1.0, lookback=60, entryZ=2.0,
                                          exitZ=0.5, stopZ=99.0, entryMode="level")])
         out = mrp.build_series("BSS-3Y", leg_of=leg_of, grid_of=grid_of)
         pos = out["position"]
-        assert pos is not None and pos["dir"] == -1   # 늘어난 쪽의 반대에 건다
+        assert pos is not None and pos["dir"] == 1    # 줄어든 쪽의 반대에 건다
         assert pos["bars"] == 0 and pos["entryT"] == out["asof"]
         # 나가는 문은 **오늘의 것**이고 `exitsNow` 와 같은 수다(두 벌이 아니다).
         now = out["exitsNow"]
         assert (pos["exit"], pos["stop"]) == (now["exit"], now["stop"])
         assert (pos["exitGap"], pos["stopGap"]) == (now["exitGap"], now["stopGap"])
-        # 위로 밀어 넣었으니 지금 쪽도 위다 — 중심선을 안 넘었다.
-        assert pos["crossed"] is False and now["side"] == "above"
+        # 아래로 밀어 넣었으니 지금 쪽도 아래다 — 중심선을 안 넘었다.
+        assert pos["crossed"] is False and now["side"] == "below"
         # 들고 있는 다리는 두 문 **사이**에 있다(밖이면 엔진이 이미 닫았다).
         assert pos["exitGap"] > 0 and pos["stopGap"] > 0
         assert pos["legs"] == mr_mod.DIR_LEGS[out["kind"]][

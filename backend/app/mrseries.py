@@ -240,7 +240,7 @@ def legs(sid: str, *, need_cd: bool = False) -> tuple[list[str], list[float], li
 
 
 def points(sid: str) -> dict[str, Any]:
-    """`mr.series_points` 가 먹는 모양 — 값은 **bp**(국고 − 스왑, ×100).
+    """`mr.series_points` 가 먹는 모양 — 값은 **bp**(스왑 − 국고, ×100).
 
     ★다리 레벨을 같이 싣는다 [트레이더 2026-09-22 — "두개나 3개를 엮는 상품의
     경우에는 각각의 레벨을 표시해줄 것"]. 종전에는 BSS 만 `{t, v}` 뿐이었다 —
@@ -248,14 +248,23 @@ def points(sid: str) -> dict[str, Any]:
     상품 중 BSS 만 빠져 있던** 셈이다(플라이는 `2·벨리−윙` 이라 대사표의 부호
     규약과 안 맞아 의도적으로 뺀 것이고 그 근거는 `combo_points` 에 있다).
 
-    차례는 **`[국고, 스왑]`** 이다 — 값이 `국고 − 스왑` 이므로 그 차례라야
+    ## ★ 부호 규약은 **스왑 − 채권현물** 이다 [OWNER 2026-09-22 — "BSS나 FSW같은거
+    ## 이제 컨벤션 바꾸는게 스왑 - 채권현물 또는 국채선물이야" · "ㅇㅇ 뒤집어"]
+
+    종전은 `국고 − IRS` 였다. **뜻이 뒤집히는 것이 정상이다** [OWNER] — 같은 날
+    BSS-3Y 가 +12bp 였으면 이제 −12bp 다. 계열 부호와 `mr.TRADABLE_DIRS` 를
+    **같이** 뒤집으므로 `|z|` 가 불변이고, 격자가 고르는 조건도 실제로 잡히는
+    거래도 경제적으로 같은 것이 남는다(`tests/test_mr_convention.py` 가 그 항등을
+    잰다 — 한쪽만 뒤집으면 그 시험이 먼저 깨진다).
+
+    차례는 **`[스왑, 국고]`** 다 — 값이 `스왑 − 국고` 이므로 그 차례라야
     「다리0 − 다리1 = 값」이 대사표에서 닫힌다(커브가 `[긴, 짧은]` 인 것과 같은 규약).
     """
     dates, govt, swap, _cd = legs(sid)
     return {
         "id": sid, "unit": "bp",
-        "points": [{"t": d, "v": round((govt[i] - swap[i]) * 100.0, 4),
-                    "legs": [govt[i], swap[i]]}
+        "points": [{"t": d, "v": round((swap[i] - govt[i]) * 100.0, 4),
+                    "legs": [swap[i], govt[i]]}
                    for i, d in enumerate(dates)],
     }
 

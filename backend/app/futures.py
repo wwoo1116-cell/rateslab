@@ -16,10 +16,14 @@
                        현금결제(CTD 없음)·연결 계열이라 만기 롤오프가 없고,
                        캐리·조달·롤다운은 존재하지 않는 성분이다(공란 정책;
                        근거는 futures_pricing 모듈 doc — 합성채는 늙지 않는다).
-    FSW:3Y / FSW:10Y   퓨처스왑 = 선물 내재금리 − 같은 만기 IRS [OWNER,
-                       2026-08-25 — "3선이면 3년 IRS, 10선이면 10년 IRS"].
-                       +1 = 호가값(스프레드) 롱 = **선물 매도 + IRS 리시브**
-                       (내재↑ = 선물 가격↓ 에서 이득 + IRS↓ 에서 이득).
+    FSW:3Y / FSW:10Y   퓨처스왑 = 같은 만기 IRS − 선물 내재금리 [OWNER,
+                       2026-08-25 — "3선이면 3년 IRS, 10선이면 10년 IRS" ·
+                       ★부호 규약 2026-09-22 — "스왑 - 채권현물 또는 국채선물"].
+                       +1 = 호가값(스프레드) 롱 = **IRS 페이 + 선물 매수**
+                       (IRS↑ 에서 이득 + 내재↓ = 선물 가격↑ 에서 이득).
+                       ⚠ 2026-09-22 에 **뜻이 뒤집혔다** — 같은 `+1` 이 종전에는
+                       선물 매도·IRS 리시브였다. 계열 부호를 뒤집으면서 다리도
+                       같이 뒤집어야 「+1 = 스프레드 확대」가 계속 참이 된다.
                        두 다리는 진입일 DV01 중립으로 가중한다 — 엔진이
                        스프레드·플라이에 이미 쓰는 규칙(_build_legs)과 같다.
                        IRS 다리는 스왑 엔진(_run_one) 그대로다: 엔진을 새로
@@ -234,7 +238,7 @@ def parse_id(series_id: str) -> tuple[str, str]:
 class FuturesPosition:
     kind: str          # FUT | FSW
     tenor: str         # 3Y | 10Y
-    direction: int     # +1 = 호가값 롱 (FUT: 매수 / FSW: 스프레드 확대)
+    direction: int     # +1 = 호가값 롱 (FUT: 매수 / FSW: 스프레드(IRS−선물) 확대)
     notional: float    # 선물 액면 (원)
     entry: dt.date
     exit: dt.date | None = None
@@ -359,7 +363,7 @@ def series_payload(fut: FuturesData, dataset, series_id: str, res: str = "full")
     내재금리를 같이 싣는다 — 진입 레벨 칸이 두 줄로 그 둘을 적는다.
     다운샘플(res=preview)을 지나도 어긋나지 않게 **날짜로** 맞춘다.
 
-    퓨처스왑은 가격이 아니라 **스프레드**(내재 − IRS, bp)라 `y` 가 없다. 그
+    퓨처스왑은 가격이 아니라 **스프레드**(IRS − 내재, bp)라 `y` 가 없다. 그
     다리 결합은 MR 보드(`app/mr.py::_fut_bundle`)와 같은 정의이고, 같은 inner
     join 규율이다 — 양쪽 다 마킹이 있는 날만, 보간·이월 없음.
     """
@@ -400,7 +404,7 @@ def series_payload(fut: FuturesData, dataset, series_id: str, res: str = "full")
             leg = irs_by.get(t)
             if leg is None:
                 continue
-            pairs.append((t, round((y - float(leg)) * 100.0, 4)))
+            pairs.append((t, round((float(leg) - y) * 100.0, 4)))
         unit = "bp"
         ylut = None
     if not pairs:
@@ -510,7 +514,8 @@ def fsw_swap_leg(
     """(IRS 다리 Position, 진입 내재금리 %, 선물 DV01 원/bp).
 
     다리 규칙 [OWNER, 2026-08-25]: 같은 만기 IRS, 진입일 DV01 중립.
-    +1(스프레드 롱) = IRS 리시브 = Position.direction −1 (스왑 엔진의 +1 은
+    ★2026-09-22 규약 뒤집기: 스프레드가 `IRS − 선물` 이므로
+    +1(스프레드 롱) = **IRS 페이** = Position.direction **+1** (스왑 엔진의 +1 이
     호가 롱 = 페이). 명목 = 선물 DV01 / 스왑 단위 DV01. run 과 recon 이 같은
     함수를 불러 같은 다리를 얻는다 — 두 번째 정의 금지.
     """
@@ -537,7 +542,7 @@ def fsw_swap_leg(
     swap_notional = fut_dv01_won / (unit_dv01 * 1e-4)
     swap_pos = Position(
         series_id=pos.tenor,
-        direction=-pos.direction,
+        direction=pos.direction,
         notional=swap_notional,
         entry=entry_date,
         exit=pos.exit,
@@ -579,8 +584,9 @@ def run_one(
     swap_ser: dict[int, float] = {}
     fut_dir = pos.direction
     if pos.kind == KIND_FSW:
-        # 스프레드 롱 = 선물 매도 (+ IRS 리시브 — 아래 스왑 엔진 위임).
-        fut_dir = -pos.direction
+        # 스프레드(IRS − 선물) 롱 = 선물 **매수** (+ IRS 페이 — 아래 스왑 엔진
+        # 위임). 2026-09-22 규약 뒤집기 전에는 여기가 `-pos.direction` 이었다.
+        fut_dir = pos.direction
         swap_pos, y0, _dv = fsw_swap_leg(fut, dataset, pos)
         _s_entry, s_exit, _m = _span_of(dataset, swap_pos)
         # 스왑 다리가 만기로 끝나면 선물 다리도 그 마크에서 얼린다 — 안
@@ -658,9 +664,9 @@ def run_one(
         "matured": bool(swap_rec and swap_rec.get("matured")),
         "legs": legs,
         # 표시값 = 내재금리(%) — 스왑 아웃라이트의 % 표기와 같은 축.
-        # FSW 는 스프레드(bp) = 내재 − IRS 진입 par.
+        # FSW 는 스프레드(bp) = IRS 진입 par − 내재 [부호 규약 2026-09-22].
         "entryValue": round(y_entry, 4) if pos.kind == KIND_FUT else round(
-            (y_entry - swap_rec["legs"][0]["entryRate"]) * 100.0, 2
+            (swap_rec["legs"][0]["entryRate"] - y_entry) * 100.0, 2
         ),
         "exitValue": round(y_exit, 4) if pos.kind == KIND_FUT else None,
         "pnl": round(last, 0),
@@ -781,7 +787,9 @@ def book_recon(fut: FuturesData, dataset, positions: list[FuturesPosition],
             _sa, s_exit, _m = _span_of(dataset, swap_pos)
             b = min(b, _index_on_or_before(cal, dataset.dates[s_exit]))
         fs = fut.series[p.tenor]
-        fut_dir = -p.direction if p.kind == KIND_FSW else p.direction
+        # 2026-09-22 규약 뒤집기 뒤로 FSW 도 선물 다리가 **같은 부호**다
+        # (`IRS − 선물` 확대 = 선물 매수) — `run_one` 의 `fut_dir` 과 한 문장.
+        fut_dir = p.direction
         open_end = p.exit is None and cal[b] == cal[-1]
         infos.append({
             "pos": p, "fs": fs, "dir": fut_dir,

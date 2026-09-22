@@ -83,7 +83,8 @@ const POOL_TABS: { id: PoolTab; label: string }[] = [
   { id: 'credit', label: '크레딧' },
   { id: 'swap', label: '스왑' },
   /* 스프레드 표면 [OWNER 2026-08-18] — 부호는 표와 같다: 신용SP = 크레딧−국고,
-   * BSS = 국고−IRS (universe 의 행 그대로, §16). */
+   * BSS = IRS−국고 (universe 의 행 그대로, §16 · 규약 [OWNER 2026-09-22]
+   * «스왑 − 채권현물»). */
   { id: 'crdsp', label: '신용SP' },
   { id: 'bss', label: 'BSS' },
 ];

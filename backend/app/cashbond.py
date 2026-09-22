@@ -507,7 +507,9 @@ def run_bond_position(
             rec[key] = round(rec[key] + srec[key], 0)
         rec["swapPnl"] = srec["pnl"]
         rec["swapEntryRate"] = srec["entryRate"]
-        rec["aswSpread"] = round((leg.coupon * 100 - srec["entryRate"]) * 100, 2)
+        # IRS − 채권 [부호 규약 2026-09-22] — `asw_series` 와 같은 축이라야
+        # 진입 스프레드가 그 계열의 그날 값과 맞는다(par-par 규약의 핀).
+        rec["aswSpread"] = round((srec["entryRate"] - leg.coupon * 100) * 100, 2)
         for i in own:
             own[i] += sown.get(i, 0.0)
         for i in own_prev:
@@ -523,7 +525,8 @@ def _swap_leg(
 ) -> tuple[dict, dict[int, float], dict[int, float]]:
     """자산스왑의 IRS 다리 — 채권 매수에 **같은 명목**의 페이 고정 [OWNER,
     2026-08-14 — par-par]. DV01 중립이 아닌 이유는 진입일 스프레드가 표에 보이는
-    민평 − IRS 그대로 읽히기 때문이고, 대가는 채권이 par 에서 멀어지면 남는
+    IRS − 민평 그대로 읽히기 때문이고(부호 규약 [OWNER 2026-09-22]), 대가는
+    채권이 par 에서 멀어지면 남는
     잔여 금리노출이다(채권 DV01 은 단일수익률, 스왑 PV01 은 제로커브).
 
     기존 IRS 백테스트 엔진을 그대로 부른다 — 이 다리는 그냥 스왑이고, 개시
@@ -597,10 +600,22 @@ def _last_at_or_before(values: list[float | None], i: int | None) -> float | Non
 
 
 def asw_series(m: CreditMatrix, dataset, bond_type: str, tenor: str) -> list[float | None]:
-    """자산스왑 스프레드(bp) = 민평 − IRS, 민평 날짜에 맞춰서.
+    """자산스왑 스프레드(bp) = **IRS − 민평**, 민평 날짜에 맞춰서.
 
     par-par 규약이라 진입일 스프레드가 이 숫자 그대로다 [OWNER, 2026-08-14].
     IRS 쪽에만 있는 날(연말 폐장일 등 15일)은 민평 격자에 없으므로 자연히 빠진다.
+
+    ## ★ 부호 규약 «스왑 − 채권현물» [OWNER 2026-09-22 — "ㅇㅇ 뒤집어"]
+
+    종전은 `민평 − IRS` 였다. **이 계열은 BSS 와 같은 수다** — `ASW:KTB:3Y` 와
+    `BSS-3Y` 는 같은 출처(`credit_matrix` 국고 · `mkt_irs_close`)에서 같은 산술로
+    난다. MR 의 BSS 실가격 회계가 쓰는 대사표도 이 자산스왑 포지션이다
+    (`main._mr_recon_rows`). 그래서 한쪽만 뒤집으면 **같은 화면 안에서** 합계 줄과
+    계열 차트가 반대 부호로 서고, 그것이 2026-09-22 전수조사가 「출처가 둘이면
+    하나가 멈춰도 모른다」로 잡은 결함의 부호 판이다.
+
+    돈은 한 자도 안 바뀐다 — `book_recon` 이 이 축의 KRD 도 같이 뒤집으므로
+    `est = −KRD × Δ` 가 그대로 닫힌다(그 함수의 `asw_axis` 주석).
     """
     irs = dataset.series.get(tenor)
     if irs is None:
@@ -612,7 +627,7 @@ def asw_series(m: CreditMatrix, dataset, bond_type: str, tenor: str) -> list[flo
         j = pos.get(d)
         a = mp[i]
         b = irs[j] if j is not None else None
-        out.append(None if a is None or b is None else round((a - b) * 100, 2))
+        out.append(None if a is None or b is None else round((b - a) * 100, 2))
     return out
 
 
@@ -1000,6 +1015,18 @@ def book_recon(
     asw = all(p.kind == KIND_ASW for p in positions)
     node_series: dict[str, list[float | None]] = {}
     for lb in labels:
+        # ── 자산스왑 북인데 그 만기에 **스왑이 없는 노드** ────────────────────
+        # 민평에는 있고 IRS 에는 없는 만기가 셋이다(2.5Y·20Y·30Y). 종전에는 그런
+        # 칸에 **민평 커브(%)를** 그대로 넣었는데, 이 표의 `delta_scale` 은 자산스왑
+        # 북에서 1.0(이미 bp)이라 그 칸만 «%를 bp 로 읽는» 100배 오차가 된다.
+        # 게다가 축도 다르다 — 합계 줄은 스프레드 축인데 그 칸만 채권 축이었다.
+        #
+        # 실측으로 드러난 자리다(2026-09-22 규약 뒤집기): BSS-3Y 한 거래에서
+        # 다른 칸이 전부 부호를 뒤집는데 2.5Y 만 Δ 가 그대로였다(±327원). 작지만
+        # **그럴듯하게 틀린 수**이고, 이 리포의 공란 정책은 그런 칸을 0 이나
+        # 근사로 채우지 않는다 — 못 재면 비운다(`dbp` 가 null 이 되고 화면이 «—»).
+        if asw and lb not in ASW_TENORS:
+            continue
         for t in types:
             if not m.has(t, lb):
                 continue
@@ -1010,6 +1037,14 @@ def book_recon(
             )
             break
     delta_scale = 1.0 if asw else 100.0
+    # ── `asw_axis` — 합계 줄의 KRD 는 **그 줄이 쓰는 축의 것**이다 ────────────
+    # [OWNER 2026-09-22, 규약 뒤집기] 자산스왑 계열이 `IRS − 민평` 으로 뒤집혔다.
+    # `_krd_bond` 가 내는 것은 **채권 축**(민평 1bp)의 감도라, 합계 줄의 Δ 가
+    # 스프레드 축인 이상 그 감도도 같은 축이어야 `est = −KRD × Δ` 가 닫힌다.
+    # 둘을 같이 뒤집으므로 `est`·`actual`·`residual` 은 **한 자도 안 바뀐다** —
+    # 바뀌는 것은 표에 적히는 KRD 와 Δbp 의 부호뿐이다.
+    # 다리 블록(국고·IRS)은 각자 **자기 커브 축**이라 여기 해당이 없다.
+    axis = -1.0 if asw else 1.0
 
     # 창 — `None` 이면 **전 구간**이다(회계 경로). 상수의 머리 주석에 왜 둘로
     # 갈랐는지가 있다. 서빙 경로는 기본값을 그대로 받아 종전과 한 자도 안 다르다.
@@ -1313,11 +1348,11 @@ def book_recon(
                 prv = node[i - 1] if node and i > 0 else None
                 delta = None if cur is None or prv is None else (cur - prv) * delta_scale
                 dbp[lb] = None if delta is None else round(delta, 2)
-                est[lb] = 0.0 if delta is None else -prev_krd[lb] * delta
+                est[lb] = 0.0 if delta is None else -(axis * prev_krd[lb]) * delta
             total_est = round(sum(est.values()))
             row = {
                 "t": on.isoformat(),
-                "krd": {lb: round(prev_krd[lb]) for lb in labels},
+                "krd": {lb: round(axis * prev_krd[lb]) for lb in labels},
                 "dbp": dbp,
                 "est": {lb: round(est[lb]) for lb in labels},
                 "estTotal": total_est,
@@ -1388,7 +1423,7 @@ def book_recon(
     if rows:
         anchor = {
             "t": nxt.isoformat(),
-            "krd": {lb: round(prev_krd[lb]) for lb in labels},
+            "krd": {lb: round(axis * prev_krd[lb]) for lb in labels},
             "dbp": {},
             "est": {},
             "estTotal": None,

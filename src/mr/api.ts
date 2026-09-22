@@ -35,7 +35,7 @@ export interface MrState {
 export interface MrRow {
   id: string;
   label: string;
-  /** 계열 종류 — bss(국고−IRS) · fut(선물 내재금리) · fsw(퓨처스왑) ·
+  /** 계열 종류 — bss(IRS−국고) · fut(선물 내재금리) · fsw(퓨처스왑) ·
    *  **irc(IRS 커브) · irf(IRS 플라이)** [OWNER 2026-09-09 — "스프레드(버터플라이나
    *  커브와 같은 것도 연결해주기)"]. 커브·플라이의 조합은 이 리포의 주요 세트를
    *  그대로 읽는다(`backend/app/derive.py` — 모니터·백테스트·시뮬이 쓰는 그 목록). */
@@ -73,7 +73,8 @@ export interface MrRow {
   state: MrState;
   /** 「얼마 레벨이면 어느 다리인가」 [OWNER 2026-09-09 — "누르면 얼마 레벨에서는
    *  매수 추천과 같은 플로우"]. 0~2개이고, **못 하는 방향은 안 온다**(BSS 하단은
-   *  국고 매도다 — 사유는 `triggerBlocked`). 새 판정이 아니라 밴드 경계의
+   *  국고 매도다 — 규약이 `IRS − 국고` 라 그게 밴드 **아래**쪽이다 · 사유는
+   *  `triggerBlocked`). 새 판정이 아니라 밴드 경계의
    *  번역이다(`backend/app/mr.py::triggers_for` 머리). 구 백엔드는 `undefined`. */
   triggers?: MrTrigger[];
   /** 한쪽 경계가 빠진 사유 — 없으면 양쪽 다 거래할 수 있는 계열이다. */
@@ -499,7 +500,7 @@ export interface MrStrategyPoint {
   /** 다리 레벨(**%**) [OWNER 2026-09-02 — "스왑 파 커브 상의 레벨, 채권 커브
    *  상의 레벨, CD금리 레벨이 진입시점에 확인되고"]. 캐리와 같은 출처
    *  (`mrseries` — 국고 커브·IRS 파·CD 91일)를 날짜로 조인한 값이고, BSS 는
-   *  (국고 − IRS) × 100 = v 가 정확히 성립한다(서버가 검증한 항등 — 화면은
+   *  (IRS − 국고) × 100 = v 가 정확히 성립한다(서버가 검증한 항등 — 화면은
    *  그 사실을 보이기만 한다). 선물·퓨처스왑(다리가 다름)과 구 백엔드는
    *  없다(`undefined`/null) — 화면 열이 조용히 접힌다. */
   govt?: number | null;
@@ -591,8 +592,9 @@ export interface MrStrategyTrade {
 }
 
 /** 방향 하나의 이름 — 표 칸은 `short`, 문장은 `legs`. 서버가 계열마다 짓는다
- * (`backend/app/mr.py::DIR_LEGS`) — 「롱/숏」이라고만 적으면 BSS 에서는 정확히
- * 반대로 읽힌다(스프레드 롱 = 국고 매도). */
+ * (`backend/app/mr.py::DIR_LEGS`) — 「롱/숏」이라고만 적으면 채권 방향으로 읽힌다.
+ * 규약이 `스왑 − 현물/선물` 로 뒤집힌 2026-09-22 부터 BSS·FSW 는 스프레드 롱이
+ * 곧 현물·선물 매수이고, FUT 는 금리 계열이라 롱이 선물 매도다. */
 export interface MrDirName {
   short: string;
   legs: string;
@@ -1320,7 +1322,8 @@ export function fetchMrHistory(id: string, p: MrParams): Promise<MrHistory> {
  *
  *  거리는 `entryGap` 하나뿐이다(bp). 청산·손절의 «거리» 는 들어가 있을 때만 뜻이
  *  있어서 `MrPlanPosition` 이 진다. 못 하는 방향은 **안 온다**
- *  (BSS 의 하단은 국고 매도다 — 사유는 행의 `triggerBlocked`). */
+ *  (BSS 의 하단은 국고 매도다 — 사유는 행의 `triggerBlocked`). 2026-09-22
+ *  규약 뒤집기로 막히는 쪽이 상단에서 **하단으로** 옮겨 앉았다. */
 export interface MrPlanLevel {
   dir: number;
   side: 'above' | 'below';

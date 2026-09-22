@@ -199,7 +199,7 @@ function entryLevelLines(
     };
   }
   if (kind === 'futuresswap') {
-    return { main: p ? `${fmtLevel(p.v, 'bp')}bp` : '—', sub: '내재 − IRS' };
+    return { main: p ? `${fmtLevel(p.v, 'bp')}bp` : '—', sub: 'IRS − 내재' };
   }
   return {
     main: p ? `${fmtLevel(p.v, unit)}${unitSuffix(unit)}` : '—',
@@ -620,7 +620,7 @@ export function BacktestWindow({
               : [];
             const unit: Unit = fut
               ? kind === 'futuresswap'
-                ? 'bp' // 내재 − IRS
+                ? 'bp' // IRS − 내재
                 : '%' // 내재금리
               : (bondRow?.unit ?? (r.id.includes('-') ? 'bp' : '%'));
             const maxDate = bond ? cashbondAsOf : asOf;

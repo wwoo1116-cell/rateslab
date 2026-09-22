@@ -32,7 +32,8 @@ import type {
  * ramp need no second vocabulary. */
 /* V2, 2026-08-18: `cashbond`/`asw` joined for the Cash Bond lane — Backtest
  * 메가 패널의 다섯 번째 카테고리 아래 **별개 표 탭 둘**. 현금채권은 민평
- * 수익률(%), 자산스왑은 민평 − IRS 스프레드(bp).
+ * 수익률(%), 자산스왑은 **IRS − 민평** 스프레드(bp — 부호 규약 [OWNER 2026-09-22]
+ * «스왑 − 채권현물»; BSS 와 같은 수라 같이 뒤집혔다).
  *
  * v1 은 이 둘을 `Group` 밖에 두었다(v1 tabs.ts:29 — "Group 은 IRS 행 빌더가
  * 읽는 값"이라서). v2 에서 그 전제는 이미 사실이 아니다: 위 V2-LOCAL 이 적듯

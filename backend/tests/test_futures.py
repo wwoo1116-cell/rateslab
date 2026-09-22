@@ -218,8 +218,9 @@ class TestSeriesPayload:
         body = ft.series_payload(_futdata(path), _dataset(), "FSW:3Y")
         assert body["unit"] == "bp"
         assert body["label"] == "퓨처스왑 3Y"
-        # 평평한 IRS(3.00) 대비 — 벤더 내재 − IRS, bp.
-        want = round((implied_yield(104.0, 3) - FLAT) * 100.0, 4)
+        # 평평한 IRS(3.00) 대비 — **IRS − 벤더 내재**, bp
+        # [부호 규약 OWNER 2026-09-22 — "스왑 - 채권현물 또는 국채선물"].
+        want = round((FLAT - implied_yield(104.0, 3)) * 100.0, 4)
         assert body["points"][-1]["v"] == pytest.approx(want, abs=1e-3)
         assert "price" not in body["points"][-1]
 
@@ -342,7 +343,8 @@ class TestSeriesPayload:
         )
         # 그리고 퓨처스왑은 그 벤더 내재금리와 IRS 의 교집합이다(이월·보간 없음).
         assert any("선물내재수익률" in c for c in code)
-        assert any("_align(fdates, imp, idates" in c for c in code)
+        # ★차례가 규약을 진다 — `IRS − 내재` 라 IRS 가 첫 인자다(2026-09-22).
+        assert any("_align(idates, irs[lbl], fdates, imp)" in c for c in code)
 
     def test_route_serves_it(self):
         """`with TestClient(app)` 를 쓰지 않는다 — 이 파일의 아래쪽 관례와 같다.
@@ -370,7 +372,9 @@ class TestFsw:
         pos = ft.as_position("FSW:3Y", 1, 1e10, DATES[0], None)
         swap_pos, y0, fut_dv01 = ft.fsw_swap_leg(fut, ds, pos)
         assert swap_pos.series_id == "3Y"          # 같은 만기 [OWNER]
-        assert swap_pos.direction == -1            # +1 = IRS 리시브
+        # ★2026-09-22 규약 뒤집기: 스프레드가 `IRS − 선물` 이라 +1 = **IRS 페이**
+        # 이고, 스왑 엔진의 +1 이 곧 페이다. 종전에는 −1(리시브)이었다.
+        assert swap_pos.direction == 1             # +1 = IRS 페이
         assert fut_dv01 == pytest.approx(1e10 / 100.0 * synth_pvbp(y0, 3))
         # DV01 중립: 스왑 원/bp(= 명목 × 연금계수 × 1e-4 — 백테스트 창의
         # 표시식이 이 규약의 핀) == 선물 원/bp. 처음 이 테스트가 1e-4 없는
@@ -384,8 +388,14 @@ class TestFsw:
         # 같은 만기·비슷한 듀레이션이면 두 다리 명목은 같은 자릿수여야 한다.
         assert 0.5 * 1e10 < swap_pos.notional < 2.0 * 1e10
 
-    def test_implied_up_alone_profits_long_spread(self):
-        """IRS 평평 고정·선물 가격만 하락(내재 상승) → FSW +1 이익 ≈ DV01×Δbp."""
+    def test_implied_up_alone_loses_for_a_long_spread(self):
+        """IRS 평평 고정·선물 가격만 하락(내재 상승) → FSW +1 **손실** ≈ DV01×Δbp.
+
+        ★2026-09-22 에 **뜻이 뒤집혔다** [OWNER — "스왑 - 채권현물 또는 국채선물"].
+        스프레드가 `IRS − 내재` 라 내재만 오르면 스프레드가 **줄고**, 그 확대에
+        건 +1 은 잃는다. 크기는 그대로다 — 뒤집힌 것은 부호뿐이고, 그래서 이
+        시험은 「부호가 뒤집혔나」와 「크기가 그대로인가」를 같이 잰다.
+        """
         p0 = 104.0
         y0 = implied_yield(p0, 3)
         y1 = y0 + 0.10                              # +10bp
@@ -396,10 +406,10 @@ class TestFsw:
         pos = ft.as_position("FSW:3Y", 1, 1e10, DATES[0], None)
         _rec, own, _prev = ft.run_one(fut, ds, pos, DATES)
         fut_dv01 = 1e10 / 100.0 * synth_pvbp(y0, 3)
-        expected = fut_dv01 * 10.0                  # 10bp
-        # 스왑 다리는 커브가 안 움직여 세타뿐 — 평평 커브 리시브 par 라 작다.
+        expected = -fut_dv01 * 10.0                 # 10bp, 스프레드는 줄었다
+        # 스왑 다리는 커브가 안 움직여 세타뿐 — 평평 커브 페이 par 라 작다.
         assert own[DATES[-1]] == pytest.approx(expected, rel=0.05)
-        assert own[DATES[-1]] > 0
+        assert own[DATES[-1]] < 0
 
     def test_recon_puts_both_legs_in_the_futures_table(self):
         """FSW 의 IRS 다리는 **선물 표 안에 다리로** 선다 [OWNER 2026-09-04].

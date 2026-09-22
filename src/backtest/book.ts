@@ -179,11 +179,14 @@ export function directionLabel(id: string, direction: number): string {
   if (isBondKind(bookKindOf(id))) return "매수";
   // 선물 [2026-08-25]: +1 = 가격 롱 = **매수** (금리가 내리면 이득).
   if (bookKindOf(id) === "futures") return direction > 0 ? "매수" : "매도";
-  // 퓨처스왑: +1 = 호가값(내재 − IRS) 롱. 단어를 만들지 않고 **다리를
-  // 적는다**(플라이의 그 규칙): 스프레드가 벌어질 때 버는 쪽 = 선물 매도 +
-  // IRS 리시브다(내재↑ = 선물 가격↓, IRS↓ = 리시브 이득).
+  // 퓨처스왑: +1 = 호가값(IRS − 내재) 롱. 단어를 만들지 않고 **다리를
+  // 적는다**(플라이의 그 규칙): 스프레드가 벌어질 때 버는 쪽 = IRS 페이 +
+  // 선물 매수다(IRS↑ = 페이 이득, 내재↓ = 선물 가격↑).
+  // ⚠ 2026-09-22 에 **뜻이 뒤집혔다** [OWNER — "스왑 - 채권현물 또는 국채선물"] —
+  // 같은 `+1` 이 종전에는 선물 매도·IRS 리시브였다. 엔진의 `futures.py` 머리와
+  // 한 문장이어야 한다: 라벨이 거래와 조용히 어긋나면 라벨이 없는 것보다 나쁘다.
   if (bookKindOf(id) === "futuresswap")
-    return direction > 0 ? "선물 매도 · IRS 리시브" : "선물 매수 · IRS 페이";
+    return direction > 0 ? "IRS 페이 · 선물 매수" : "IRS 리시브 · 선물 매도";
   const legs = id.split("-");
   const pay = direction > 0 ? "페이" : "리시브";
   const rec = direction > 0 ? "리시브" : "페이";

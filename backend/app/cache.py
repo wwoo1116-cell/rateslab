@@ -118,7 +118,13 @@ DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
 # 다시 나온다. 키는 `(이름, data_key)` 뿐이라 자료가 그대로면 **옛 조건이 그대로
 # 나온다**. 머리의 규칙은 「모양이 바뀌면 올려라」지만 진짜 기준은 그 아래 문장이다:
 # «wrong data 에 물린 캐시는 캐시가 없느니만 못하다». 뜻이 바뀌면 그것도 wrong 이다.
-SCHEMA_VERSION = 21
+# v22 (2026-09-22): **부호 규약이 뒤집혔다** [OWNER — "BSS나 FSW같은거 이제
+# 컨벤션 바꾸는게 스왑 - 채권현물 또는 국채선물이야" · "ㅇㅇ 뒤집어"]. BSS 는
+# `국고 − IRS` → `IRS − 국고`, FSW 는 `선물 − IRS` → `IRS − 선물`, 자산스왑도
+# 같은 축이다. v21 과 같은 종류의 승급이다 — 칸은 그대로고 **그 칸의 수가 부호를
+# 바꾼다**. 안 올리면 보드가 옛 부호의 z·레벨을 내주고, 화면은 새 어휘(「IRS 페이 ·
+# 국고 매수」)로 그것을 읽는다. 에러는 안 난다 — 방향만 정확히 거꾸로 읽힌다.
+SCHEMA_VERSION = 22
 
 
 def data_hash(path: Path, asof: "object | None" = None) -> str:

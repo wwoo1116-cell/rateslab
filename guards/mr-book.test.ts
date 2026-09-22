@@ -297,6 +297,12 @@ describe('서버도 한 자리다', () => {
                계열마다 갈린다). 머리의 규칙은 「모양이 바뀌면 올려라」지만 진짜
                기준은 «wrong data 에 물린 캐시는 없느니만 못하다» 이고, 뜻이
                바뀌면 그것도 wrong 이다
+         v22 = **부호 규약이 뒤집혔다**(2026-09-22) — BSS `국고 − IRS` →
+               `IRS − 국고`, FSW·자산스왑도 같은 축 [OWNER "ㅇㅇ 뒤집어"].
+               v21 과 같은 등급이다: 칸은 그대로고 그 칸의 수가 **부호를 바꾼다**.
+               안 올리면 보드가 옛 부호의 z·레벨을 내주고, 화면은 새 어휘
+               (「IRS 페이 · 국고 매수」)로 그것을 읽는다 — 에러 없이 방향만
+               정확히 거꾸로 선다
        — 같은 SQL 이 다른 모양·다른 z 를 만든다. v16 도 실제로 한 번 밟았다:
        라우트를 고치고 백엔드를 재기동했는데 응답에 `triggers` 가 없었다(디스크
        캐시가 v15 페이로드를 그대로 내줬다).
@@ -305,7 +311,8 @@ describe('서버도 한 자리다', () => {
        올렸을 때 눈에 보이는데(줄이 사라진다), 이 칸은 그쪽 스크립트가 조용히
        못 재는 상태로 남을 뿐이다. 그래서 이 시험이 더 필요하다. */
     const cache = fs.readFileSync(path.join(root, 'backend/app/cache.py'), 'utf8');
-    expect(cache).toMatch(/SCHEMA_VERSION = 21/);
+    expect(cache).toMatch(/SCHEMA_VERSION = 22/);
+    expect(cache).toMatch(/v22 \(2026-09-22\)/);
     expect(cache).toMatch(/v21 \(2026-09-22\)/);
     expect(cache).toMatch(/v17 \(2026-09-09\)/);
     expect(cache).toMatch(/v16 \(2026-09-09\)/);

@@ -7,15 +7,15 @@
 `mrbacktest` 의 원본(PMS 이식) 산술은 손익이 **스프레드 변화뿐**이다. 실제
 거래에는 다리마다 중간 현금흐름이 붙고, 두 다리를 합쳐도 **남는다**:
 
-    BSS −1 = 국고 매수 · IRS 페이
-        국고 매수 :  + 쿠폰 − 조달        ≈ +(국고금리 − 조달)
-        IRS 페이  :  − 고정  + CD 91일    ≈ +(CD − 스왑고정)
-        합계      = (국고 − 스왑) + (CD − 조달) = **BSS + (CD − 조달)**
+    BSS −1 = IRS 리시브 · 국고 매도   ← 규약이 `IRS − 국고` 다(2026-09-22)
+        IRS 리시브 : + 고정  − CD 91일   ≈ +(스왑고정 − CD)
+        국고 매도  : − 쿠폰  + 조달      ≈ +(조달 − 국고금리)
+        합계       = (스왑 − 국고) − (CD − 조달) = **BSS − (CD − 조달)**
 
-    FSW −1 = 선물 매수 · IRS 페이
-        선물 매수 :  **0**  ← 조달 현금흐름이 없다(아래)
-        IRS 페이  :  +(CD − 스왑고정)
-        합계      = **CD − 스왑고정**
+    FSW −1 = IRS 리시브 · 선물 매도
+        IRS 리시브 : +(스왑고정 − CD)
+        선물 매도  : **0**  ← 조달 현금흐름이 없다(아래)
+        합계       = **스왑고정 − CD**
 
     FUT −1 = 선물 매수
         합계      = **0**
@@ -159,8 +159,13 @@ def carry_rates(sid: str, kind: str, dates: list[str],
 #: 다리 이름 — 화면의 대사표 구분 칸이 이 말을 쓴다. 계열 종류마다 다르고,
 #: 길이가 곧 «다리 몇 개인가» 다(하나면 대사표가 백테스트와 같은 3줄이 된다).
 LEG_NAMES: dict[str, tuple[str, ...]] = {
-    "bss": ("국고", "IRS"),
-    "fsw": ("선물", "IRS"),
+    # ★차례는 **스왑이 앞**이다 [OWNER 2026-09-22, 규약 뒤집기] — 값이
+    # `IRS − 국고` 이므로 「다리0 − 다리1 = 값」이 그 차례라야 닫힌다
+    # (`mrseries.points` 머리). 「첫 다리가 리시브 쪽」이라는 아래
+    # `combo_weights` 의 약속은 **그대로 산다**: `position = -1` 은 이제
+    # IRS 리시브 · 국고 매도이고, 첫 다리가 여전히 리시브다.
+    "bss": ("IRS", "국고"),
+    "fsw": ("IRS", "선물"),
     "fut": ("선물",),
     # 커브·플라이는 **만기를 이름에 못 넣는다** — 이 사전은 종류마다 하나인데
     # 조합마다 만기가 다르다(만기는 행 이름 「IRS 3Y-10Y」가 말한다). 차례는
@@ -176,8 +181,11 @@ LEG_NAMES: dict[str, tuple[str, ...]] = {
 
 #: 캐리 정의 문장 — 종전에 `carry_rates` 가 자리마다 돌려주던 그 문자열이다.
 CARRY_DEFN: dict[str, str] = {
-    "bss": "(국고 − 조달) + (CD 91일 − IRS)",
-    "fsw": "CD 91일 − IRS  (선물 다리는 조달이 없어요)",
+    # ★`position = -1`(= IRS 리시브 · 국고 매도) 기준이다 — 규약이 뒤집히며
+    # 두 항이 **각각 부호를 바꿨다**(2026-09-22). 대수적으로는 종전 식의 음수라
+    # 「BSS + (CD − 조달)」 항등도 부호만 따라 뒤집힌다.
+    "bss": "(IRS − CD 91일) + (조달 − 국고)",
+    "fsw": "IRS − CD 91일  (선물 다리는 조달이 없어요)",
     "fut": "선물은 조달 현금흐름이 없어요 (캐리 0)",
     # 커브·플라이는 **스왑끼리**라 조달이 없다 — 원금을 주고받지 않는다.
     # 남는 것은 다리마다의 (고정 − CD) 액크루얼이고, 다리 크기가 DV01 중립
@@ -271,7 +279,11 @@ def _irs_combo_rates_by_leg(
 
 
 def _fsw_rates_by_leg(sid: str, dates: list[str]) -> list[list[float | None]]:
-    """퓨처스왑의 연 캐리(%) — 선물 다리 `0` · IRS 다리 `CD 91일 − 스왑고정`."""
+    """퓨처스왑의 연 캐리(%) — IRS 다리 `스왑고정 − CD 91일` · 선물 다리 `0`.
+
+    ★BSS 와 같은 자리, 같은 이유로 부호와 차례가 뒤집혔다(2026-09-22) —
+    `position = -1` 이 이제 **IRS 리시브 · 선물 매도**다.
+    """
     tenor = _tenor_of(sid)
     with engine().connect() as conn:
         idates, irs = _fetch_irs(conn)
@@ -285,24 +297,30 @@ def _fsw_rates_by_leg(sid: str, dates: list[str]) -> list[list[float | None]]:
     for t in dates:
         s = swap.get(t)
         c = cd91.get(t)
-        out.append(None if (s is None or c is None) else c - s)   # CD − 스왑고정
+        out.append(None if (s is None or c is None) else s - c)   # 스왑고정 − CD
 
     # 선물 다리는 **0 이 아니라 «0 이라고 아는 값»** 이다 — 이 모듈 머리의 그
     # 문단(증거금·일일정산이라 조달 현금흐름이 없고, 채권 캐리는 이미 선물
     # 가격에 박혀 있어 또 빼면 이중계상)이 근거다. 대사표에 줄로 서야 읽는
     # 사람이 «왜 이 다리는 캐리가 없나» 를 표에서 본다.
-    return [[0.0] * len(dates), out]
+    return [out, [0.0] * len(dates)]
 
 
 def _bss_rates_by_leg(
     sid: str, dates: list[str], spec: fnd.FundingSpec,
 ) -> list[list[float | None]]:
-    """BSS 의 연 캐리(%) — 국고 다리 `(국고 − 조달)` · IRS 다리 `(CD 91일 − 스왑)`.
+    """BSS 의 연 캐리(%) — IRS 다리 `(스왑 − CD 91일)` · 국고 다리 `(조달 − 국고)`.
+
+    ★규약이 `IRS − 국고` 로 뒤집히며 **`position = -1` 이 가리키는 거래가 바뀌었다**
+    (2026-09-22): 종전 −1 은 국고 매수·IRS 페이였고 지금 −1 은 **IRS 리시브 ·
+    국고 매도**다. 캐리는 그 포지션의 것이므로 두 항이 각각 부호를 바꾼다 —
+    엔진이 `c = -position × carry[i]` 로 먹는 자리는 한 줄도 안 건드린다.
+    **한쪽만 뒤집으면 캐리가 통째로 반대 부호로 손익에 들어간다.**
 
     ⚠ **단위가 다르다.** 커브(국고·IRS·CD)는 %(3.817)이고 `funding.rate_on` 은
     소수(0.0285)다 — 실측 2026-08-27 에 그대로 빼서 100배 틀린 캐리(중앙
-    2.667%/년)를 냈다. 대수적으로 이 식은 `BSS + (CD − 조달)` 로 접히므로 0.1%
-    안팎이어야 하고, 그 항등이 이 산술의 자기검사다.
+    2.667%/년)를 냈다. 대수적으로 이 식은 `−BSS_옛 + (조달 − CD)` = `BSS_새 −
+    (CD − 조달)` 로 접히므로 0.1% 안팎이어야 하고, 그 항등이 이 산술의 자기검사다.
     """
     d, govt, swap, cd = mrs.legs(sid, need_cd=True)
     g = dict(zip(d, govt))
@@ -319,9 +337,9 @@ def _bss_rates_by_leg(
             irs.append(None)
             continue
         f = fnd.rate_on(spec, dt.date.fromisoformat(t)) * 100.0
-        bond.append(g[t] - f)
-        irs.append(c[t] - s[t])
-    return [bond, irs]
+        bond.append(f - g[t])                 # 국고 **매도** — 조달을 받고 쿠폰을 준다
+        irs.append(s[t] - c[t])               # IRS **리시브** — 고정을 받고 CD 를 준다
+    return [irs, bond]
 
 
 def carry_krw(rates: list[float | None], dates: list[str], *,
@@ -356,9 +374,13 @@ def summarize(trades: list[dict[str, Any]]) -> dict[str, float]:
 def assert_identity(sid: str, kind: str, dates: list[str],
                     rates: list[float | None], spread_bp: list[float],
                     spec: fnd.FundingSpec) -> None:
-    """BSS 의 캐리는 대수적으로 **`BSS + (CD − 조달)`** 로 접힌다.
+    """BSS 의 캐리는 대수적으로 **`BSS − (CD − 조달)`** 로 접힌다.
 
-        (국고 − 조달) + (CD − 스왑) = (국고 − 스왑) + (CD − 조달)
+        (스왑 − CD) + (조달 − 국고) = (스왑 − 국고) − (CD − 조달)
+
+    ★부호가 2026-09-22 에 뒤집혔다 — `BSS` 가 이제 `IRS − 국고` 이고
+    `position = -1` 이 IRS 리시브 · 국고 매도다. 항등의 **모양**은 그대로고
+    두 변이 같이 음수가 됐을 뿐이라, 이 검사는 여전히 단위 사고를 가장 먼저 잡는다.
 
     두 길로 같은 수가 나오는지를 재는 것이 이 함수다. 단위가 어긋나면(커브는
     %, 조달은 소수) 이 항등이 **가장 먼저** 깨진다 — 실측 2026-08-27 에 그
@@ -375,9 +397,9 @@ def assert_identity(sid: str, kind: str, dates: list[str],
         if rates[i] is None or t not in cd91:
             continue
         f = fnd.rate_on(spec, dt.date.fromisoformat(t)) * 100.0
-        other = spread_bp[i] / 100.0 + (cd91[t] - f)
+        other = spread_bp[i] / 100.0 - (cd91[t] - f)
         if abs(other - rates[i]) > 1e-6:
             raise AssertionError(
                 f"{sid} {t}: 캐리 항등이 깨졌어요 — "
-                f"직접 {rates[i]:.6f}% vs BSS+(CD−조달) {other:.6f}%"
+                f"직접 {rates[i]:.6f}% vs BSS−(CD−조달) {other:.6f}%"
             )

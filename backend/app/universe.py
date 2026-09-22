@@ -253,12 +253,17 @@ def build_universe() -> dict[str, Any]:
                 yrs == 3.0,
             ))
 
-    # ── 본드스왑스프레드 (국고 − IRS) ────────────────────────────────────────
+    # ── 본드스왑스프레드 (IRS − 국고) ────────────────────────────────────────
+    # ★부호 규약 **스왑 − 채권현물** [OWNER 2026-09-22 — "BSS나 FSW같은거 이제
+    # 컨벤션 바꾸는게 스왑 - 채권현물 또는 국채선물이야"]. 이 표는 메인 보드·
+    # RV·시뮬이 같이 읽으므로, MR 쪽(`mrseries.points`)만 뒤집으면 같은 날 같은
+    # 만기가 두 화면에서 반대 부호로 선다 — 2026-09-22 전수조사가 잡은 바로 그
+    # 결함(출처 둘)의 부호 판이다. 한 규약이어야 한다.
     for _, lbl, yrs in TENORS:
         gs = ktb.get(lbl)
         if not gs or lbl not in IRS_COL:
             continue
-        d, spread = _align(cdates, gs, idates, irs[lbl])
+        d, spread = _align(idates, irs[lbl], cdates, gs)
         if not spread:
             continue
         rows.append(_row(
@@ -283,12 +288,12 @@ def build_universe() -> dict[str, Any]:
         # (KTB futures are cash-settled against a synthetic basket).
         rows.append(_row(f"FUT-{code}-BS", f"{name} 저평가", "futures", "가격", cheap, fdates, [yrs, 2], True))
 
-        # 퓨처스왑 = **벤더 내재금리** − 같은 만기 IRS. 본드스왑과 같은 모양이고
+        # 퓨처스왑 = 같은 만기 IRS − **벤더 내재금리**. 본드스왑과 같은 모양이고
         # 같은 inner join 규율(양쪽이 다 프린트한 날만)이다. 내재금리는 유도하지
         # 않고 읽는다 — 조정가(`mkt_futures_investor_close.CLOSE`)를 역산하면
         # 수준이 무의미해진다(FUTURES_LANE_STATE §Phase 1·2). 이 표는 그 조정가
         # 표를 아예 열지 않으므로 여기에 그 결함이 들어올 길이 없다.
-        d, spread = _align(fdates, imp, idates, irs[lbl])
+        d, spread = _align(idates, irs[lbl], fdates, imp)
         if not spread:
             continue
         rows.append(_row(
@@ -414,7 +419,7 @@ def _universe_series(rid: str) -> dict[str, Any]:
             fdates = [(r[0].date() if hasattr(r[0], "date") else r[0]) for r in frows]
             imp = [None if r[1] is None else float(r[1]) for r in frows]
             idates, irs = _fetch_irs(conn)
-            d, spread = _align(fdates, imp, idates, irs[lbl])
+            d, spread = _align(idates, irs[lbl], fdates, imp)
             pts = [{"t": t.isoformat(), "v": v * 100} for t, v in zip(d, spread)]
             return {"id": rid, "unit": "bp", "points": pts}
 

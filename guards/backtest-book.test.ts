@@ -162,10 +162,16 @@ describe('방향을 뭐라고 부르는가 [OWNER 2026-07-31]', () => {
   });
 
   it('퓨처스왑도 용어를 지어내지 않는다 — 다리만 적는다', () => {
-    /* +1 = 호가값(내재−IRS) 롱 = 선물 매도 + IRS 리시브 (내재↑ = 가격↓ 에서
-     * 이득, IRS↓ = 리시브 이득). 백엔드 app/futures.py 의 방향 관례 그대로. */
-    expect(directionLabel('FSW:3Y', 1)).toBe('선물 매도 · IRS 리시브');
-    expect(directionLabel('FSW:10Y', -1)).toBe('선물 매수 · IRS 페이');
+    /* +1 = 호가값(IRS−내재) 롱 = IRS 페이 + 선물 매수 (IRS↑ = 페이 이득,
+     * 내재↓ = 가격↑ 에서 이득). 백엔드 app/futures.py 의 방향 관례 그대로.
+     *
+     * ★2026-09-22 에 **뜻이 뒤집혔다** [OWNER — "BSS나 FSW같은거 이제 컨벤션
+     * 바꾸는게 스왑 - 채권현물 또는 국채선물이야"]. 같은 `+1` 이 종전에는
+     * 선물 매도·IRS 리시브였다. 이 가드가 지키는 것은 「어느 말이 맞나」가
+     * 아니라 **라벨과 엔진이 같은 거래를 가리키나**이므로, 엔진의
+     * `futures.py::fsw_swap_leg`·`run_one` 과 한 벌로만 움직인다. */
+    expect(directionLabel('FSW:3Y', 1)).toBe('IRS 페이 · 선물 매수');
+    expect(directionLabel('FSW:10Y', -1)).toBe('IRS 리시브 · 선물 매도');
   });
 });
 

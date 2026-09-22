@@ -54,10 +54,14 @@ TOL = 1.0
 #: 종전의 `CASES`(선물 = 근사 분해가 오던 계열)는 그래서 비었고, 그것을 지키던
 #: 시험 셋(다리 세로합·줄의 곱셈·다리 KRD 부호)은 **명제가 죽어서** 폐기했다.
 #: 같은 명제의 실가격 판은 `TestFuturesRealRecon` 이 진다.
+#:
+#: ★차례가 2026-09-22 에 **뒤집혔다** [OWNER — "스왑 - 채권현물 또는 국채선물"].
+#: 값이 `IRS − 국고` 이므로 「다리0 − 다리1 = 값」이 스왑을 앞에 둬야 닫힌다 —
+#: 아래 `TWO_LEG` 시험이 정확히 그것을 잰다.
 LEVEL_ONLY = [
-    ("BSS-3Y", ["국고", "IRS"]),
-    ("BSS-7Y", ["국고", "IRS"]),
-    ("FSW-3Y", ["선물", "IRS"]),
+    ("BSS-3Y", ["IRS", "국고"]),
+    ("BSS-7Y", ["IRS", "국고"]),
+    ("FSW-3Y", ["IRS", "선물"]),
     ("FUT-KTB3", ["선물"]),
 ]
 #: 다리가 둘인 계열 — 「다리 − 다리 = 값」이 성립하는 자리.
@@ -424,8 +428,14 @@ class TestRealRecon:
                 if i is None or not p.get("legs"):
                     continue
                 mp = creditmatrix.yield_at(m, "KTB", i, yrs)
+                # ★다리를 **이름으로** 찾는다 — 차례는 규약이 정하고 규약은
+                # 바뀐다(2026-09-22 에 `[국고, IRS]` → `[IRS, 국고]`). 첨자로
+                # 집으면 그때 이 시험이 **IRS 를 국고라고 부르며** 18.5bp 를
+                # 낸다(실제로 그랬다). 이름은 `mrcarry.LEG_NAMES` 가 정본이다.
+                govt = next((lg for lg in p["legs"] if lg["k"] == "국고"), None)
+                assert govt is not None, f'{sid} {p["t"]}: 국고 다리가 없어요'
                 if mp is not None:
-                    worst = max(worst, abs(p["legs"][0]["lvl"] - mp * 100.0) * 100.0)
+                    worst = max(worst, abs(govt["lvl"] - mp * 100.0) * 100.0)
             assert worst < 3.0, f"{sid}: 두 국고 커브가 {worst:.2f}bp 갈린다"
 
 
@@ -443,7 +453,11 @@ class TestTwoLegRecon:
     """
 
     #: 오너가 화면에서 짚은 그 거래 — 9봉, 국고 매수·IRS 페이, 청산.
-    TRADE = "id=BSS-7Y&entry=2020-03-27&exit=2020-04-09&dir=-1&notional=1000000"
+    #: ★`dir` 이 `-1` → `+1` 로 옮겨 앉았다(2026-09-22 규약 뒤집기). **거래는
+    #: 같은 거래다** — 값이 `IRS − 국고` 가 되면서 「국고 매수·IRS 페이」를
+    #: 가리키는 부호가 바뀌었을 뿐이고, 안 바꾸면 이 표가 **국고 매도**를 세운다
+    #: (조달 부호와 KRD 부호가 통째로 뒤집혀 아래 두 시험이 먼저 깨진다).
+    TRADE = "id=BSS-7Y&entry=2020-03-27&exit=2020-04-09&dir=1&notional=1000000"
 
     @pytest.fixture(scope="class")
     def client(self):
@@ -725,12 +739,14 @@ class TestFuturesRealRecon:
             rolled += r["roll"]["days"]
         assert rolled > 0, "보유 중 롤일이 한 번도 없다 — 표본이 바뀌었다"
 
-    def test_paying_the_spread_is_short_the_futures(self, client):
+    def test_longing_the_spread_is_long_the_futures(self, client):
         """**부호가 경제와 맞나** — 조용히 뒤집히는 종류다.
 
         규약은 `손익 = −KRD × Δbp` 이고, 양수 KRD = 금리 오르면 잃는 쪽이다.
-        FSW 는 `+1 = 호가값(스프레드) 롱 = 선물 매도 + IRS 리시브` 이므로, 그
-        방향에서 선물 다리의 KRD 는 **음수**(내재금리가 오르면 번다)여야 한다.
+        FSW 는 ★2026-09-22 규약 뒤집기 뒤로 `+1 = 호가값(IRS − 내재) 롱 =
+        IRS 페이 + 선물 **매수**` 이므로, 그 방향에서 선물 다리의 KRD 는
+        **양수**(내재금리가 오르면 잃는다)여야 한다. 종전에는 정확히 반대였고,
+        그 뒤집힘이 계열·다리·라벨 셋을 같이 돌렸다는 증거다.
         MR 엔진의 `direction` 을 그대로 넘긴다는 사상이 여기서 확인된다.
         """
         b = client.get(f"/api/mr/strategy?id=FSW-3Y&{self.KN}").json()
@@ -740,8 +756,8 @@ class TestFuturesRealRecon:
         fut_blk = next(x for x in r["blocks"] if x["name"] == "선물")
         mid = [row for row in fut_blk["rows"] if row.get("actual") is not None][1]
         krd = [v for v in mid["krd"].values() if abs(v) > 1.0]
-        assert krd and all(v < 0 for v in krd), \
-            f"{mid['t']}: 스프레드 롱인데 선물 KRD 가 음수가 아니다 — {mid['krd']}"
+        assert krd and all(v > 0 for v in krd), \
+            f"{mid['t']}: 스프레드 롱인데 선물 KRD 가 양수가 아니다 — {mid['krd']}"
 
     def test_a_missing_vendor_day_blanks_one_cell_not_the_table(self, client):
         """벤더 값이 없는 날은 **칸 하나가 비고 표는 산다.**

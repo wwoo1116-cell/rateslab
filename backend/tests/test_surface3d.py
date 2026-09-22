@@ -104,7 +104,9 @@ def test_credit_selector_lists_only_present_types():
 
 
 def test_spread_pools_follow_universe_sign_convention():
-    # §16 — 표의 BSS·CRD 행과 부호가 같아야 한다: BSS = 국고 − IRS, 신용 = 크레딧 − 국고.
+    # §16 — 표의 BSS·CRD 행과 부호가 같아야 한다: BSS = **IRS − 국고**
+    # [부호 규약 OWNER 2026-09-22], 신용 = 크레딧 − 국고(이쪽은 스왑 대 현물이
+    # 아니라 그대로다 — 한 규약이 모든 스프레드에 걸리지 않는다는 것이 요점이다).
     cdates, curves = _credit()
     # BSS 는 inner join 이라 달력이 겹쳐야 선다 — 민평 달력과 같은 날짜의 IRS.
     tenors = ["1D", "3M", "6M", "9M", "1Y", "1.5Y", "2Y", "3Y", "5Y", "10Y"]
@@ -122,7 +124,7 @@ def test_spread_pools_follow_universe_sign_convention():
     assert all(v is None for v in bss["inversionBp"])  # 스프레드의 2s10s 는 없다
     i = len(cdates) - 1
     ti = [x["t"] for x in bss["tenors"]].index("3Y")
-    want_bss = round((curves["KTB"]["3Y"][i] - ds.series["3Y"][i]) * 100.0, 4)
+    want_bss = round((ds.series["3Y"][i] - curves["KTB"]["3Y"][i]) * 100.0, 4)
     assert bss["z"][ti][-1] == want_bss
     crd = p["pools"]["crd:BD"]
     assert crd["unit"] == "bp"

@@ -1732,7 +1732,9 @@ def _mr_real_accounting(r: dict, *, sid: str, kind: str, tenor: str,
             # 서빙 경로(`/api/mr/recon`)는 상수를 그대로 쓴다: 페이로드와
             # 응답시간은 한 자도 안 바뀐다(근거·실측은 `cashbond.RECON_MAX_DAYS`
             # 머리 — 이 경로가 `with_legs=False` 라 6배 싼 쪽이다).
-            got = _mr_recon_rows(m, tenor, e_d, x_d, -int(direction), spec,
+            # ★부호가 그대로 간다 [2026-09-22 규약 뒤집기] — `IRS − 국고` 의
+            # +1 이 국고 매수이고 `BondPosition.direction` 의 +1 도 매수다.
+            got = _mr_recon_rows(m, tenor, e_d, x_d, int(direction), spec,
                                  max_days=None)
             if got is None:
                 return False                           # 한 건이라도 못 재면 전부 안 바꾼다
@@ -2258,8 +2260,8 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
     # ── 다리 레벨 [OWNER 2026-09-02 — "델타, 노셔널, 스왑 파 커브 상의 레벨,
     # 채권 커브 상의 레벨, CD금리 레벨이 진입시점에 확인되고 … 대사도 명확하게"]
     # 캐리가 읽는 그 출처(`mrseries` — 국고 커브·IRS 파·CD 91일)를 날짜로
-    # 조인해 점마다 싣는다. BSS 의 값은 정확히 (국고 − IRS) × 100 이므로
-    # (`mrseries.points`) 화면에서 «국고 − IRS = 레벨» 이 그대로 닫힌다.
+    # 조인해 점마다 싣는다. BSS 의 값은 정확히 (IRS − 국고) × 100 이므로
+    # (`mrseries.points`) 화면에서 «IRS − 국고 = 레벨» 이 그대로 닫힌다.
     # CD 는 값의 전제(교집합)가 아니라 참고라, 없는 날은 null — 지어내지 않는다
     # (`legs(need_cd=False)` 의 넷째 값은 결측을 0.0 으로 채우므로 안 쓴다).
     # 선물·퓨처스왑은 다리가 이 셋이 아니라서 null 이다(선물내재 다리는 별도).
@@ -2267,7 +2269,11 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
     cd_lv: dict[str, float] = {}
     if leg["kind"] == "bss":
         ld, lg, ls, _ = mrs.legs(id)
-        leg_lv = {d: (lg[i], ls[i]) for i, d in enumerate(ld)}
+        # ★차례는 **`mrcarry.LEG_NAMES["bss"]` 가 정본**이다 — `_attach_leg_recon`
+        # 이 이 튜플을 그 이름 차례로 첨자한다. 2026-09-22 규약 뒤집기로
+        # `("IRS", "국고")` 가 됐으므로 여기도 **스왑이 앞**이다. 한쪽만 바꾸면
+        # 다리 표가 이름과 값을 엇갈려 싣고, 예외는 안 난다.
+        leg_lv = {d: (ls[i], lg[i]) for i, d in enumerate(ld)}
         cd_lv = mrs.bundle()["cd"]
     roll = r["roll"]
     points = [
@@ -2319,12 +2325,13 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
     ]
     # 다리 레벨을 점에 붙인다(위 주석) — 스프레드(bp)와 달리 **%** 그대로다.
     # 반올림 4자리 = 이 앱의 % 레벨 문법(fmtLevel)과 같은 자리라, 화면의
-    # (국고 − IRS) × 100 이 레벨 칸(2자리 bp)과 표시 정밀도에서 닫힌다.
+    # (IRS − 국고) × 100 이 레벨 칸(2자리 bp)과 표시 정밀도에서 닫힌다.
+    # 튜플 차례는 `LEG_NAMES` 것이라 **`[0]` 이 IRS** 다(위 주석).
     for p in points:
         gv = leg_lv.get(p["t"])
         c = cd_lv.get(p["t"])
-        p["govt"] = round(gv[0], 4) if gv else None
-        p["irs"] = round(gv[1], 4) if gv else None
+        p["irs"] = round(gv[0], 4) if gv else None
+        p["govt"] = round(gv[1], 4) if gv else None
         p["cd"] = round(c, 4) if c is not None else None
     _attach_leg_recon(points, kind=leg["kind"], leg_lv=leg_lv, pts=pts,
                       notional=notional, carry_legs=carry_legs,
@@ -2898,12 +2905,13 @@ def mr_recon(id: str, entry: str, exit: str, notional: float = 1_000_000.0,
         return {"available": False,
                 "why": "진입일 커브를 못 읽어서 액면을 못 세워요."}
     spec = _funding_spec(fundingBasis, fundingSpreadBp)
-    # 엔진 부호 `-1` 이 **국고 매수**다(`mr.dirs_for` — BSS 는 한 방향뿐).
-    # 자산스왑의 `direction` 은 채권 쪽 부호라 뒤집어 넘긴다(`_mr_recon_rows`
-    # 안에서 포지션이 선다 — 캐시 키가 그 인자들이다).
+    # 엔진 부호 `+1` 이 **국고 매수**다(`mr.dirs_for` — BSS 는 한 방향뿐).
+    # ★2026-09-22 규약 뒤집기로 **부호가 같아졌다**: 값이 `IRS − 국고` 라
+    # 「확대에 거는 쪽(+1)」이 곧 IRS 페이·국고 매수이고, 자산스왑의
+    # `direction`(채권 쪽 부호, +1 매수)과 한 부호다. 종전에는 여기서 뒤집었다.
     # **엔진과 같은 길을 지난다** — 기준 액면에서 한 번 재고 배수로 쓴다. 각자
     # 재면 반올림이 벌어져 표와 헤드라인이 갈린다(`_mr_scale_rows` 머리).
-    got = _mr_recon_rows(m, tenor, entry_d, exit_d, -int(dir), spec, with_legs=True)
+    got = _mr_recon_rows(m, tenor, entry_d, exit_d, int(dir), spec, with_legs=True)
     if got is None:
         return {"available": False,
                 "why": "대사를 못 세웠어요 — 구간이 너무 길거나 민평이 그 날들을 "
@@ -3033,7 +3041,7 @@ def mr_book(lookback: int = 60, entryZ: float = 2.0,
     blocked = out.pop("blocked")
     return {
         "id": mrbook.BOOK_ID, "label": mrbook.BOOK_LABEL, "defn": mrbook.BOOK_DEFN,
-        # 값 단위는 아홉이 다 bp 다(국고 − IRS). 손익 단위와 헷갈리지 않게 적어 둔다.
+        # 값 단위는 아홉이 다 bp 다(IRS − 국고). 손익 단위와 헷갈리지 않게 적어 둔다.
         "unit": first["unit"],
         "params": {"lookback": lookback, "entryZ": entryZ,
                    "exitZ": exitZ, "stopZ": stopZ, "costBp": costBp,

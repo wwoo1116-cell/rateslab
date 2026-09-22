@@ -149,9 +149,9 @@ const GROUP_DESC: Record<Group, string> = {
   bss: '국고 대비 스왑의 차',
   credit: '국고 대비 신용 스프레드',
   futures: '3년·10년 선물 — 가격 · 내재금리 · 저평가',
-  futuresswap: '선물 내재금리 − IRS · 같은 만기',
+  futuresswap: 'IRS − 선물 내재금리 · 같은 만기',
   cashbond: '민평 수익률 · 3개월 이표채로 가정',
-  asw: '민평 − IRS · 같은 만기 · 같은 명목',
+  asw: 'IRS − 민평 · 같은 만기 · 같은 명목',
 };
 
 /** 한 카테고리가 펼치는 항목들. */

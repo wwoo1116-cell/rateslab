@@ -207,15 +207,19 @@ def test_bss_has_no_short_side():
     """BSS 는 국고 매수 쪽 한 방향뿐이다 [OWNER 2026-08-25 — "BSS에서 숏은
     없는거야,, 현물대차매도는 안할거거든"].
 
-    부호의 뜻을 같이 못 박는다: 엔진의 `+1` 은 값(국고 − IRS)이 **오르면** 버는
-    쪽이고, 그건 국고를 빌려 파는 다리다. 그래서 허용되는 것은 `-1` 이고 그
-    이름에 「국고 매수」가 들어 있어야 한다 — 부호와 이름이 갈리면 화면이
+    부호의 뜻을 같이 못 박는다: 엔진의 `+1` 은 값(**IRS − 국고**)이 **오르면**
+    버는 쪽이고, 그건 IRS 페이 · 국고 **매수**다. 그래서 허용되는 것이 `+1` 이고
+    그 이름에 「국고 매수」가 들어 있어야 한다 — 부호와 이름이 갈리면 화면이
     반대 거래를 시킨다.
+
+    ★2026-09-22 규약 뒤집기로 **허용 부호가 옮겨 앉았다**(`-1` → `+1`). 막히는
+    것은 부호가 아니라 「국고를 파는가」이므로, 계열 부호와 이 사전이 같이
+    움직여야 **같은 거래**가 계속 막힌다(`tests/test_mr_convention.py`).
     """
     d = mr.dirs_for("bss")
-    assert d["allowed"] == [-1]
-    assert "국고 매수" in d["minus"]["legs"] and "IRS 페이" in d["minus"]["legs"]
-    assert "국고 매도" in d["plus"]["legs"]
+    assert d["allowed"] == [1]
+    assert "국고 매수" in d["plus"]["legs"] and "IRS 페이" in d["plus"]["legs"]
+    assert "국고 매도" in d["minus"]["legs"]
     assert d["why"]
 
     # 선물은 대차가 필요 없다 — 양방향 그대로.
@@ -252,15 +256,23 @@ def test_trigger_pairs_each_band_edge_with_the_tradable_direction():
 
 
 def test_trigger_omits_the_direction_this_desk_cannot_do():
+    """★2026-09-22 규약 뒤집기로 **살아남는 경계가 상단에서 하단으로** 옮겼다.
+
+    엔진은 「늘어난 쪽의 반대」에 걸므로 `값 ≤ 하단 → dir +1` 이고, 그 +1 이 이제
+    국고 매수(= 할 수 있는 거래)다. 종전에는 상단(`dir -1`)이 그 자리였다.
+    옮겨 적히는 **다리 이름은 그대로 「국고 매수」** 인 것이 핵심이다 — 같은
+    거래가 반대 부호로 불릴 뿐이다.
+    """
     t = mr.triggers_for("bss", v=0.0, up=10.0, lo=-10.0, scale=1.0)
-    assert [x["side"] for x in t] == ["above"]
+    assert [x["side"] for x in t] == ["below"]
     assert "국고 매수" in t[0]["legs"]
 
 
 def test_trigger_gap_goes_negative_once_it_is_past():
-    t = mr.triggers_for("bss", v=26.5, up=25.5734, lo=12.5133, scale=1.0)
+    # 살아남는 경계가 **하단**이므로(위 시험) 「지났다」는 값이 그 아래로 간 것이다.
+    t = mr.triggers_for("bss", v=11.0, up=25.5734, lo=12.5133, scale=1.0)
     assert t[0]["reached"] and t[0]["gap"] < 0
-    assert t[0]["level"] == 25.5734
+    assert t[0]["level"] == 12.5133
 
 
 def test_trigger_gap_is_bp_even_when_the_level_is_percent():
@@ -276,8 +288,9 @@ def test_assemble_trigger_levels_are_the_bands_themselves():
     pts = body["points"]
     row, _ = mr._assemble("BSS-3Y", "BSS 3Y", "bss", "bp",
                           [p["t"] for p in pts], [p["v"] for p in pts])
-    assert [x["side"] for x in row["triggers"]] == ["above"]
-    assert row["triggers"][0]["level"] == row["upper"]
+    # ★규약 뒤집기(2026-09-22)로 살아남는 경계가 **하단**이다 — 위 시험과 한 문장.
+    assert [x["side"] for x in row["triggers"]] == ["below"]
+    assert row["triggers"][0]["level"] == row["lower"]
     assert row["triggerBlocked"] == mr.BLOCKED_WHY
     # 「지금 거리」와 z 가 같은 밴드를 말한다 — 문턱을 지났으면 z 도 그쪽이다.
-    assert row["triggers"][0]["reached"] == (row["v"] >= row["upper"])
+    assert row["triggers"][0]["reached"] == (row["v"] <= row["lower"])
