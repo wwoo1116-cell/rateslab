@@ -19,18 +19,24 @@
  * 실제로 치는 것은 **어제와의 차이**이고, 1억 미만은 호가 단위와 수수료를 못
  * 이겨 안 친다.
  *
- * ## MR 과 **별개로도** 선다 [OWNER 2026-09-21]
+ * ## MR 과 **별개로** 선다 [OWNER 2026-09-21 → 2026-09-22 에 더 세졌다]
  *
- * 배율(W4)은 평균회귀가 증거금을 얼마나 쓰는가에 달렸고 그 경로는 리포 밖
- * 배분기를 읽는다. 그것이 없는 날에도 이 북 자신의 수는 멀쩡하므로, 화면은
- * **독립 판**(배율 1.0)을 늘 세우고 연동 판을 그 옆에 얹는다.
+ * 09-21 판은 「독립 판을 늘 세우고 **연동 판을 그 옆에 얹는다**」였다. 09-22 에
+ * 옆칸이 내려갔다 [OWNER — "MR이랑 별개로 돌릴거고 자본배분은 나중에 포트폴리오
+ * 탭에서의 역할이야"]: 이 면은 **언제나 축소 안 먹인 이 북 자신의 수**만 적는다.
+ * 그래서 화면이 읽는 다리도 `sheet.legs` 가 아니라 `sheet.standalone.legs` 다.
  *
  * ## 이 면이 «추천» 을 하지 않는 자리
  *
  * 액면은 화면의 판단이 아니라 **등록된 규칙이 낸 값**이다(다섯 북 DV01 → 실측
- * 커브 pv01 → 만기별 액면 → W4 배율). 화면은 그것을 옮겨 적고, 그 수가 어떤
- * 가정 위에 서 있는지를 같이 적는다 — 특히 **평균회귀를 안 줄이면 오늘 이 북은
- * 못 선다**는 사실(인계문 §5-1)은 숫자 옆에 서야 한다.
+ * 커브 pv01 → 만기별 액면). 화면은 그것을 옮겨 적는다.
+ *
+ * ## 이 면이 «배분» 을 말하지 않는 자리 [OWNER 2026-09-22]
+ *
+ * 2026-09-21 판은 조건 바 밑에 「평균회귀를 안 줄이면 오늘 이 북은 못 선다」를
+ * 붉게 세우고 있었다. 내렸다 — 그건 **이 북의 사실이 아니라 배분의 사실**이고,
+ * 자본을 북들 사이에 나누는 것은 Portfolio 탭의 역할이다. 이 면은 MR 과 **별개로**
+ * 돌아가는 이 북의 크기를 옮겨 적는다.
  *
  * 숫자는 전부 서버가 끝낸다(§16, `backend/app/sleeve.py`). 이 파일은 배치뿐이다.
  */
@@ -54,8 +60,8 @@ import { fetchSleeve, type SleeveLeg, type SleevePerf, type SleeveSheet, type Sl
 
 /** 억 단위 한 수 — 이 면의 모든 액면·증거금이 억이다(`lib/krw::fmtSize`).
  *
- *  `null` 을 받는 이유는 **연동이 안 선 날**이다(배분기를 못 읽으면 여력·배율이
- *  없다). 없는 것을 0 으로 적으면 「여력이 0 이다」라는 딴 사실이 된다. */
+ *  `null` 을 받는 이유는 **서버가 그 칸을 못 세운 날**이다. 없는 것을 0 으로 적으면
+ *  「0 억이다」라는 딴 사실이 된다 — 모르는 것과 없는 것은 다르다. */
 const uk = (v: number | null | undefined): string =>
   v == null ? '—' : `${fmtSize(v / 1e8)}억`;
 
@@ -85,6 +91,47 @@ function SignalCellView({ rate }: { rate: number }) {
   );
 }
 
+/** 페이지 폭 패널 한 장 — **제목이 있는 블록은 카드다**.
+ *
+ *  ## 왜 이 부품이 생겼나 [브라우저 실측 2026-09-22, 1,920×855]
+ *
+ *  이 면의 페이지 폭 블록 셋(추세 신호 · 거시 신호 · 표본내 성과)만 카드 밖에
+ *  맨몸으로 서 있어서, **페이지를 내려 읽으면 제목의 왼쪽이 24 → 41 → 24 로
+ *  튀었다.** 카드 안 제목은 카드가 진 `paddingX={2}` 만큼 들어가는데(41), 맨몸
+ *  블록은 페이지 기둥에 그대로 붙어서다(24).
+ *
+ *  기준은 옆 세입자다 — MR 계획면의 청산·손절 패널이 **페이지 폭인데 `.sr-card`**
+ *  이고 제목이 41 에 선다(`mr/MrPage.tsx::ExitPanel`). 그래서 규칙은 이렇게 읽힌다:
+ *
+ *      제목이 있는 페이지 폭 블록  →  `.sr-card` (제목 +17 · 표 +1)
+ *      제목이 없는 사실 스트립     →  `.sr-stats` (제 헤어라인이 경계를 준다)
+ *
+ *  캐논 규칙 1 대로 **새로 만들기 전에 찾았고**, ExitPanel 의 골격을 그대로 옮겼다
+ *  (`paddingX 2 · paddingTop 1.5 · paddingBottom 0.5` · 제목은 `label1`/`h2`).
+ *  ⚠ 제목이 `h3` 였던 것도 같이 고쳤다 — 이 블록들은 위 두 카드의 **하위가 아니라
+ *  형제**인데 `h3` 가 종속을 말하고 있었다(같은 위계면 같은 단계다).
+ *
+ *  부품을 `ui/` 로 올리지 않은 이유: 지금 쓰는 곳이 이 파일뿐이라 올리면 주인이
+ *  없는 공용 부품이 된다. 둘째 면이 같은 것을 원하면 그때 올린다. */
+function PanelCard({ title, meta, children }: {
+  title: string;
+  meta?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <VStack className="sr-card" flexShrink={0} width="100%">
+      <HStack alignItems="baseline" justifyContent="space-between" gap={1}
+        paddingX={2} paddingTop={1.5} paddingBottom={0.5}>
+        <Text font="label1" as="h2" noWrap>{title}</Text>
+        {meta ? (
+          <Text font="legal" as="span" color="fgMuted" noWrap>{meta}</Text>
+        ) : null}
+      </HStack>
+      {children}
+    </VStack>
+  );
+}
+
 /** 오늘의 신호 — **테너 × 룩백 격자**와 **테마 넷**.
  *
  *  KTB 면이 주던 두 표이고 [OWNER 2026-09-21 — "거기서 제공하던 정보들도 들어가야
@@ -94,22 +141,26 @@ function SignalCellView({ rate }: { rate: number }) {
  *  느림으로 고정한다. */
 function SignalPanel({ sig }: { sig: SleeveSignals }) {
   if (!sig.available) {
+    /* 못 세운 날도 **카드 안**이다 — 카드가 사라지면 그 자리에 무엇이 있었는지가
+       안 읽히고, 페이지의 왼쪽 기둥도 그 줄에서만 어긋난다(`ExitPanel` 의 빈 판과
+       같은 규칙). */
     return (
-      <Text font="legal" as="span" color="fgMuted">
-        {sig.why ?? '신호를 못 세웠어요.'}
-      </Text>
+      <PanelCard title="오늘의 신호">
+        <Box paddingX={2} paddingBottom={2}>
+          <Text font="legal" as="span" color="fgMuted">
+            {sig.why ?? '신호를 못 세웠어요.'}
+          </Text>
+        </Box>
+      </PanelCard>
     );
   }
   const lookbacks = sig.lookbacks ?? [];
   return (
-    <VStack gap={1.5} width="100%">
-      <VStack gap={0.5} width="100%">
-        <HStack gap={1} alignItems="baseline" justifyContent="space-between">
-          <Text font="label2" as="h3" noWrap>추세 신호</Text>
-          <Text font="legal" as="span" color="fgMuted" noWrap>
-            테너 {sig.rows?.length ?? 0} · 룩백 {lookbacks.length} · {sig.signal}
-          </Text>
-        </HStack>
+    <>
+      <PanelCard
+        title="추세 신호"
+        meta={`테너 ${sig.rows?.length ?? 0} · 룩백 ${lookbacks.length} · ${sig.signal}`}
+      >
         <Table bordered={false}>
           <TableHeader>
             <TableRow>
@@ -170,15 +221,15 @@ function SignalPanel({ sig }: { sig: SleeveSignals }) {
             ))}
           </TableBody>
         </Table>
-      </VStack>
+      </PanelCard>
 
-      <VStack gap={0.5} width="100%">
-        <HStack gap={1} alignItems="baseline" justifyContent="space-between">
-          <Text font="label2" as="h3" noWrap>거시 신호</Text>
-          <Text font="legal" as="span" color="fgMuted" noWrap>
-            테마 {sig.themes?.length ?? 0} · 부호 북 등가중
-          </Text>
-        </HStack>
+      <PanelCard
+        title="거시 신호"
+        meta={`테마 ${sig.themes?.length ?? 0} · 부호 북 등가중`}
+      >
+        {/* 스트립은 카드 **안쪽 여백**을 진다 — 산출 근거 카드와 같은 리듬이라
+            두 카드의 첫 값이 같은 밑선에 선다(`.sr-stats` 가 제 헤어라인을 준다). */}
+        <VStack paddingX={2} paddingBottom={2} width="100%">
         <HStack className="sr-stats" width="100%" flexWrap="wrap">
           <StatColumn title="테마">
             {(sig.themes ?? []).map((t) => (
@@ -198,8 +249,9 @@ function SignalPanel({ sig }: { sig: SleeveSignals }) {
             />
           </StatColumn>
         </HStack>
-      </VStack>
-    </VStack>
+        </VStack>
+      </PanelCard>
+    </>
   );
 }
 
@@ -217,19 +269,20 @@ const LEG_WORD: Record<string, string> = { trend: '추세', macro: '거시', ble
 function PerfPanel({ perf }: { perf: SleevePerf }) {
   if (!perf.available) {
     return (
-      <Text font="legal" as="span" color="fgMuted">
-        {perf.why ?? '성적을 못 세웠어요.'}
-      </Text>
+      <PanelCard title="표본내 성과">
+        <Box paddingX={2} paddingBottom={2}>
+          <Text font="legal" as="span" color="fgMuted">
+            {perf.why ?? '성적을 못 세웠어요.'}
+          </Text>
+        </Box>
+      </PanelCard>
     );
   }
   return (
-    <VStack gap={0.5} width="100%">
-      <HStack gap={1} alignItems="baseline" justifyContent="space-between">
-        <Text font="label2" as="h3" noWrap>표본내 성과</Text>
-        <Text font="legal" as="span" color="fgMuted" noWrap>
-          {perf.window?.start} ~ {perf.window?.end} · 등록 판정문의 창이에요
-        </Text>
-      </HStack>
+    <PanelCard
+      title="표본내 성과"
+      meta={`${perf.window?.start} ~ ${perf.window?.end} · 등록 판정문의 창이에요`}
+    >
       <Table bordered={false}>
         <TableHeader>
           <TableRow>
@@ -330,7 +383,7 @@ function PerfPanel({ perf }: { perf: SleevePerf }) {
           ))}
         </TableBody>
       </Table>
-    </VStack>
+    </PanelCard>
   );
 }
 
@@ -398,10 +451,15 @@ export function MomentumPage() {
     return <LoadingState what="모멘텀 북" />;
   }
 
-  const legs = sheet.legs ?? [];
-  /* 「안 줄이면 못 선다」 — 이 화면에서 가장 중요한 사실이라 숫자 옆이 아니라
-     조건 바 밑 한 줄로 선다(인계문 §5-1). */
-  const cannotStand = sheet.linked === true && (sheet.scaleNoShrink ?? 1) <= 0;
+  /* ★**이 면의 다리는 `standalone` 이다** [OWNER 2026-09-22 — "MR이랑 별개로
+     돌릴거고 자본배분은 나중에 포트폴리오 탭에서의 역할이야"].
+
+     서버는 둘을 다 낸다: `legs` 는 W4 배율을 먹인 다리, `standalone.legs` 는 안
+     먹인 다리다(`sleeve.py::build_sheet` 가 `_legs(..., 1.0, prev)` 로 따로 세운다).
+     화면이 배분을 말하지 않기로 했으므로 **안 먹인 쪽이 이 면의 답**이다 — 그래야
+     「주문」도 축소 전 액면의 차이가 된다. 배율을 먹인 수는 서버에 그대로 있고,
+     쓰는 것은 자본을 나누는 화면(Portfolio)의 몫이다. */
+  const legs = sheet.standalone?.legs ?? [];
 
   return (
     <VStack gap={1.5} width="100%" flexGrow={1} minHeight={0}>
@@ -446,23 +504,22 @@ export function MomentumPage() {
           없고, 데스크가 실제로 치는 것은 그 차이예요. <b>단독 전략이 아니에요</b>:
           크기는 등록된 규칙이 내고 이 화면은 옮겨 적어요.
         </Text>
-        {cannotStand ? (
-          /* ★이 줄이 이 화면에서 제일 중요하다 — 위의 배율·액면이 전부 「평균회귀를
-             k_mr 로 줄여 세운다」는 가정 위에 있고, 그 축소를 그 레인에 지시한 적이
-             없다. 숫자 옆이 아니라 여기 서야 읽는 사람이 먼저 본다. */
-          <Text font="body" as="span" className="sr-up" maxWidth={760}>
-            평균회귀를 실제로 안 줄이면 여력이 {uk(sheet.headroomNoShrink)}이라 오늘
-            이 북은 못 서요 — 아래 액면은 k_mr {sheet.kMr?.toFixed(3)} 축소를{' '}
-            <b>가정</b>한 수예요.
-          </Text>
-        ) : null}
-        {sheet.available && sheet.linked === false ? (
-          /* MR 배분기를 못 읽은 날 — **이 북 자신의 수는 멀쩡하다**. 그 둘을
-             가르지 않으면 화면이 「모멘텀이 안 선다」로 읽힌다. */
-          <Text font="body" as="span" color="fgMuted" maxWidth={760}>
-            {sheet.linkedWhy} — 아래는 <b>단독 기준</b>의 수예요(배율 1.000).
-          </Text>
-        ) : null}
+        {/* ★「평균회귀를 안 줄이면 오늘 이 북은 못 선다」가 여기 붉게 서 있었다.
+            **내렸다** [OWNER 2026-09-22 — "이 문장은 상관없는게 MR이랑 별개로
+            돌릴거고 자본배분은 나중에 포트폴리오 탭에서의 역할이야"].
+
+            근거는 취향이 아니라 **역할**이다. 이 면은 등록된 규칙이 낸 «이 북의
+            크기»를 옮겨 적는 자리고, 그 크기를 다른 북과 견줘 자본을 나누는 것은
+            Portfolio 의 일이다. 두 물음을 한 화면에 겹쳐 두면 이 면이 매일
+            「오늘 못 선다」를 1순위로 외치는데, 그건 이 북의 사실이 아니라 **배분의
+            사실**이었다. 옆 레인의 가정(k_mr 축소)을 이 면이 대신 경고하고 있던
+            것이기도 하다.
+
+            ⚠ 그래서 지우기만 했다 — 「배분은 Portfolio 가 한다」를 여기에 다시 적지
+            않는다. 남의 화면이 무엇을 하는지는 그 화면이 말한다. */}
+        {/* 「MR 배분기를 못 읽었어요 — 아래는 단독 기준이에요」가 여기 있었다.
+            같이 내렸다 [OWNER 2026-09-22] — 이 면은 **늘** 단독 기준이라 그 사실에
+            예외가 없고, 예외가 없는 것은 문장이 아니라 전제다. */}
         {!sheet.available && sheet.why ? (
           <Text font="body" as="span" color="fgMuted">
             {sheet.why}
@@ -481,7 +538,9 @@ export function MomentumPage() {
             </Text>
             <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
               <Text font="display3" as="span" tabularNumbers noWrap>
-                {legs.some((l) => l.trade) ? `회전 ${uk(sheet.turnover)}` : '금일 주문 없음'}
+                {legs.some((l) => l.trade)
+                  ? `회전 ${uk(sheet.standalone?.turnover)}`
+                  : '금일 주문 없음'}
               </Text>
               <Text font="body" as="span" color="fgMuted">
                 {legs
@@ -490,9 +549,11 @@ export function MomentumPage() {
                   .join(' · ') || `1억 미만 차이라 주문 없음`}
               </Text>
             </HStack>
+            {/* 「· 배율 1.000」이 여기 붙어 있었다 — 내렸다 [OWNER 2026-09-22].
+                배율은 이 북의 크기가 아니라 **자본을 나눈 결과**다. */}
             <Text font="legal" as="span" color="fgMuted">
-              포지션 규모 {uk(sheet.faceAfter)} · 증거금 {uk(sheet.marginNeed)} · 배율{' '}
-              {sheet.scale?.toFixed(3)}
+              포지션 규모 {uk(sheet.standalone?.faceTotal)} · 증거금{' '}
+              {uk(sheet.standalone?.marginNeed)}
             </Text>
           </VStack>
 
@@ -536,12 +597,9 @@ export function MomentumPage() {
                           </TableCell>
                           <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
                             <ThHelp
-                              label="목표 액면"
+                              label="액면"
                               help="순 DV01 을 그날 실측 커브의 pv01 로 나눈 액면이에요. 근사 pv01 은 3Y 3.8%·10Y 12.5% 과대평가였어요."
                             />
-                          </TableCell>
-                          <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
-                            <Text font="caption" as="span" color="fgMuted">축소 후</Text>
                           </TableCell>
                           <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
                             <Text font="caption" as="span" color="fgMuted">어제</Text>
@@ -572,9 +630,6 @@ export function MomentumPage() {
                             </TableCell>
                             <TableCell className="sr-num" justifyContent="flex-end">
                               <Text font="label2" as="span" tabularNumbers noWrap>{uk(l.face)}</Text>
-                            </TableCell>
-                            <TableCell className="sr-num" justifyContent="flex-end">
-                              <Text font="label2" as="span" tabularNumbers noWrap>{uk(l.faceAfter)}</Text>
                             </TableCell>
                             <TableCell className="sr-num" justifyContent="flex-end">
                               {/* 크기는 무부호가 캐논이고(`fmtSize`) 방향은 **낱말**이
@@ -608,7 +663,7 @@ export function MomentumPage() {
               </VStack>
             </VStack>
 
-            {/* ── 사실 — 배율·여력·채점 상태 ─────────────────────────────── */}
+            {/* ── 사실 — 크기와 채점 상태 ───────────────────────────────── */}
             <VStack className="sr-card" flexBasis={0} flexGrow={1} flexShrink={1}
               minWidth={420} minHeight={0}>
               <HStack alignItems="center" justifyContent="space-between" gap={1}
@@ -619,46 +674,26 @@ export function MomentumPage() {
               </HStack>
               <VStack gap={1.5} paddingX={2} paddingBottom={2} width="100%" flexGrow={1} minHeight={0}>
                 <HStack className="sr-stats" width="100%" flexWrap="wrap">
-                  {/* ★**독립 판이 먼저다** [OWNER 2026-09-21 「MR 이랑 별개도
-                      돌아가게」] — 이 북 혼자의 답이 이 화면의 바닥이고, 배율은
-                      그 위에 얹히는 제약이다. 순서가 그 위계를 말한다. */}
-                  <StatColumn title="단독 기준">
-                    <Stat
-                      label="포지션 규모"
-                      value={uk(sheet.standalone?.faceTotal)}
-                      note="배율 안 먹인 값"
-                    />
+                  {/* 「단독 기준」·「배율」 두 칸이 여기 있었다 — **걷었다**
+                      [OWNER 2026-09-22 — "MR이랑 별개로 돌릴거고 자본배분은
+                      나중에 포트폴리오 탭에서의 역할이야"].
+
+                      내린 것: W4 배율 · 평균회귀 증거금 · 여력 · 상한 넘은 날.
+                      넷 다 「이 북이 얼마인가」가 아니라 **「이 북에 자본을 얼마나
+                      줄 것인가」**의 수였다. 그 물음의 주인은 Portfolio 다.
+                      그리고 「단독 기준」이라는 이름도 같이 죽는다 — 비교할 연동
+                      판이 화면에 없으면 «단독» 은 아무것도 안 가리킨다.
+
+                      서버는 그 수들을 그대로 낸다(`scale`·`headroom`·`mrMargin` …).
+                      지우지 않은 이유는 **쓰는 화면이 따로 생길 것**이기 때문이다. */}
+                  <StatColumn title="크기">
+                    <Stat label="배수" value={sheet.mult?.toFixed(2) ?? '—'} note="총위험 고정" />
+                    <Stat label="포지션 규모" value={uk(sheet.standalone?.faceTotal)} />
                     <Stat label="증거금" value={uk(sheet.standalone?.marginNeed)} />
                     <Stat
                       label="회전"
                       value={uk(sheet.standalone?.turnover)}
                       note="어제와의 차이"
-                    />
-                  </StatColumn>
-
-                  <StatColumn title="배율">
-                    <Stat
-                      label="W4 배율"
-                      value={sheet.scale?.toFixed(3) ?? '—'}
-                      note={(sheet.scale ?? 1) >= 0.999 ? '안 줄였어요' : '여력이 모자라 줄였어요'}
-                    />
-                    <Stat
-                      label="평균회귀 증거금"
-                      value={uk(sheet.mrMargin)}
-                      note={sheet.marginSource?.rule
-                        ? `${sheet.marginSource.rule} · ${sheet.marginSource.asof}`
-                        : undefined}
-                    />
-                    <Stat
-                      label="여력"
-                      value={uk(sheet.headroom)}
-                      note={`축소 안 하면 ${uk(sheet.headroomNoShrink)}`}
-                      tone={cannotStand ? 'down' : undefined}
-                    />
-                    <Stat
-                      label="상한 넘은 날"
-                      value={`${sheet.histHitDays ?? 0}일`}
-                      note={`전체 ${sheet.histDays ?? 0}일 중`}
                     />
                   </StatColumn>
 
@@ -686,46 +721,24 @@ export function MomentumPage() {
                     ) : null}
                   </StatColumn>
 
-                  <StatColumn title="크기">
-                    <Stat label="배수" value={sheet.mult?.toFixed(2) ?? '—'} note="총위험 고정" />
-                    <Stat label="목표 합" value={uk(sheet.faceTotal)} />
-                    <Stat label="축소 후" value={uk(sheet.faceAfter)} note={`증거금 ${uk(sheet.marginNeed)}`} />
-                  </StatColumn>
                 </HStack>
 
-                {/* 여력의 기준일이 주문표와 다를 수 있다 — 평균회귀가 그 사이에
-                    다리를 더 넣었으면 여력은 이보다 적다. 조용히 넘기지 않는다. */}
-                {sheet.marginSource?.asof && sheet.marginSource.asof !== sheet.asof ? (
-                  <Text font="legal" as="span" color="fgMuted">
-                    여력은 {sheet.marginSource.asof} 것이고 이 주문표는 {sheet.asof} 것이에요 —
-                    평균회귀가 그 사이에 다리를 더 넣었으면 여력은 이보다 적어요.
-                  </Text>
-                ) : null}
-                {sheet.marginSource?.stale?.length ? (
-                  <Text font="legal" as="span" color="fgMuted">
-                    평균회귀 적재가 {sheet.marginSource.stale.length}다리 지연됐어요(증거금
-                    묶은 것 {sheet.marginSource.stale_held ?? 0}).
-                  </Text>
-                ) : null}
+                {/* 여력·적재 지연 각주 둘이 여기 있었다 — 여력을 안 적는 면에는
+                    할 말이 아니라 같이 내렸다 [OWNER 2026-09-22]. */}
               </VStack>
             </VStack>
           </HStack>
 
-          {/* ── 오늘의 신호 — **카드 밖 · 페이지 폭** ──────────────────────────
-              KTB 면이 주던 두 표다 [OWNER 2026-09-21]. 카드 안에 넣으면 룩백 다섯
-              열이 접혀 격자가 격자로 안 읽힌다 — 이 표는 **줄의 모양**이 답이라
-              (빠른 쪽과 느린 쪽이 갈렸는가) 폭을 줘야 일을 한다. MR 계획면에서
-              스트립을 페이지 폭으로 내린 것과 같은 판단. */}
-          {sheet.signals ? (
-            <Box flexShrink={0} width="100%">
-              <SignalPanel sig={sheet.signals} />
-            </Box>
-          ) : null}
-          {sheet.perf ? (
-            <Box flexShrink={0} width="100%">
-              <PerfPanel perf={sheet.perf} />
-            </Box>
-          ) : null}
+          {/* ── 오늘의 신호 — **페이지 폭 카드** ────────────────────────────────
+              KTB 면이 주던 두 표다 [OWNER 2026-09-21]. 「위 두 카드 **안**에 넣지
+              않는다」는 그대로다 — 카드 안에 넣으면 룩백 다섯 열이 접혀 격자가
+              격자로 안 읽히고, 이 표는 **줄의 모양**이 답이라(빠른 쪽과 느린 쪽이
+              갈렸는가) 폭을 줘야 일을 한다.
+              **달라진 것은 「맨몸이냐 카드냐」뿐이다** [2026-09-22 실측]: 페이지 폭은
+              그대로 두되 `PanelCard` 를 입혀 제목이 옆 카드들과 같은 밑선에 선다.
+              MR 계획면의 청산·손절 패널이 이미 그 꼴이다(페이지 폭 + `.sr-card`). */}
+          {sheet.signals ? <SignalPanel sig={sheet.signals} /> : null}
+          {sheet.perf ? <PerfPanel perf={sheet.perf} /> : null}
           </VStack>
         </>
       )}
