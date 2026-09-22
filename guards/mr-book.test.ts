@@ -291,6 +291,12 @@ describe('서버도 한 자리다', () => {
          v20 = Momentum 성적 표에 `ulcerVolMatched`(2026-09-21 — 원화 열은 짝이 있어야
                읽힌다. 위 v18 과 **같은 등급의 위험**: 안 올리면 화면이 에러 없이
                빈 칸을 그린다)
+         v21 = **모양이 아니라 «뜻»이 바뀐 첫 승급**(2026-09-22). 청산 규칙을
+               `|z| ≤ exitZ` 에서 교차로 고쳤다 — 페이로드의 칸은 한 자도 안
+               바뀌었지만 그 칸에 담기는 수가 달라진다(격자가 고르는 조건이
+               계열마다 갈린다). 머리의 규칙은 「모양이 바뀌면 올려라」지만 진짜
+               기준은 «wrong data 에 물린 캐시는 없느니만 못하다» 이고, 뜻이
+               바뀌면 그것도 wrong 이다
        — 같은 SQL 이 다른 모양·다른 z 를 만든다. v16 도 실제로 한 번 밟았다:
        라우트를 고치고 백엔드를 재기동했는데 응답에 `triggers` 가 없었다(디스크
        캐시가 v15 페이로드를 그대로 내줬다).
@@ -299,7 +305,8 @@ describe('서버도 한 자리다', () => {
        올렸을 때 눈에 보이는데(줄이 사라진다), 이 칸은 그쪽 스크립트가 조용히
        못 재는 상태로 남을 뿐이다. 그래서 이 시험이 더 필요하다. */
     const cache = fs.readFileSync(path.join(root, 'backend/app/cache.py'), 'utf8');
-    expect(cache).toMatch(/SCHEMA_VERSION = 20/);
+    expect(cache).toMatch(/SCHEMA_VERSION = 21/);
+    expect(cache).toMatch(/v21 \(2026-09-22\)/);
     expect(cache).toMatch(/v17 \(2026-09-09\)/);
     expect(cache).toMatch(/v16 \(2026-09-09\)/);
     /* 옛 판의 사유 줄도 남아 있어야 한다 — 승급 이력이 곧 이 파일의 근거다. */

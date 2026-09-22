@@ -423,6 +423,29 @@ def _state(vals: list[float], up: list, lo: list) -> dict[str, Any]:
     return {"kind": "inside", "days": None}
 
 
+def _row_legs(kind: str, values: list[float] | None) -> list[dict] | None:
+    """오늘 다리 레벨 — `[{name, v}]`. 못 세우면 `None`(빈 목록이 아니다).
+
+    플라이는 다리를 안 싣는다(`mrseries.combo_points` 의 그 근거 — `2·벨리 − 윙`
+    이라 「다리0 − 다리1」 규약이 거짓이다). 그때 `None` 이라야 화면이 「없다」와
+    「0개」를 구별한다.
+
+    단위는 **그 다리 자신의 단위**다 — 엮은 값이 bp 라도 다리는 금리(%)다.
+    BSS 가 −4.8bp 일 때 화면이 적어야 하는 것은 「국고 4.052 · IRS 4.100」이지
+    「−4.8」 하나가 아니다.
+    """
+    if not values:
+        return None
+    # 지연 import — `mrcarry` 가 이 모듈의 `FSW_IRS_COL` 을 읽어서 모듈 꼭대기에
+    # 두면 순환이 된다(`mysqldb`·`engine_port` 와 같은 관례).
+    from . import mrcarry
+
+    names = mrcarry.LEG_NAMES.get(kind)
+    if not names or len(names) != len(values):
+        return None
+    return [{"name": n, "v": round(float(v), 4)} for n, v in zip(names, values)]
+
+
 def _assemble(sid: str, label: str, kind: str, unit: str,
               dates: list[str], vals: list[float],
               window: int = WINDOW, k: float = K,
@@ -564,6 +587,11 @@ def build_mr(dataset=None, *, window: int = WINDOW, k: float = K,
                                      [p["t"] for p in pts],
                                      [float(p["v"]) for p in pts],
                                      window, k)
+            # ★다리 레벨을 행에 싣는다 [트레이더 2026-09-22 — "두개나 3개를 엮는
+            #   상품의 경우에는 각각의 레벨을 표시해줄 것"]. 엮은 값 하나만 보면
+            #   「−4.8bp」가 국고가 싼 것인지 IRS 가 비싼 것인지 안 보인다.
+            #   이름은 `mrcarry.LEG_NAMES` 가 정본이다 — 여기서 다시 짓지 않는다.
+            row["legs"] = _row_legs(kind, pts[-1].get("legs"))
         except (KeyError, ValueError) as exc:
             excluded.append({"id": sid, "label": label, "reason": str(exc)})
             continue

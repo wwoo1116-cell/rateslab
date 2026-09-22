@@ -340,6 +340,9 @@ def build_series(sid: str, *, leg_of: Callable[..., dict],
     row, history = mr_mod._assemble(
         sid, label, kind, unit, dates, vals_u,
         window=int(knobs["lookback"]), k=entry_z, bands=(ma, up, lo))
+    # 다리 레벨 — 보드와 **같은 창구**를 지난다(`mr._row_legs`). 두 화면이 같은
+    # 상품의 다리를 다른 이름·다른 차례로 적으면 안 된다.
+    row["legs"] = mr_mod._row_legs(kind, leg.get("legLevels"))
 
     # ④ 오늘의 레벨 셋과 포지션.
     m_now, u_now = ma[-1], up[-1]

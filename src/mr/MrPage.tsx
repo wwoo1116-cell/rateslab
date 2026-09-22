@@ -767,11 +767,18 @@ export function MrPage() {
              「-99.9bp 이상 · 123.4bp 지났어요 → 긴 쪽 리시브 · 짧은 쪽 페이」
              = 334px(커브 다리 이름이 가장 길다) + 나머지 여섯 열 693 + 카드
              안쪽 여백 → **1,060**. 그보다 긴 조합이 나오면 카드 안에서
-             가로로 굴린다(글자를 자르지 않는다). */
-          flexBasis={1060}
+             가로로 굴린다(글자를 자르지 않는다).
+
+             **1,060 → 1,180** [트레이더 2026-09-22 — 다리 레벨]. 값 칸이 두 줄이
+             되면서(「22.8 / 긴 다리 4.2225 · 짧은 다리 3.9950」) 표의 자연폭이
+             1,173 으로 늘었다(클론으로 잰 1,159 는 테두리·여백을 빠뜨린 수였다 —
+             렌더된 폭으로 다시 쟀다) — 1,060 에서는 시그널 열이 스크롤 뒤로 갔다.
+             오른쪽 카드의 776 은 **한 줄 폭**이지 최소가 아니라(`.sr-stats` 가
+             접힌다) 그만큼을 내줄 수 있다. 실측으로 확인하고 정한 수다. */
+          flexBasis={1180}
           flexGrow={0}
           flexShrink={1}
-          maxWidth={1060}
+          maxWidth={1180}
           minHeight={0}
         >
           <HStack
@@ -869,9 +876,25 @@ export function MrPage() {
                           </VStack>
                         </TableCell>
                         <TableCell className="sr-num" justifyContent="flex-end">
-                          <Text font="label2" as="span" tabularNumbers noWrap>
-                            {fmtLevel(r.v, r.unit as Unit)}
-                          </Text>
+                          {/* 값 + **다리 레벨** [트레이더 2026-09-22 — "두개나
+                              3개를 엮는 상품의 경우에는 각각의 레벨을 표시해줄 것"].
+                              엮은 값 하나만 보면 「BSS −4.8bp」가 국고가 싼 것인지
+                              IRS 가 비싼 것인지 안 보인다. 이름 칸이 이미 쓰는
+                              2줄 스택 문법 그대로다 — 새 모양을 안 만든다.
+                              ⚠ 다리는 **금리(%)**다. 엮은 값의 bp 와 단위가 달라서
+                              `fmtLevel(·, '%')` 로 따로 찍는다. */}
+                          <VStack as="span" className="sr-name-stack" alignItems="flex-end">
+                            <Text font="label2" as="span" tabularNumbers noWrap>
+                              {fmtLevel(r.v, r.unit as Unit)}
+                            </Text>
+                            {r.legs?.length ? (
+                              <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+                                {r.legs
+                                  .map((l) => `${l.name} ${fmtLevel(l.v, '%' as Unit)}`)
+                                  .join(' · ')}
+                              </Text>
+                            ) : null}
+                          </VStack>
                         </TableCell>
                         {/* 전일 = Main 변화 셀: 틴트 워시 + 방향색 글자 + 글리프,
                             숫자는 무부호(tabular 정렬 — 부호 폭이 흔든다). */}
