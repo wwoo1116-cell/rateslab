@@ -81,14 +81,21 @@ const SIDE_WORD: Record<string, string> = {
  *  ⚠ 부호는 **낱말이 아니라 `rateSign`** 이 진다 — 「페이」와 「선물 매도」가 같은
  *  쪽이고 「리시브」와 「매수」가 같은 쪽이다. 낱말로 색을 칠하면 계기마다 규약을
  *  다시 적게 되고, 그게 이 리포가 반복해서 밟은 자리다. */
-function PositionTable({ legs, busy, onClose }: {
+function PositionTable({ legs, busy, today, onClose }: {
   legs: PaperPositionLeg[]; busy: boolean;
-  onClose: (n: number, level: number) => void;
+  /** 오늘(서울) — 청산일의 기본값이다. **`asof`(자료의 날)가 아니다.** */
+  today: string;
+  onClose: (n: number, exit: string, level: number) => void;
 }) {
   /* 줄마다의 청산 레벨 입력 — 다리 번호로 잡는다(행 순서는 정렬이 바꾼다).
      비워 두면 마지막 종가로 떨어진다(그 사실은 머리의 뜻풀이와 플레이스홀더가
      같이 말한다) — 그래야 「종가로 닫기」라는 종전 동작이 안 사라진다. */
   const [exitLv, setExitLv] = useState<Record<number, string>>({});
+  /* 줄마다의 **청산일** 입력 [OWNER 2026-09-23]. 레벨과 같은 문법이다 — 내가
+     치고, 비워 두면 오늘로 떨어진다. 종전에는 오늘 고정이라 «어제 청산한 것을
+     오늘 적는» 경우를 장부가 받을 수 없었다. 서버는 처음부터 이 날을 받고
+     있었고(`check_exit`), 화면만 안 물었다. */
+  const [exitT, setExitT] = useState<Record<number, string>>({});
 
   if (legs.length === 0) {
     return (
@@ -132,7 +139,7 @@ function PositionTable({ legs, busy, onClose }: {
             </TableCell>
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
               <ThHelp label="청산"
-                help="청산 레벨도 내가 적어요 — 진입을 종가로 안 매겼으니까요. 비워 두면 마지막 종가로 닫아요. 청산일은 오늘이에요." />
+                help="날과 레벨 둘 다 내가 적어요 — 진입을 종가로 안 매겼으니까요. 날을 비우면 오늘, 레벨을 비우면 마지막 종가로 닫아요." />
             </TableCell>
           </TableRow>
         </TableHeader>
@@ -212,9 +219,31 @@ function PositionTable({ legs, busy, onClose }: {
                     하나뿐이었고, 그래서 한 거래 안에 「진입은 내 체결가 · 청산은
                     종가」라는 **두 규약**이 섰다. 진입 칸과 같은 문법이다 —
                     내가 치고, 비워 두면 서버가 아는 값으로 떨어진다.
-                    청산일은 오늘이다(체결일과 같은 이유 — `sheet.today`). */}
+
+                    ★**청산일도 그렇다** [OWNER 2026-09-23]. 종전에는 오늘 고정이라
+                    「어제 청산한 것을 오늘 적는」 경우를 못 받았다. 이제 두 칸이다.
+
+                    `.sr-numctl` — 숫자 칸의 우측정렬 규칙(`theme/type.css` 의 그
+                    블록)이 값뿐 아니라 **컨트롤까지 밀어** 제 상자를 뚫고 나가게
+                    한다. 컨트롤이 하나일 때는 안 보였고, 둘이 서자 **115px 이
+                    겹쳤다**(실측 2026-09-23). 이 클래스가 그 줄만 되돌린다. */}
                 {l.open ? (
-                  <HStack gap={0.5} alignItems="center" justifyContent="flex-end">
+                  <HStack className="sr-numctl" gap={0.5}
+                    alignItems="center" justifyContent="flex-end">
+                    {/* 날이 먼저다 — 「언제 · 얼마에」 차례로 읽힌다. 담는 줄의
+                        체결일과 **같은 문법**이다(맨 텍스트 칸 + 오늘이 힌트):
+                        이 화면은 날짜를 어디서나 ISO 로 치므로 둘이 달라지면
+                        같은 일을 두 벌로 배우게 된다. */}
+                    <Box width={104}>
+                      <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                        accessibilityLabel={`${l.n}번 다리 청산일 (YYYY-MM-DD)`}
+                        value={exitT[l.n] ?? ''}
+                        placeholder={today}
+                        disabled={busy}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                          setExitT((m) => ({ ...m, [l.n]: e.target.value }))}
+                      />
+                    </Box>
                     <Box width={92}>
                       <TextInput size="s" fontSize="legal" height={CONTROL_H}
                         accessibilityLabel={`${l.n}번 다리 청산 레벨 (%)`}
@@ -227,13 +256,22 @@ function PositionTable({ legs, busy, onClose }: {
                     </Box>
                     <button type="button" className="sr-pillbtn" data-fill=""
                       /* 비워 두면 마지막 종가로 떨어진다 — 그 값조차 없으면
-                         적을 수가 없으므로 그때만 못 누른다. */
+                         적을 수가 없으므로 그때만 못 누른다.
+
+                         **날짜는 여기서 안 막는다.** 레벨을 막는 이유는 화면이
+                         `Number()` 로 **바꾸기** 때문이다(못 바꾸면 `null` 이
+                         서버에 가서 뜻 모를 오류가 된다). 날짜는 친 글자가 그대로
+                         가고, 서버가 사유를 한국어로 적어 돌려준다 —
+                         「미래예요」·「체결일보다 앞서요」는 꼴만 봐서는 못 하는
+                         판정이라 여기서 흉내 내면 규칙이 두 벌이 된다. */
                       disabled={busy || (!exitLv[l.n]?.trim() && l.mark == null)
                                 || (!!exitLv[l.n]?.trim() && !Number.isFinite(Number(exitLv[l.n])))}
                       onClick={() => {
                         const typed = exitLv[l.n]?.trim();
-                        onClose(l.n, typed ? Number(typed) : (l.mark as number));
+                        onClose(l.n, exitT[l.n]?.trim() || today,
+                                typed ? Number(typed) : (l.mark as number));
                         setExitLv((m) => ({ ...m, [l.n]: '' }));
+                        setExitT((m) => ({ ...m, [l.n]: '' }));
                       }}>
                       닫기
                     </button>
@@ -460,11 +498,14 @@ export function PortfolioPage() {
           <PositionTable
             legs={sheet.position.legs}
             busy={busy}
-            onClose={(n, level) =>
-              /* 청산일도 **오늘**이다(체결일과 같은 이유). 청산 레벨은 여전히
-                 내가 적는다 — 아래 버튼이 넘기는 값이 그것이다. */
-              write(() => closeLeg(n, sheet.today, level),
-                    `${n}번 다리를 닫았어요.`)}
+            today={sheet.today}
+            onClose={(n, exit, level) =>
+              /* 날도 레벨도 **내가 적은 것**이 그대로 간다 — 둘 다 비면 표가
+                 오늘·마지막 종가로 채워서 넘긴다(종전 동작). 말이 되는 날인지는
+                 서버의 `check_exit` 가 본다: 미래 금지 · 체결일보다 앞서기 금지 ·
+                 **같은 날은 허용**(오늘 열고 오늘 닫는 거래는 정상이다). */
+              write(() => closeLeg(n, exit, level),
+                    `${n}번 다리를 ${exit} 에 닫았어요.`)}
           />
           {/* 담는 줄 — 얼라인 캐논 그대로(라벨 위 · 32px 등고 · 바닥 정렬 ·
               폭은 감싸는 Box 가 준다). */}

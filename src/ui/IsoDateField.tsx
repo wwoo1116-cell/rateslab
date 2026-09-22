@@ -41,6 +41,19 @@
  * 이제 표시가 **로케일과 무관하게** `2026-08-25` 다 — 네이티브가 못 주던 것이고,
  * 이 이관이 실제로 얻은 것이다.
  *
+ * ── 이 칸은 **제 상자를 안 채운다** (실측 2026-09-23) ───────────────────────
+ * CDS `DateInput` 의 껍질에 `min-width: 164px` 이 박혀 있다. `Field` 가
+ * `minWidth:0`·`flexGrow:1` 로 150px 상자에 맞춰도 안쪽이 164 로 버티고 상자를
+ * **오른쪽으로 뚫는다**(입력 자체는 162). 백테스트 북에서 「청산일 → 진입 레벨」
+ * 틈이 −1px 이던 것이 이것이고, **「진입일 → 청산일」도 같은 −1** 이었다.
+ * CLAUDE.md 「얼라인」 7 이 `Select`·`TextInput` 에 대해 적어 둔 규칙(«컨트롤은
+ * 제 상자를 채운다»)이 이 컨트롤에서만 안 서던 자리다.
+ *
+ * 그래서 `Field` 에 `.sr-datefit` 을 건다 — 그 바닥을 **이 칸에서만** 푼다.
+ * 글자는 안 잘린다(실측: 값 73px · 힌트 75.8px 이 148px 안에 선다). 규칙의
+ * 전문과 근거는 `theme/type.css` 의 그 블록이고, `guards/control-fill.test.ts`
+ * 가 잰다.
+ *
  * ── UTC 함정 ────────────────────────────────────────────────────────────────
  * `new Date('2026-08-24')` 는 **UTC 자정**이라 KST(+9)에서 로컬 8/24 09:00 이
  * 되고, 반대로 `d.toISOString().slice(0,10)` 은 로컬 자정을 UTC 로 되돌려 **하루
@@ -199,7 +212,7 @@ export function IsoDateField({
   return (
     /* 부가 설명은 `Field` 의 `help`(라벨의 title)로 간다 — 힌트 슬롯을 쓰면
        위 이유로 행이 어긋난다. */
-    <Field label={label} help={helperText}>
+    <Field label={label} help={helperText} className="sr-datefit">
       {/* 로케일은 **이 칸에만** 건다 — 앱 전역 프로바이더로 올리면 다른 CDS
           소비처(숫자 포맷 등)까지 en-CA 로 끌려간다. */}
       <LocaleProvider locale="en-CA">{control}</LocaleProvider>

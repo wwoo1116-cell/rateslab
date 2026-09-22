@@ -132,15 +132,20 @@ export function ControlCollapsible({
 export function Field({
   label,
   help,
+  className,
   children,
 }: {
   label: string;
   /** 값의 출처·근거. 라벨의 native title 로 붙는다. */
   help?: string;
+  /** 칸 하나에만 거는 CSS 훅. 지금 쓰는 곳은 `ui/IsoDateField` 의
+   *  `.sr-datefit` 하나다 — CDS `DateInput` 의 `min-width: 164px` 바닥을
+   *  푸는 자리이고, 그 전말은 `theme/type.css` 의 그 블록에 있다. */
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <VStack gap={0.25} minWidth={0} flexGrow={1}>
+    <VStack className={className} gap={0.25} minWidth={0} flexGrow={1}>
       <Text as="span" font="legal" color="fgMuted" noWrap title={help}>
         {label}
       </Text>

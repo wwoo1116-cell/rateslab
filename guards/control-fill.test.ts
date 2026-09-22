@@ -93,6 +93,54 @@ describe('컨트롤은 제 상자를 채운다', () => {
   });
 
   /**
+   * ④ CDS `DateInput` 은 **`min-width: 164px`** 를 제 껍질에 박아 둔다 —
+   *    `Field` 의 `minWidth:0` 으로도 안 줄어들어 150px 상자를 오른쪽으로 뚫는다.
+   *    그래서 백테스트 북의 「진입일 → 청산일」·「청산일 → 진입 레벨」 두 틈이
+   *    **−1px** 이었다(12 − 13). 시뮬의 금통위 날짜(상자 160)에서는 더 나빠서,
+   *    상자가 164 로 밀리며 **입력이 32px 으로 눌려 글자가 잘렸다**(실측
+   *    2026-09-23 · 「말줄임 금지」 위반). `.sr-datefit` 이 그 바닥을 푼다.
+   */
+  it('날짜 칸은 CDS 의 164px 바닥을 푼다', () => {
+    const css = fs.readFileSync(path.join(SRC, 'theme', 'type.css'), 'utf8');
+    expect(css).toMatch(/\.sr-datefit \[class\*='column-'\]\s*\{[^}]*min-width:\s*0/);
+    const iso = stripComments(
+      fs.readFileSync(path.join(SRC, 'ui', 'IsoDateField.tsx'), 'utf8'),
+    );
+    expect(
+      iso,
+      '`IsoDateField` 가 `.sr-datefit` 을 안 걸면 날짜 칸이 제 상자를 뚫습니다.',
+    ).toMatch(/className="sr-datefit"/);
+  });
+
+  /**
+   * ⑤ 숫자 칸의 우측정렬(`.sr-num [class*='column-'] { align-items: flex-end }`)은
+   *    **값** 을 위한 규칙인데 셀렉터가 `TextInput` 의 뿌리에도 걸려, 안쪽 행이
+   *    stretch 를 잃고 제 고유폭(211px)으로 선다. 컨트롤이 하나면 안 보이고
+   *    둘이 서면 드러난다 — 페이퍼 북 청산 칸에서 상자 104·92 인데 **115px 이
+   *    겹쳤다**(실측 2026-09-23). `.sr-numctl` 이 그 줄만 되돌린다.
+   *
+   *    ⚠ 명시도가 같아 **차례가 이긴다** — `.sr-numctl` 규칙이 `.sr-num` 규칙
+   *    뒤에 있어야 한다.
+   */
+  it('숫자 칸 안의 컨트롤은 밀리지 않고 채운다 — 그리고 규칙 차례가 맞다', () => {
+    const css = fs.readFileSync(path.join(SRC, 'theme', 'type.css'), 'utf8');
+    const num = css.indexOf(".sr-num [class*='column-']");
+    const ctl = css.indexOf(".sr-numctl [class*='column-']");
+    expect(num, '.sr-num 규칙이 없어졌어요').toBeGreaterThan(-1);
+    expect(ctl, '.sr-numctl 규칙이 없어요').toBeGreaterThan(-1);
+    expect(
+      ctl,
+      '`.sr-numctl` 이 `.sr-num` 보다 **앞에** 있어요 — 명시도가 같아 뒤가 이깁니다.',
+    ).toBeGreaterThan(num);
+    expect(css.slice(ctl)).toMatch(/^\.sr-numctl \[class\*='column-'\]\s*\{[^}]*align-items:\s*stretch/);
+    const pm = stripComments(fs.readFileSync(path.join(SRC, 'pm', 'PortfolioPage.tsx'), 'utf8'));
+    expect(
+      pm,
+      '청산 칸에 컨트롤이 둘인데 `.sr-numctl` 이 없으면 둘이 겹칩니다.',
+    ).toMatch(/className="sr-numctl"/);
+  });
+
+  /**
    * 가로 행에 선 `Field` 는 폭을 받아야 한다 — **다만 이 가드는 그것을 못 잰다.**
    *
    * 규약은 `<Box width={N}><Field>` 이고 백테스트·전략 실험은 그렇게 서 있다.

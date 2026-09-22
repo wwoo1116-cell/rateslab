@@ -125,7 +125,11 @@ describe('③ 힌트 슬롯은 에러 전용 — 행이 어긋나지 않는다',
   });
 
   it('부가 설명은 `Field` 의 `help` 로 간다 — 힌트 슬롯이 아니다', () => {
-    expect(src).toMatch(/<Field label=\{label\} help=\{helperText\}>/);
+    /* 닫는 `>` 를 안 묶는다 [2026-09-23] — 이 시험이 지키는 것은 «설명이 어디로
+       가는가» 이지 `Field` 에 prop 이 몇 개인가가 아니다. `.sr-datefit`(CDS
+       `DateInput` 의 164px 바닥을 푸는 훅)이 붙으면서 이 줄이 거짓으로 깨졌다.
+       그 훅 자체는 `guards/control-fill.test.ts` 가 따로 잰다. */
+    expect(src).toMatch(/<Field label=\{label\} help=\{helperText\}/);
   });
 
   it('세 문장을 다 준다 — 안 주면 그 상황에서 아무 말도 안 한다', () => {
