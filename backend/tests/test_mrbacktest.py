@@ -430,7 +430,11 @@ def test_time_stop_fires_even_where_the_indicator_is_blank():
     창이 찬 뒤 값이 완전히 평평해지면 σ=0 이라 z 가 사라지고, 청산·손절은 둘 다
     z 를 보므로 그 구간에서는 **어떤 문도 열리지 않는다**. 타임스탑만 열린다.
     """
-    vals = [0.0, 1.0, 0.0, 1.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0]
+    # ⚠ **단조 증가**여야 한다 [수리 2026-09-22]. 종전 파형(0,1,0,1,…)은 진입
+    #   다음 봉에서 z 가 +1 → −1 로 뒤집혀서, 방향 청산 규칙에서는 거기서 나온다
+    #   (숏은 z ≤ exitZ 에서 나간다). 그러면 이 시험이 재려던 «z 가 빈 구간» 에
+    #   애초에 도달하지 않는다. 오르는 파형이면 숏이 z=+1 로 버티다 평평해진다.
+    vals = [0.0, 1.0, 2.0, 3.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0]
     dates = [f"D{i:02d}" for i in range(len(vals))]
     kw = dict(lookback=2, entry_z=1.0, exit_z=0.5, stop_z=99.0,
               cost_bp=0.0, notional=1.0)
@@ -483,8 +487,22 @@ def test_reverse_signal_is_an_exit_not_an_entry():
         assert r["open"]["direction"] == -1
 
 
-def test_reverse_exit_cuts_a_position_when_the_premise_flips():
-    """위로 나갔다 들어와 아래로 뚫으면, 그 봉에 나온다."""
+def test_reverse_exit_is_preempted_by_the_directional_exit():
+    """★역신호 문은 **방향 청산이 선점한다** [수리 2026-09-22].
+
+    종전 이름은 「위로 나갔다 들어와 아래로 뚫으면 그 봉에 나온다」였고, 그때는
+    참이었다 — 청산이 `|z| ≤ exitZ` 라서 z 가 반대 밴드까지 지나가도(|z| 큼)
+    청산문이 안 열렸고, 역신호가 그 자리를 받았다.
+
+    청산을 **교차**로 고치면(오너 2026-09-22) 그 자리가 사라진다: 숏이 반대 밴드
+    (z ≤ −entryZ)에 닿으려면 먼저 청산선(z ≤ exitZ)을 지나야 하고, 문의 우선순위가
+    손절 > 청산 > 역신호라 **청산이 항상 먼저 이름을 갖는다.**
+
+    프리셋의 `exitZ` 는 `[0.0, 0.5, 1.0]` 전부 비음수라(`mr.STRATEGY_PRESETS`)
+    이 선점은 **모든 고를 수 있는 칸에서** 일어난다. 즉 `reverse_exit` 는 지금
+    문법에서 도달 불가능한 문이다 — 지우는 것은 오너 결정이라 여기서는 그 사실만
+    못 박는다. 도달하려면 `exitZ < 0`(중심선을 지나서까지 들고 간다)이 필요하다.
+    """
     vals = ([10.0 + (0.1 if i % 2 else 0.0) for i in range(40)]
             + [12.0, 11.5, 11.0, 10.5, 10.2, 7.0])
     dates = [f"D{i:02d}" for i in range(len(vals))]
@@ -492,10 +510,15 @@ def test_reverse_exit_cuts_a_position_when_the_premise_flips():
               cost_bp=0.0, notional=1.0)
     off = bt.simulate(dates, vals, **kw)
     on = bt.simulate(dates, vals, **kw, reverse_exit=True)
-    assert off["open"] is not None, "역신호가 없으면 못 나온다"
-    assert any(t["exitReason"] == "reverse" for t in on["trades"])
-    cut = [t for t in on["trades"] if t["exitReason"] == "reverse"][0]
-    assert cut["direction"] == -1 and cut["exitZ"] < 0
+    # 역신호를 켜든 끄든 **같은 답**이다 — 청산이 먼저 나간다.
+    assert [t["exitReason"] for t in off["trades"]] == [t["exitReason"] for t in on["trades"]]
+    assert all(t["exitReason"] != "reverse" for t in on["trades"]), (
+        "청산선을 지나지 않고 반대 밴드에 닿을 수는 없다")
+    assert any(t["exitReason"] == "exit" for t in on["trades"]), "청산문은 열려야 한다"
+    # 그리고 **그 청산은 중심선을 지난 봉**이다 — exitZ=0 의 뜻이 그것이다
+    # [OWNER 2026-09-22 "0 sigma를 뚫고가면 청산하겠다는거야"].
+    got = [t for t in on["trades"] if t["exitReason"] == "exit"][0]
+    assert got["direction"] == -1 and got["exitZ"] is not None and got["exitZ"] <= 0.0
 
 
 def test_open_leg_can_be_counted_as_a_trade_without_paying_an_exit():
