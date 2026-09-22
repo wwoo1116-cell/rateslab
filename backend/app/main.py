@@ -903,7 +903,10 @@ def _mr_payload(window: int, k: float) -> dict:
             status_code=422,
             detail=f"알 수 없는 밴드 폭입니다: {k}σ ({', '.join(map(str, mr_mod.KS))})",
         )
-    return cached(f"mr-w{window}-k{k}", _dataset.data_key,
+    # 열쇠가 **두 다리를 다 알아야 한다** [전수조사 2026-09-22]. `data_key` 는
+    # `mkt_irs_close` 워터마크라 IRS 다리만 안다 — 국고가 움직이고 IRS 가 그대로인
+    # 날 BSS 가 캐시에서 옛 값으로 나온다.
+    return cached(f"mr-w{window}-k{k}", _mr_cache_key(),
                   lambda: mr_mod.build_mr(_dataset, window=window, k=k))
 
 
@@ -2018,6 +2021,10 @@ def _mr_leg(id: str, *, lookback: int, entryZ: float, exitZ: float, stopZ: float
             # 이 다리의 수가 «실가격 회계» 인가 «엔진 근사» 인가. 두 회계가
             # 한 화면에 섞이면 화면이 그 사실을 말해야 한다.
             "real": real,
+            # ★오늘의 **다리 레벨** [트레이더 2026-09-22]. `series_points` 가 이미
+            #   봉마다 싣고 있어서 마지막 봉만 들고 나온다 — 계획면이 SQL 을 다시
+            #   읽지 않게. 플라이는 `None` 이다(그쪽은 다리를 안 싣는다).
+            "legLevels": (pts[-1].get("legs") if pts else None),
             "dates": dates, "vals": vals, "disp": disp, "dirs": dirs,
             "carryKrw": carry_krw, "carryDefn": carry_defn,
             "carryLegs": carry_legs,
@@ -2627,7 +2634,8 @@ def _mr_plan_one(sid: str) -> dict:
     ⚠ 이 페이로드의 **모양**을 바꾸면 `cache.SCHEMA_VERSION` 을 올려야 한다
     (안 올리면 옛 모양이 계속 나간다 — 이 리포가 세 번 밟은 함정).
     """
-    return cached(mrp.cache_name(sid), _dataset.data_key,
+    # 계획면도 같은 이유로 두 출처를 다 본다(위 `_mr_payload` 의 그 주석).
+    return cached(mrp.cache_name(sid), _mr_cache_key(),
                   lambda: mrp.build_series(sid, leg_of=_mr_plan_leg,
                                            grid_of=_mr_plan_grid))
 
@@ -2716,7 +2724,7 @@ def mr_plan() -> dict:
     이력(`history`)은 여기서 뺀다 — 25계열 × 260봉이면 페이로드만 커지고, 화면은
     고른 줄 하나만 그린다(`/api/mr/plan/history/{id}` 가 그 몫).
     """
-    key = _dataset.data_key
+    key = _mr_cache_key()
     # 워커가 쓰는 동안 읽지 않는다(`_mr_plan_fail` 머리) — 한 번 베껴 쓰고 논다.
     with _mr_plan_lock:
         excluded = list(_mr_plan_excluded.values())
@@ -2745,7 +2753,7 @@ def mr_plan_history(series_id: str) -> dict:
     보드의 `/api/mr/history` 와 같은 이유로 갈라져 있다: 무겁고 행마다 필요하지
     않다. 아직 안 구워졌으면 404 이고 화면은 「이력을 불러오는 중이에요」로 둔다.
     """
-    got = peek(mrp.cache_name(series_id), _dataset.data_key)
+    got = peek(mrp.cache_name(series_id), _mr_cache_key())
     if got is None or "history" not in got:
         raise HTTPException(
             status_code=404,
@@ -3377,6 +3385,20 @@ def _paper_notional(kind: str, tenor: str, on: str, level: float,
     return dv01 / (pv01 * 1e-4)
 
 
+def _mr_cache_key() -> str:
+    """MR 계열(보드·계획면)의 캐시 열쇠 — **한 곳에서만 만든다**.
+
+    종전에는 다섯 자리가 각자 `_dataset.data_key` 를 썼다. 그건 `mkt_irs_close`
+    워터마크라 **IRS 다리만** 아는 열쇠다 — 국고가 움직이고 IRS 가 그대로인 날
+    BSS 가 캐시에서 옛 값으로 나온다. 2026-09-22 전수조사에서 국고 6M·9M·1.5Y 가
+    열흘 낡은 채로 화면에 서 있던 그 병의 캐시 쪽 얼굴이다.
+
+    한 곳으로 모으는 이유는 그날 얻은 교훈이다: 다섯이 각자 만들면 넷만 고치는
+    일이 생기고, 그 하나가 조용히 옛 값을 내준다(실제로 그렇게 밟았다).
+    """
+    return f"{_dataset.data_key}|{mrs.watermark()}"
+
+
 def _paper_sheet() -> dict:
     """한 장 굽기 — 등록한 것만 도는 물건이라 **동기**로 끝난다.
 
@@ -3418,7 +3440,7 @@ def paper_enroll(body: dict) -> dict:
     sid = str(body.get("id") or "")
     if not sid:
         raise HTTPException(status_code=400, detail="id 가 없어요")
-    got = peek(mrp.cache_name(sid), _dataset.data_key)
+    got = peek(mrp.cache_name(sid), _mr_cache_key())
     if got is None:
         raise HTTPException(
             status_code=409,
