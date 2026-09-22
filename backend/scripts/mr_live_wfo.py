@@ -29,7 +29,10 @@
                 수·보유기간이라, `close_open_at_end=True` 로 그것까지 센다.
                 타임스탑은 엔진의 `time_stop`.
   3 레짐 필터    `app/mrregime.vol_gate`(주) · `trend_gate`(부) → 엔진의 `gate`
-  4 단방향 제약  `reverse_exit=True` + `benchmarks()` 의 IR
+  4 단방향 제약  `allow_dirs=(-1,)` + `benchmarks()` 의 IR. **역신호 청산은
+                2026-09-23 에 빠졌다** — 청산이 교차가 된 뒤로 그 문이 열릴 수
+                없어서, 이 칸은 「기존 규칙 그대로」와 항등이었다(사다리에 서
+                있으면 없는 차이를 있는 것처럼 읽게 한다).
   5 동적 비용    `app/mrregime.cost_path` → 엔진의 `cost_bp_series`
 
 ## 알려진 근사
@@ -305,7 +308,7 @@ def run_slice(d: dict, lo: int, hi: int, p: dict, *, opt: dict,
         exit_z=p["exitZ"], stop_z=STOP_Z, cost_bp=opt["costBp"],
         notional=NOTIONAL, allow_dirs=(-1,), carry=carry, gate=gate,
         cost_bp_series=cost, time_stop=opt["timeStop"],
-        reverse_exit=opt["reverseExit"], close_open_at_end=True)
+        close_open_at_end=True)
 
 
 def pick(d: dict, lo: int, hi: int, opt: dict) -> dict | None:
@@ -366,8 +369,7 @@ def walk_forward(d: dict, opt: dict) -> dict:
 def options(**kw) -> dict:
     """한 판의 규칙. 사다리가 이 사전을 한 칸씩 켠다."""
     return {"costBp": kw.get("costBp", LEGACY_COST), "cost": kw.get("cost"),
-            "gate": kw.get("gate"), "timeStop": kw.get("timeStop"),
-            "reverseExit": kw.get("reverseExit", False)}
+            "gate": kw.get("gate"), "timeStop": kw.get("timeStop")}
 
 
 # ── 고정 파라미터 한 판 — 사다리의 대조군 ───────────────────────────────────
@@ -396,7 +398,6 @@ def gates_and_cost(d: dict) -> dict:
 
 
 def final_options(gc: dict, *, gate: str = "vol") -> dict:
-    """지시 다섯이 전부 켜진 규칙."""
+    """지시가 전부 켜진 규칙 — **넷이다**(역신호 청산은 2026-09-23 에 빠졌다)."""
     return options(cost=gc["cost"], timeStop=TIME_STOP,
-                   gate=gc["volGate"] if gate == "vol" else gc["trendGate"],
-                   reverseExit=True)
+                   gate=gc["volGate"] if gate == "vol" else gc["trendGate"])

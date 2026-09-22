@@ -134,7 +134,6 @@ def simulate(dates: list[str], values: list[float], *, lookback: int,
              entry_mode: str = "level",
              time_stop: int | None = None,
              cost_bp_series: list[float] | None = None,
-             reverse_exit: bool = False,
              close_open_at_end: bool = False,
              tradable_dv: list[float] | None = None,
              roll: dict[str, list] | None = None) -> dict[str, Any]:
@@ -178,9 +177,9 @@ def simulate(dates: list[str], values: list[float], *, lookback: int,
     바꿀 때마다 보유기간의 뜻이 같이 흔들려, 두 판을 나란히 놓고 비교할 수
     없게 된다. **한 번에 하나만 바꾼다.**
 
-    ## 실전 운용 쪽으로 여는 손잡이 넷 [OWNER 2026-08-28]
+    ## 실전 운용 쪽으로 여는 손잡이 셋 [OWNER 2026-08-28]
 
-    넷 다 **기본값이 꺼짐**이라, 안 주면 원본 PMS 산술 그대로다(적합성 벡터가
+    셋 다 **기본값이 꺼짐**이라, 안 주면 원본 PMS 산술 그대로다(적합성 벡터가
     그것을 잰다). 하나씩 켜서 무엇이 얼마를 바꾸는지 잴 수 있게 따로 둔다.
 
       `time_stop`        진입 후 N봉이 지나면 손익 불문 강제 청산. **z 를 안 본다** —
@@ -189,13 +188,18 @@ def simulate(dates: list[str], values: list[float], *, lookback: int,
       `cost_bp_series`   봉마다의 **편도** 비용(bp). 주면 `cost_bp` 를 이긴다.
                          z 가 문턱을 넘는 봉은 호가가 벌어져 있는 봉이므로,
                          평시 호가를 상수로 쓰면 진입 비용이 조직적으로 싸다.
-      `reverse_exit`     반대 방향 진입 신호를 **나가는 문**으로 쓴다. 이 데스크는
-                         그 방향으로 못 들어가므로(현물 대차매도 불가) 신호를
-                         버리거나 나가는 데 쓰거나 둘 중 하나인데, 버리면
-                         「전제가 뒤집혔다」는 사실까지 같이 버린다.
       `close_open_at_end` 표본 끝의 미청산 다리를 **거래로 센다**(청산 비용 없음,
                          `exitReason="open"`). 총손익·MDD 는 이미 미청산을 지고
                          있고, 빠져 있던 것은 승률·거래 수·보유기간이다.
+
+    넷째였던 `reverse_exit`(역신호 청산)은 **지웠다** [OWNER 2026-09-23]. 청산을
+    교차로 고친 뒤(2026-09-22) 그 문은 열릴 수가 없다 — 반대 밴드에 닿으려면 먼저
+    청산선을 지나야 하고, 문의 우선순위가 손절 > 청산 > 역신호라 **청산이 항상 먼저
+    이름을 갖는다**. 프리셋 때문이 아니라 **API 의 문 때문**에 모든 경로에서 그렇다:
+    `main._mr_check_knobs` 가 `0 ≤ exitZ` 를 강제하므로 도달에 필요한 `exitZ < 0`
+    은 422 로 막힌다. 진입 규칙 둘 다에서 그렇다 — `touch` 에서도 역신호가 서려면
+    직전 봉이 반대 밴드 밖이어야 하는데, 그 봉에서 이미 청산선을 지났으므로 포지션이
+    남아 있지 않다. 어휘에서도 지웠다(`exitReason` 에 `"reverse"` 가 없다).
 
     ## `carry` — 두 다리의 중간 현금흐름 [OWNER 2026-08-27 — "중간에 CF는
        상쇄되는건가?"]
@@ -377,13 +381,8 @@ def simulate(dates: list[str], values: list[float], *, lookback: int,
             # `exitZ = 0` 에서는 문이 처음으로 열린다.
             should_exit = zi is not None and (
                 zi >= -exit_z if position > 0 else zi <= exit_z)
-            # 역신호 = 지금 무포지션이었다면 **반대 방향**으로 들어갔을 봉.
-            # 이 데스크는 그 방향으로 못 들어가므로(현물 대차매도 불가) 진입에
-            # 쓸 수 없다. 대신 «전제가 뒤집혔다» 는 사실로 읽고 나온다.
-            rev = _entry_signal(z, i, entry_z, entry_mode) if reverse_exit else None
-            should_rev = rev is not None and rev != position
             should_time = time_stop is not None and (i - entry_idx) >= time_stop
-            if should_stop or should_exit or should_rev or should_time:
+            if should_stop or should_exit or should_time:
                 exit_cost = cost_at(i)
                 daily_pnl -= exit_cost
                 trade_pnl -= exit_cost
@@ -418,7 +417,7 @@ def simulate(dates: list[str], values: list[float], *, lookback: int,
                                if entry_run else None,
                     "peakZ": entry_run[1] if entry_run else None,
                     "exitReason": ("stop" if should_stop else "exit" if should_exit
-                                   else "reverse" if should_rev else "time"),
+                                   else "time"),
                 })
                 bar_trade = trade_pnl
                 position = 0

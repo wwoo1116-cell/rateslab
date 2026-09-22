@@ -477,49 +477,51 @@ def test_breakeven_multiple_is_exact_for_a_cost_path():
     assert abs(scaled["summary"]["totalPnl"]) < 1e-6 * PIN["notional"]
 
 
-def test_reverse_signal_is_an_exit_not_an_entry():
-    """반대 방향 신호는 **나가는 문**일 뿐, 그 방향으로 들어가지는 않는다."""
+def test_blocked_direction_never_becomes_a_trade():
+    """막힌 방향의 신호는 **거래가 되지 않는다** — 세어서 돌려줄 뿐이다.
+
+    종전 이름은 「반대 방향 신호는 나가는 문일 뿐」이었고 `reverse_exit=True` 를
+    같이 넘겼다. 그 문은 2026-09-23 에 엔진에서 빠졌지만(도달 불가) **이 시험이
+    재던 것은 그 문이 아니라 `allow_dirs` 였다** — 현물 대차매도가 안 되는
+    데스크에서 +1 다리가 조용히 열리면 백테스트가 대차료 0 으로 늘 이긴다.
+    """
     dates, vals = _fixture()
-    r = bt.simulate(dates, vals, **PIN, allow_dirs=(-1,), reverse_exit=True)
+    r = bt.simulate(dates, vals, **PIN, allow_dirs=(-1,))
     assert r["trades"], "거래가 있어야 검정이 성립한다"
     assert all(t["direction"] == -1 for t in r["trades"])
     if r["open"]:
         assert r["open"]["direction"] == -1
 
 
-def test_reverse_exit_is_preempted_by_the_directional_exit():
-    """★역신호 문은 **방향 청산이 선점한다** [수리 2026-09-22].
+def test_there_is_no_reverse_exit_door():
+    """★역신호 문은 **지웠다** [OWNER 2026-09-23] — 도달할 수가 없어서다.
 
-    종전 이름은 「위로 나갔다 들어와 아래로 뚫으면 그 봉에 나온다」였고, 그때는
-    참이었다 — 청산이 `|z| ≤ exitZ` 라서 z 가 반대 밴드까지 지나가도(|z| 큼)
-    청산문이 안 열렸고, 역신호가 그 자리를 받았다.
+    2026-09-22 에 청산을 **교차**로 고친 뒤(`z ≥ −exitZ` / `z ≤ exitZ`) 반대
+    밴드에 닿으려면 먼저 청산선을 지나야 하고, 문의 우선순위가 손절 > 청산 >
+    역신호라 **청산이 항상 먼저 이름을 갖는다.**
 
-    청산을 **교차**로 고치면(오너 2026-09-22) 그 자리가 사라진다: 숏이 반대 밴드
-    (z ≤ −entryZ)에 닿으려면 먼저 청산선(z ≤ exitZ)을 지나야 하고, 문의 우선순위가
-    손절 > 청산 > 역신호라 **청산이 항상 먼저 이름을 갖는다.**
+    프리셋 탓이 아니다 — `main._mr_check_knobs` 가 `0 ≤ exitZ` 를 강제하므로
+    도달에 필요한 `exitZ < 0` 은 **모든 경로에서 422** 다. 그래서 지웠다.
 
-    프리셋의 `exitZ` 는 `[0.0, 0.5, 1.0]` 전부 비음수라(`mr.STRATEGY_PRESETS`)
-    이 선점은 **모든 고를 수 있는 칸에서** 일어난다. 즉 `reverse_exit` 는 지금
-    문법에서 도달 불가능한 문이다 — 지우는 것은 오너 결정이라 여기서는 그 사실만
-    못 박는다. 도달하려면 `exitZ < 0`(중심선을 지나서까지 들고 간다)이 필요하다.
+    이 시험이 지키는 것 둘: 엔진이 그 인자를 더는 받지 않는다는 것과, 그 자리의
+    봉이 「역신호」가 아니라 **「청산」으로** 이름을 갖는다는 것이다.
     """
     vals = ([10.0 + (0.1 if i % 2 else 0.0) for i in range(40)]
             + [12.0, 11.5, 11.0, 10.5, 10.2, 7.0])
     dates = [f"D{i:02d}" for i in range(len(vals))]
     kw = dict(lookback=20, entry_z=1.5, exit_z=0.0, stop_z=99.0,
               cost_bp=0.0, notional=1.0)
-    off = bt.simulate(dates, vals, **kw)
-    on = bt.simulate(dates, vals, **kw, reverse_exit=True)
-    # 역신호를 켜든 끄든 **같은 답**이다 — 청산이 먼저 나간다.
-    assert [t["exitReason"] for t in off["trades"]] == [t["exitReason"] for t in on["trades"]]
-    assert all(t["exitReason"] != "reverse" for t in on["trades"]), (
-        "청산선을 지나지 않고 반대 밴드에 닿을 수는 없다")
-    assert any(t["exitReason"] == "exit" for t in on["trades"]), "청산문은 열려야 한다"
+    r = bt.simulate(dates, vals, **kw)
+    assert all(t["exitReason"] != "reverse" for t in r["trades"]), (
+        "「역신호」는 어휘에서 빠졌다")
+    assert any(t["exitReason"] == "exit" for t in r["trades"]), "청산문은 열려야 한다"
     # 그리고 **그 청산은 중심선을 지난 봉**이다 — exitZ=0 의 뜻이 그것이다
     # [OWNER 2026-09-22 "0 sigma를 뚫고가면 청산하겠다는거야"].
-    got = [t for t in on["trades"] if t["exitReason"] == "exit"][0]
+    got = [t for t in r["trades"] if t["exitReason"] == "exit"][0]
     assert got["direction"] == -1 and got["exitZ"] is not None and got["exitZ"] <= 0.0
-
+    # 인자 자체가 없다 — 남아 있으면 「껐다 켰다」 할 수 있다는 뜻이 된다.
+    with pytest.raises(TypeError):
+        bt.simulate(dates, vals, **kw, reverse_exit=True)  # type: ignore[call-arg]
 
 def test_open_leg_can_be_counted_as_a_trade_without_paying_an_exit():
     """미청산을 거래로 세면 승률·거래 수·보유기간이 달라지고, 총손익은 안 바뀐다.

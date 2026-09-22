@@ -245,8 +245,6 @@ export interface MrStrategyParams {
   timeStop: number;
   costModel: MrCostModel;
   regime: MrRegime;
-  /** 반대 방향 진입 신호를 **나가는 문**으로 쓴다(그 방향으로 들어가지는 않는다). */
-  reverseExit: boolean;
   /** 표본 끝의 미청산 다리를 거래로 센다 — 승률·거래 수·보유기간에 든다.
    *  총손익·MDD 는 원래부터 미청산을 지고 있어서 안 바뀐다. */
   countOpen: boolean;
@@ -282,7 +280,6 @@ export const MR_STRATEGY_DEFAULTS: MrStrategyParams = {
   timeStop: 0,
   costModel: 'flat',
   regime: 'none',
-  reverseExit: false,
   countOpen: false,
 };
 
@@ -554,9 +551,11 @@ export interface MrStrategyTrade {
   entryV: number;
   exitV: number;
   pnl: number;
-  /** 청산 사유. 우선순위가 곧 이름이다 — 손절 > 청산 > 역신호 > 타임스탑.
-   *  `open` 은 표본 끝의 미청산 다리를 거래로 셀 때만 나온다(청산 비용 없음). */
-  why: 'exit' | 'stop' | 'reverse' | 'time' | 'open';
+  /** 청산 사유. 우선순위가 곧 이름이다 — 손절 > 청산 > 타임스탑.
+   *  `open` 은 표본 끝의 미청산 다리를 거래로 셀 때만 나온다(청산 비용 없음).
+   *  「역신호」는 2026-09-23 에 어휘에서 빠졌다 — 청산이 교차가 된 뒤로 그 문이
+   *  열릴 수 없다(`mrbacktest.simulate` 머리의 그 문단). */
+  why: 'exit' | 'stop' | 'time' | 'open';
   /** 대사 분해 — 실가격 회계에서는 **다섯**이 `pnl` 로 닫힌다
    *  (`평가 + 캐리 + 롤다운 + 조달 + 비용`), 엔진 근사에서는 셋이다
    *  (`평가 + 캐리 + 비용`). 화면이 그 항등을 보여 준다. */
@@ -1101,7 +1100,6 @@ function strategyQuery(p: MrStrategyParams): URLSearchParams {
     timeStop: String(p.timeStop),
     costModel: p.costModel,
     regime: p.regime,
-    reverseExit: String(p.reverseExit),
     countOpen: String(p.countOpen),
   });
 }

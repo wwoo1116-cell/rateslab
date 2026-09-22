@@ -229,7 +229,7 @@ def main() -> int:
         mr = _mr_leg("FUT-KTB3", spec=spec, lookback=60, entryZ=2.0, exitZ=0.5,
                      stopZ=3.5, costBp=0.5, notional=1_000_000.0, carry=True,
                      entryMode="level", timeStop=0, costModel="flat", regime="none",
-                     reverseExit=False, countOpen=False)
+                     countOpen=False)
         mrd = {d: p["dailyPnl"] for d, p in zip(mr["dates"], mr["r"]["points"])}
         cd = {p["t"]: p["dailyPnl"] for p in book["points"]}
         common = sorted(set(mrd) & set(cd))

@@ -80,7 +80,6 @@ export function mrKnobsStale(p: MrStrategyParams, k: MrStrategyParams): boolean 
     p.timeStop !== k.timeStop ||
     p.costModel !== k.costModel ||
     p.regime !== k.regime ||
-    p.reverseExit !== k.reverseExit ||
     p.countOpen !== k.countOpen
   );
 }
@@ -346,11 +345,19 @@ export function MrKnobBar({
           축에서 나빠졌다(`docs/MR_LANE_STATE.md` §긴 표본 판정 ①).
 
           **엔진은 그대로다** — 서버 파라미터(`timeStop`·`regime`·`costModel`·
-          `reverseExit`·`countOpen`)도, 그 계약(`MrStrategyParams`)도, 기본값
-          (전부 꺼짐)도 안 건드렸다. 화면에서 고르는 손잡이만 없앤 것이라
-          되살리려면 이 주석 자리에 줄을 다시 세우면 된다(git 이력: 이 줄을
-          지운 커밋 하나). 기각된 노브를 화면에 두면 «이걸 켜 보면 좋아질까»
-          라는 질문을 화면이 계속 부른다 — 답은 이미 측정돼 있다. */}
+          `countOpen`)도, 그 계약(`MrStrategyParams`)도, 기본값(전부 꺼짐)도
+          안 건드렸다. 화면에서 고르는 손잡이만 없앤 것이라 되살리려면 이 주석
+          자리에 줄을 다시 세우면 된다(git 이력: 이 줄을 지운 커밋 하나).
+          기각된 노브를 화면에 두면 «이걸 켜 보면 좋아질까» 라는 질문을 화면이
+          계속 부른다 — 답은 이미 측정돼 있다.
+
+          ★다섯 중 **`reverseExit`(역신호 청산)만 엔진에서도 지웠다**
+          [OWNER 2026-09-23]. 나머지 넷과 처지가 다르다: 넷은 «켜면 나빠지더라»
+          라 내린 것이고 이건 **켤 수가 없다** — 청산이 교차가 된 뒤로
+          (2026-09-22) 반대 밴드에 닿으려면 먼저 청산선을 지나야 하고, 문의
+          우선순위가 손절 > 청산 > 역신호라 청산이 항상 먼저 이름을 갖는다.
+          프리셋 탓이 아니라 `_mr_check_knobs` 의 `0 ≤ exitZ` 탓이라 **모든
+          경로**에서 그렇다. 되살릴 줄이 없으므로 여기 이름도 없다. */}
     </VStack>
   );
 }

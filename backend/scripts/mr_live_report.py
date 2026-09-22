@@ -165,9 +165,12 @@ def headline(sid: str, deep: bool = True) -> dict:
             ("+ 타임스탑만", W.options(timeStop=W.TIME_STOP)),
             ("+ 레짐필터(변동성)만", W.options(gate=gc["volGate"])),
             ("+ 레짐필터(추세)만", W.options(gate=gc["trendGate"])),
-            ("+ 역신호청산만", W.options(reverseExit=True)),
-            ("다섯 전부 · 변동성", W.final_options(gc)),
-            ("다섯 전부 · 추세", W.final_options(gc, gate="trend")),
+            # 「+ 역신호청산만」은 2026-09-23 에 뺐다 — 청산이 교차가 된 뒤로
+            # 그 문이 못 열려 **「기존 규칙 그대로」와 같은 수**였다. 같은 수가
+            # 다른 이름으로 두 줄 서면 읽는 사람은 차이가 없다는 것이 아니라
+            # 차이를 못 봤다고 읽는다.
+            ("넷 전부 · 변동성", W.final_options(gc)),
+            ("넷 전부 · 추세", W.final_options(gc, gate="trend")),
         ]:
             print(f"{name:<26}{fm(W.fixed_run(d, lo, hi, LEGACY, opt)['stats'])}")
 

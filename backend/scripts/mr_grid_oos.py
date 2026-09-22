@@ -41,7 +41,7 @@ from app.main import MR_ENTRY_MODES_ALL, _mr_leg
 
 KN = dict(lookback=60, entryZ=2.0, exitZ=0.5, stopZ=3.5, costBp=0.5,
           notional=1_000_000.0, carry=True, entryMode="level", timeStop=0,
-          costModel="flat", regime="none", reverseExit=False, countOpen=False)
+          costModel="flat", regime="none", countOpen=False)
 
 #: 순위를 매기는 축. 화면 기본과 같다(Calmar). 축을 바꾸면 결론이 바뀌는지도 본다.
 AXES = ("calmar", "sortino", "martin", "totalPnl")
@@ -91,7 +91,7 @@ def _grid(legs, dates, at, half):
                                 allow_dirs=tuple(leg["dirs"]["allowed"]),
                                 carry=leg["carryKrw"], entry_mode=md, gate=leg["gate"],
                                 time_stop=None, cost_bp_series=leg["costSeries"],
-                                reverse_exit=False, close_open_at_end=False,
+                                close_open_at_end=False,
                                 tradable_dv=leg["tradable"], roll=rolls[leg["id"]])
                             for j, pt in enumerate(r["points"]):
                                 i = at[leg["dates"][j]]

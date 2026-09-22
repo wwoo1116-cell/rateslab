@@ -225,11 +225,16 @@ describe('칸 폭은 실측이고 죽은 폭이 없다', () => {
     /* 되살릴 자리와 이유가 주석에 있다. */
     expect(knobRaw).toMatch(/화면에서 내렸다/);
     expect(knobRaw).toMatch(/엔진은 그대로다/);
-    /* 계약·기본값은 안 건드렸다 — 서버가 받는 노브는 그대로다. */
+    /* 계약·기본값은 안 건드렸다 — 서버가 받는 노브는 그대로다.
+       **`reverseExit` 만 빠졌다** [2026-09-23]: 화면에서 내린 것이 아니라 엔진에서
+       지운 것이라, 계약에 남아 있으면 「서버가 받는다」는 이 시험의 말이 거짓이 된다.
+       청산이 교차가 된 뒤로(2026-09-22) 그 문은 어떤 프리셋에서도 안 열린다 —
+       `_mr_check_knobs` 가 `0 ≤ exitZ` 를 강제하므로 도달 조건 `exitZ < 0` 이 422 다. */
     const api = src('src/mr/api.ts');
-    for (const k of ['timeStop', 'regime', 'costModel', 'reverseExit', 'countOpen']) {
+    for (const k of ['timeStop', 'regime', 'costModel', 'countOpen']) {
       expect(api, k).toMatch(new RegExp(`${k}:`));
     }
+    expect(api, 'reverseExit').not.toMatch(/reverseExit/);
   });
 
   it('비용 칸은 알약 셋 + 자유 입력을 담고, 프리셋이 갈리면 폭도 따라간다', () => {

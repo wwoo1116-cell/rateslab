@@ -21,12 +21,11 @@ import { MR_ENTRY_MODES, type MrPerf, type MrSplit, type MrStrategyParams,
   type MrStrategyTrade } from './api';
 
 /** 청산 사유의 우리말 — 서버의 어휘를 화면에서 **한 번만** 옮긴다.
- *  우선순위가 곧 이름이다: 손절 > 청산 > 역신호 > 타임스탑. `미청산` 은 판정이
+ *  우선순위가 곧 이름이다: 손절 > 청산 > 타임스탑. `미청산` 은 판정이
  *  아니라 상태다(팔지 않았고, 그래서 청산 비용도 안 물었다). */
 export const WHY_WORD: Record<MrStrategyTrade['why'], string> = {
   stop: '손절',
   exit: '청산',
-  reverse: '역신호',
   time: '타임스탑',
   open: '미청산',
 };

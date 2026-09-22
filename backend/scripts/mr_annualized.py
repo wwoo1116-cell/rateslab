@@ -45,7 +45,7 @@ from app import mrcarry as mrc
 
 KN = dict(lookback=60, entryZ=2.0, exitZ=0.5, stopZ=3.5, costBp=0.5,
           notional=1_000_000.0, carry=True, entryMode="level", timeStop=0,
-          costModel="flat", regime="none", reverseExit=False, countOpen=False)
+          costModel="flat", regime="none", countOpen=False)
 
 BARS_PER_YEAR = 252
 

@@ -276,9 +276,13 @@ function entryCount(run: MrStrategyRun): number {
  *
  * 종전에는 청산과 손절만 셌다. 나가는 문이 넷으로 늘어난 뒤에도 그대로 두었더니
  * 「청산 10 · 손절 0」이 서 있는데 거래는 14였다 — 타임스탑 2·역신호 1·미청산 1이
- * 화면에서 사라져 있었다. 사유를 하나라도 빠뜨리면 그 줄은 거짓이 된다. */
+ * 화면에서 사라져 있었다. 사유를 하나라도 빠뜨리면 그 줄은 거짓이 된다.
+ *
+ * 그 실측의 「역신호 1」은 **청산이 교차가 되기 전**(2026-09-22)의 수다. 지금
+ * 문법에서는 그 문이 열릴 수 없어 사유에서 빠졌다 — 넷이 아니라 셋 + 미청산이다
+ * [2026-09-23]. 규칙은 안 바뀐다: 서는 사유를 하나라도 빠뜨리면 그 줄은 거짓이다. */
 function exitTally(run: MrStrategyRun): string {
-  const order: MrStrategyTrade['why'][] = ['exit', 'stop', 'time', 'reverse', 'open'];
+  const order: MrStrategyTrade['why'][] = ['exit', 'stop', 'time', 'open'];
   const n = (w: MrStrategyTrade['why']) => run.trades.filter((t) => t.why === w).length;
   const parts = order.filter((w) => n(w) > 0).map((w) => `${WHY_WORD[w]} ${n(w)}`);
   return parts.length ? parts.join(' · ') : '거래 없음';

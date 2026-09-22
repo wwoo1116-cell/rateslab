@@ -939,7 +939,6 @@ def _mr_neighbors(dates: list[str], vals: list[float], base: dict,
                   gate: list[bool] | None = None,
                   time_stop: int | None = None,
                   cost_bp_series: list[float] | None = None,
-                  reverse_exit: bool = False,
                   close_open_at_end: bool = False) -> list[dict]:
     """노브를 한 칸씩 옮겼을 때의 결과 — 「이 칸이 얼마나 튼튼한가」.
 
@@ -977,7 +976,6 @@ def _mr_neighbors(dates: list[str], vals: list[float], base: dict,
                               notional=p["notional"], allow_dirs=allow,
                               carry=carry, entry_mode=entry_mode, gate=gate,
                               time_stop=time_stop, cost_bp_series=cost_bp_series,
-                              reverse_exit=reverse_exit,
                               close_open_at_end=close_open_at_end)
             sm = r["summary"]
             cells.append({
@@ -1011,7 +1009,6 @@ def _mr_optimize(dates: list[str], vals: list[float], base: dict,
                  gate: list[bool] | None = None,
                  time_stop: int | None = None,
                  cost_bp_series: list[float] | None = None,
-                 reverse_exit: bool = False,
                  close_open_at_end: bool = False,
                  tradable_dv: list[float] | None = None) -> dict:
     """**근사 최적화 격자** — 다섯 노브의 프리셋을 전부 돌린 결과
@@ -1080,7 +1077,6 @@ def _mr_optimize(dates: list[str], vals: list[float], base: dict,
                             notional=base["notional"], allow_dirs=allow,
                             carry=carry, entry_mode=md, gate=gate,
                             time_stop=time_stop, cost_bp_series=cost_bp_series,
-                            reverse_exit=reverse_exit,
                             close_open_at_end=close_open_at_end,
                             tradable_dv=tradable_dv, roll=rs)
                         m = mrm.score(dates, r["points"], r["trades"], start,
@@ -1113,7 +1109,7 @@ def _mr_optimize(dates: list[str], vals: list[float], base: dict,
 
 
 def _mr_book_optimize(legs: list[dict], base: dict, *, span: str,
-                      time_stop: int | None, reverse_exit: bool,
+                      time_stop: int | None,
                       close_open_at_end: bool) -> dict:
     """**통합 장부의 근사 최적화 격자** [OWNER 2026-09-07 — "통합 장부에도
     마찬가지로 적용해줘"].
@@ -1192,7 +1188,6 @@ def _mr_book_optimize(legs: list[dict], base: dict, *, span: str,
                                 carry=leg["carryKrw"], entry_mode=md,
                                 gate=leg["gate"], time_stop=time_stop,
                                 cost_bp_series=leg["costSeries"],
-                                reverse_exit=reverse_exit,
                                 close_open_at_end=close_open_at_end,
                                 tradable_dv=leg["tradable"],
                                 roll=rolls[leg["id"]])
@@ -1885,7 +1880,7 @@ def _mr_reconcilable(pts: list[dict], kind: str) -> list[dict]:
 
 def _mr_leg(id: str, *, lookback: int, entryZ: float, exitZ: float, stopZ: float,
             costBp: float, notional: float, carry: bool, entryMode: str,
-            timeStop: int, costModel: str, regime: str, reverseExit: bool,
+            timeStop: int, costModel: str, regime: str,
             countOpen: bool, spec: funding.FundingSpec,
             accounting: bool = True) -> dict:
     """한 계열의 **준비 + 시뮬** — 낱개 창과 통합 장부가 같은 것을 쓴다.
@@ -2001,7 +1996,6 @@ def _mr_leg(id: str, *, lookback: int, entryZ: float, exitZ: float, stopZ: float
                       gate=gate,
                       time_stop=timeStop or None,
                       cost_bp_series=cost_series,
-                      reverse_exit=reverseExit,
                       close_open_at_end=countOpen,
                       tradable_dv=tradable)
 
@@ -2174,7 +2168,7 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
                 costBp: float = 0.5, notional: float = 1_000_000.0,
                 carry: bool = True, entryMode: str = "level",
                 timeStop: int = 0, costModel: str = "flat",
-                regime: str = "none", reverseExit: bool = False,
+                regime: str = "none",
                 countOpen: bool = False,
                 fundingBasis: str = funding.DEFAULT_BASIS,
                 fundingSpreadBp: float = funding.DEFAULT_SPREAD_BP) -> dict:
@@ -2198,7 +2192,7 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
     leg = _mr_leg(id, lookback=lookback, entryZ=entryZ, exitZ=exitZ, stopZ=stopZ,
                   costBp=costBp, notional=notional, carry=carry,
                   entryMode=entryMode, timeStop=timeStop, costModel=costModel,
-                  regime=regime, reverseExit=reverseExit, countOpen=countOpen,
+                  regime=regime, countOpen=countOpen,
                   spec=spec)
     dates, vals, disp = leg["dates"], leg["vals"], leg["disp"]
     tradable, pts = leg["tradable"], leg["pts"]
@@ -2388,7 +2382,7 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
                    "exitZ": exitZ, "stopZ": stopZ, "costBp": costBp,
                    "notional": notional, "entryMode": entryMode,
                    "timeStop": timeStop, "costModel": costModel,
-                   "regime": regime, "reverseExit": reverseExit,
+                   "regime": regime,
                    "countOpen": countOpen},
         # 명목(₩/bp)의 액면 환산 — 위 주석의 근사. 거래 표·대사표가 「이 손익을
         # 내려면 실제로 몇 억을 걸어야 했나」를 적을 수 있게 낸다.
@@ -2492,7 +2486,7 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
              "stopZ": stopZ, "costBp": costBp, "notional": notional},
             tuple(dirs["allowed"]), carry=carry_krw, entry_mode=entryMode,
             gate=gate, time_stop=timeStop or None, cost_bp_series=cost_series,
-            reverse_exit=reverseExit, close_open_at_end=countOpen),
+            close_open_at_end=countOpen),
         # ── 구간별 성과 [OWNER 2026-09-04 — "지난 1년, 지난 1분기, 지난
         #    1개월을 전역 설정값으로 두고 이를 조정하면 성과도 바뀌게"] ──────
         # 네 벌을 **한 번에** 낸다. 엔진은 전체 표본에서 한 번만 돌고(룩백
@@ -2534,7 +2528,7 @@ def mr_optimize(id: str, span: str = "all",
                 costBp: float = 0.5, notional: float = 1_000_000.0,
                 carry: bool = True, entryMode: str = "level",
                 timeStop: int = 0, costModel: str = "flat",
-                regime: str = "none", reverseExit: bool = False,
+                regime: str = "none",
                 countOpen: bool = False,
                 fundingBasis: str = funding.DEFAULT_BASIS,
                 fundingSpreadBp: float = funding.DEFAULT_SPREAD_BP) -> dict:
@@ -2561,7 +2555,7 @@ def mr_optimize(id: str, span: str = "all",
     leg = _mr_leg(id, lookback=lookback, entryZ=entryZ, exitZ=exitZ, stopZ=stopZ,
                   costBp=costBp, notional=notional, carry=carry,
                   entryMode=entryMode, timeStop=timeStop, costModel=costModel,
-                  regime=regime, reverseExit=reverseExit, countOpen=countOpen,
+                  regime=regime, countOpen=countOpen,
                   spec=spec)
     got = _mr_optimize(
         leg["dates"], leg["vals"],
@@ -2570,7 +2564,7 @@ def mr_optimize(id: str, span: str = "all",
         tuple(leg["dirs"]["allowed"]), span=span,
         carry=leg["carryKrw"], gate=leg["gate"],
         time_stop=timeStop or None, cost_bp_series=leg["costSeries"],
-        reverse_exit=reverseExit, close_open_at_end=countOpen,
+        close_open_at_end=countOpen,
         tradable_dv=leg["tradable"])
     # 이 표의 수는 **엔진 근사**다 — 머리 카드가 실가격이면 둘이 다르다.
     # 화면이 그 사실을 적을 수 있게 같이 보낸다(`MrStrategyRun.real` 과 같은 값).
@@ -2615,7 +2609,7 @@ def _mr_plan_leg(sid: str, knobs: dict, *, accounting: bool = True) -> dict:
         exitZ=float(knobs["exitZ"]), stopZ=float(knobs["stopZ"]),
         costBp=mrp.COST_BP, notional=mrp.NOTIONAL, carry=True,
         entryMode=str(knobs["entryMode"]), timeStop=0, costModel="flat",
-        regime="none", reverseExit=False, countOpen=False,
+        regime="none", countOpen=False,
         spec=_funding_spec(funding.DEFAULT_BASIS, funding.DEFAULT_SPREAD_BP),
         accounting=accounting)
 
@@ -2935,7 +2929,7 @@ def mr_book_optimize(span: str = "all",
                      costBp: float = 0.5, notional: float = 1_000_000.0,
                      carry: bool = True, entryMode: str = "level",
                      timeStop: int = 0, costModel: str = "flat",
-                     regime: str = "none", reverseExit: bool = False,
+                     regime: str = "none",
                      countOpen: bool = False,
                      fundingBasis: str = funding.DEFAULT_BASIS,
                      fundingSpreadBp: float = funding.DEFAULT_SPREAD_BP) -> dict:
@@ -2961,7 +2955,7 @@ def mr_book_optimize(span: str = "all",
                 sid, lookback=lookback, entryZ=entryZ, exitZ=exitZ, stopZ=stopZ,
                 costBp=costBp, notional=notional, carry=carry,
                 entryMode=entryMode, timeStop=timeStop, costModel=costModel,
-                regime=regime, reverseExit=reverseExit, countOpen=countOpen,
+                regime=regime, countOpen=countOpen,
                 spec=spec))
         except (HTTPException, KeyError, ValueError) as exc:
             detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
@@ -2974,7 +2968,7 @@ def mr_book_optimize(span: str = "all",
         legs,
         {"lookback": lookback, "entryZ": entryZ, "exitZ": exitZ, "stopZ": stopZ,
          "costBp": costBp, "notional": notional, "entryMode": entryMode},
-        span=span, time_stop=timeStop or None, reverse_exit=reverseExit,
+        span=span, time_stop=timeStop or None,
         close_open_at_end=countOpen)
     # 격자는 **엔진 근사**다(낱개와 같은 계약) — 머리 카드가 실가격이면 둘이
     # 다르고, 화면이 그 사실을 적어야 한다.
@@ -2989,7 +2983,7 @@ def mr_book(lookback: int = 60, entryZ: float = 2.0,
             costBp: float = 0.5, notional: float = 1_000_000.0,
             carry: bool = True, entryMode: str = "level",
             timeStop: int = 0, costModel: str = "flat",
-            regime: str = "none", reverseExit: bool = False,
+            regime: str = "none",
             countOpen: bool = False,
             fundingBasis: str = funding.DEFAULT_BASIS,
             fundingSpreadBp: float = funding.DEFAULT_SPREAD_BP) -> dict:
@@ -3019,7 +3013,7 @@ def mr_book(lookback: int = 60, entryZ: float = 2.0,
                 sid, lookback=lookback, entryZ=entryZ, exitZ=exitZ, stopZ=stopZ,
                 costBp=costBp, notional=notional, carry=carry,
                 entryMode=entryMode, timeStop=timeStop, costModel=costModel,
-                regime=regime, reverseExit=reverseExit, countOpen=countOpen,
+                regime=regime, countOpen=countOpen,
                 spec=spec))
         except (HTTPException, KeyError, ValueError) as exc:
             # 못 선 만기는 **조용히 빠지지 않는다**(보드의 exclusions 문법).
@@ -3047,7 +3041,7 @@ def mr_book(lookback: int = 60, entryZ: float = 2.0,
                    "exitZ": exitZ, "stopZ": stopZ, "costBp": costBp,
                    "notional": notional, "entryMode": entryMode,
                    "timeStop": timeStop, "costModel": costModel,
-                   "regime": regime, "reverseExit": reverseExit,
+                   "regime": regime,
                    "countOpen": countOpen},
         # 방향은 아홉이 같다(전부 BSS) — 낱개 창과 같은 사전을 쓰고, 막힌 진입
         # 수만 아홉을 더한 것이다.
