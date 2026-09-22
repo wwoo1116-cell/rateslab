@@ -81,10 +81,15 @@ const SIDE_WORD: Record<string, string> = {
  *  ⚠ 부호는 **낱말이 아니라 `rateSign`** 이 진다 — 「페이」와 「선물 매도」가 같은
  *  쪽이고 「리시브」와 「매수」가 같은 쪽이다. 낱말로 색을 칠하면 계기마다 규약을
  *  다시 적게 되고, 그게 이 리포가 반복해서 밟은 자리다. */
-function PositionTable({ legs, asof, busy, onClose }: {
-  legs: PaperPositionLeg[]; asof: string | null; busy: boolean;
+function PositionTable({ legs, busy, onClose }: {
+  legs: PaperPositionLeg[]; busy: boolean;
   onClose: (n: number, level: number) => void;
 }) {
+  /* 줄마다의 청산 레벨 입력 — 다리 번호로 잡는다(행 순서는 정렬이 바꾼다).
+     비워 두면 마지막 종가로 떨어진다(그 사실은 머리의 뜻풀이와 플레이스홀더가
+     같이 말한다) — 그래야 「종가로 닫기」라는 종전 동작이 안 사라진다. */
+  const [exitLv, setExitLv] = useState<Record<number, string>>({});
+
   if (legs.length === 0) {
     return (
       <Box paddingX={2} paddingBottom={2}>
@@ -126,7 +131,8 @@ function PositionTable({ legs, asof, busy, onClose }: {
               <Text font="caption" as="span" color="fgMuted">손익</Text>
             </TableCell>
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
-              <Text font="caption" as="span" color="fgMuted">청산</Text>
+              <ThHelp label="청산"
+                help="청산 레벨도 내가 적어요 — 진입을 종가로 안 매겼으니까요. 비워 두면 마지막 종가로 닫아요. 청산일은 오늘이에요." />
             </TableCell>
           </TableRow>
         </TableHeader>
@@ -201,19 +207,42 @@ function PositionTable({ legs, asof, busy, onClose }: {
                 </VStack>
               </TableCell>
               <TableCell className="sr-num" justifyContent="flex-end">
-                {l.open && l.mark != null ? (
-                  /* ★버튼이 **어느 날 종가로** 닫는지 말한다 [OWNER 2026-09-22].
-                     「지금 레벨」이라고만 적혀 있었는데 그 값은 마지막 **종가**라,
-                     종가가 하루 늦은 날에는 오늘 청산을 어제 레벨로 적으면서
-                     화면은 「지금」이라고 말하고 있었다. 청산일은 오늘이다.
-                     ▶내가 적는 청산 레벨 칸은 아직 없다 — 오너 결정. */
-                  <button type="button" className="sr-pillbtn" disabled={busy || !asof}
-                    onClick={() => onClose(l.n, l.mark as number)}>
-                    {l.markT ? `${l.markT} 종가로 닫기` : '지금 레벨로 닫기'}
-                  </button>
+                {/* ★**내가 적는 청산 레벨** [OWNER 2026-09-22 — "내가 적는 청산
+                    레벨까지 하고 푸시하세요"]. 종전에는 마지막 종가로 닫는 버튼
+                    하나뿐이었고, 그래서 한 거래 안에 「진입은 내 체결가 · 청산은
+                    종가」라는 **두 규약**이 섰다. 진입 칸과 같은 문법이다 —
+                    내가 치고, 비워 두면 서버가 아는 값으로 떨어진다.
+                    청산일은 오늘이다(체결일과 같은 이유 — `sheet.today`). */}
+                {l.open ? (
+                  <HStack gap={0.5} alignItems="center" justifyContent="flex-end">
+                    <Box width={92}>
+                      <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                        accessibilityLabel={`${l.n}번 다리 청산 레벨 (%)`}
+                        value={exitLv[l.n] ?? ''}
+                        placeholder={l.mark == null ? '레벨' : l.mark.toFixed(3)}
+                        disabled={busy}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                          setExitLv((m) => ({ ...m, [l.n]: e.target.value }))}
+                      />
+                    </Box>
+                    <button type="button" className="sr-pillbtn" data-fill=""
+                      /* 비워 두면 마지막 종가로 떨어진다 — 그 값조차 없으면
+                         적을 수가 없으므로 그때만 못 누른다. */
+                      disabled={busy || (!exitLv[l.n]?.trim() && l.mark == null)
+                                || (!!exitLv[l.n]?.trim() && !Number.isFinite(Number(exitLv[l.n])))}
+                      onClick={() => {
+                        const typed = exitLv[l.n]?.trim();
+                        onClose(l.n, typed ? Number(typed) : (l.mark as number));
+                        setExitLv((m) => ({ ...m, [l.n]: '' }));
+                      }}>
+                      닫기
+                    </button>
+                  </HStack>
                 ) : (
+                  /* 닫힌 다리의 **레벨은 「지금」 칸이 이미 적는다** — 여기서 또
+                     적으면 한 줄에 같은 수가 둘이 선다. 여기는 날짜만. */
                   <Text font="legal" as="span" color="fgMuted" noWrap>
-                    {l.open ? '레벨 없음' : (l.exit ?? MINUS)}
+                    {l.exit ?? MINUS}
                   </Text>
                 )}
               </TableCell>
@@ -430,7 +459,6 @@ export function PortfolioPage() {
           </HStack>
           <PositionTable
             legs={sheet.position.legs}
-            asof={sheet.asof}
             busy={busy}
             onClose={(n, level) =>
               /* 청산일도 **오늘**이다(체결일과 같은 이유). 청산 레벨은 여전히

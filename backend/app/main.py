@@ -3548,7 +3548,13 @@ def paper_add_leg(body: dict) -> dict:
 
 @router.post("/api/paper/leg/close")
 def paper_close_leg(body: dict) -> dict:
-    """다리 하나를 닫는다. **청산 레벨도 내가 적는다** — 진입을 종가로 안 매겼다."""
+    """다리 하나를 닫는다. **청산 레벨도 내가 적는다** — 진입을 종가로 안 매겼다
+    [OWNER 2026-09-22 — "내가 적는 청산 레벨까지 하고"].
+
+    화면이 종가 버튼 하나만 주던 동안에도 이 라우트는 레벨을 받고 있었다 —
+    비어 있던 것은 **입력 칸**이었다. 그 사이 장부의 청산 레벨은 전부 종가였고,
+    한 거래 안에 「진입은 내 체결가 · 청산은 종가」라는 두 규약이 서 있었다.
+    """
     n = body.get("n")
     exit_t = str(body.get("exit") or "")
     if n is None or not exit_t:
@@ -3556,7 +3562,12 @@ def paper_close_leg(body: dict) -> dict:
     if body.get("level") is None:
         raise HTTPException(status_code=400, detail="청산 레벨(level)이 있어야 해요")
     st = paper.load()
-    paper.close_leg(st, int(n), exit_t, float(body["level"]))
+    try:
+        paper.close_leg(st, int(n), exit_t, float(body["level"]))
+    except paper.LegRejected as exc:
+        # 422 — 요청이 깨진 것이 아니라 **못 닫는 다리**다(없거나·이미 닫혔거나·
+        # 날이 말이 안 되거나). 종전에는 그 셋이 전부 조용한 200 이었다.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     paper.save(st)
     return {"ok": True, **_paper_sheet()}
 

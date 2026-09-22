@@ -655,3 +655,64 @@ class Test체결일과_마크의_날:
         for bad in ((today + dt.timedelta(days=1)).isoformat(), "", "22/09/2026"):
             with pytest.raises(paper.LegRejected):
                 paper.check_entry(bad)
+
+
+# ── 청산 레벨도 **내가 적는다** [OWNER 2026-09-22 — "내가 적는 청산 레벨까지"] ──
+#
+# 라우트는 처음부터 레벨을 받고 있었고 비어 있던 것은 **입력 칸**이었다. 그 사이
+# 장부의 청산 레벨은 전부 마지막 종가였고, 한 거래 안에 「진입은 내 체결가 ·
+# 청산은 종가」라는 두 규약이 서 있었다.
+
+class Test청산:
+    def _book(self, entry="2026-09-15"):
+        st = dict(paper.EMPTY)
+        st["legs"] = []
+        paper.add_leg(st, kind="irs", tenor="3Y", side="pay", entry=entry,
+                      level=4.050, notional=1e10, dv01=2_950_000.0, tag="IRS 3Y")
+        return st
+
+    def test_내가_적은_레벨로_닫힌다(self):
+        st = self._book()
+        paper.close_leg(st, 1, "2026-09-18", 4.111)
+        lg = st["legs"][0]
+        assert lg["exit"] == "2026-09-18" and lg["exitLevel"] == 4.111
+        # 그 레벨이 손익을 정한다 — 마크는 안 쓴다(청산했으니까).
+        got = paper.score_leg(lg, 9.99, mark_t="2026-09-21")
+        assert got["bp"] == pytest.approx((4.111 - 4.050) * 100)
+
+    def test_없는_다리는_조용히_넘어가지_않는다(self):
+        """★종전에는 `n` 이 안 맞으면 목록을 그대로 두고 끝났다 — 라우트는 200,
+        화면은 「닫았어요」, 장부는 그대로. **안 한 일을 했다고 적는 것**이 이
+        장부에서 제일 나쁜 결함이다."""
+        with pytest.raises(paper.LegRejected):
+            paper.close_leg(self._book(), 99, "2026-09-18", 4.1)
+
+    def test_이미_닫힌_다리는_다시_안_닫는다(self):
+        st = self._book()
+        paper.close_leg(st, 1, "2026-09-18", 4.111)
+        with pytest.raises(paper.LegRejected):
+            paper.close_leg(st, 1, "2026-09-19", 4.2)
+        assert st["legs"][0]["exitLevel"] == 4.111      # 첫 기록이 산다
+
+    def test_청산일이_체결일보다_앞설_수_없다(self):
+        """보유기간이 음수인 다리는 손익의 부호가 뒤집히는데, 표에는
+        「09-15 → 09-10 청산」이라고 멀쩡히 선다."""
+        with pytest.raises(paper.LegRejected):
+            paper.close_leg(self._book(), 1, "2026-09-10", 4.1)
+
+    def test_청산일이_미래일_수_없다(self):
+        import datetime as dt
+
+        future = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+        with pytest.raises(paper.LegRejected):
+            paper.close_leg(self._book(), 1, future, 4.1)
+
+    def test_오늘_열고_오늘_닫는_것은_된다(self):
+        """진입과 청산이 같은 날인 거래는 정상이다 — `check_exit` 가 «앞선다»만
+        막고 «같다»는 안 막는 것이 그 이유다."""
+        import datetime as dt
+
+        today = dt.date.today().isoformat()
+        st = self._book(entry=today)
+        paper.close_leg(st, 1, today, 4.2)
+        assert st["legs"][0]["exit"] == today

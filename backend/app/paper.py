@@ -189,13 +189,48 @@ def add_leg(store: dict[str, Any], *, kind: str, tenor: str, side: str,
     return store
 
 
+def check_exit(leg: dict, exit_t: str, today: str | None = None) -> None:
+    """청산일이 말이 되는 날인가 — 아니면 사유를 들고 죽는다(422).
+
+    체결일과 **같은 규율**이다(`check_entry`): 꼴이 맞아야 하고 미래일 수 없다.
+    하나가 더 붙는다 — **체결일보다 앞설 수 없다.** 그런 다리는 보유기간이 음수라
+    손익의 부호가 뒤집히고, 표에는 「09-22 → 09-15 청산」이라고 멀쩡히 선다.
+    """
+    try:
+        x = _dt.date.fromisoformat(exit_t)
+    except (TypeError, ValueError):
+        raise LegRejected(f"청산일이 YYYY-MM-DD 가 아니에요: {exit_t!r}") from None
+    now = _dt.date.fromisoformat(today) if today else _dt.date.today()
+    if x > now:
+        raise LegRejected(f"청산일이 미래예요: {exit_t} (오늘 {now.isoformat()})")
+    entry = str(leg.get("entry") or "")
+    if entry and exit_t < entry:
+        raise LegRejected(f"청산일({exit_t})이 체결일({entry})보다 앞서요")
+
+
 def close_leg(store: dict[str, Any], n: int, exit_t: str,
               exit_level: float) -> dict[str, Any]:
     """다리 하나를 닫는다 — 지우는 것이 아니라 **닫는 것**이다(`close_trade` 와 같은 규율).
 
-    청산 레벨도 **내가 적는다**. 진입을 종가로 안 매겼으니 청산도 그래야 한다.
+    청산 레벨도 **내가 적는다**. 진입을 종가로 안 매겼으니 청산도 그래야 한다
+    [OWNER 2026-09-22 — "내가 적는 청산 레벨까지 하고"]. 종전에는 이 문장이 여기
+    적혀만 있었고 화면은 **마지막 종가로 닫는 버튼 하나뿐**이었다 — 그래서 장부의
+    청산 레벨은 늘 종가였고, 「진입은 내 체결가, 청산은 종가」라는 **한 거래 안의
+    두 규약**이 섰다.
+
+    ## 없는 다리·이미 닫힌 다리를 **조용히 넘기지 않는다**
+
+    종전 산술은 `n` 이 안 맞으면 목록을 그대로 두고 끝났다 — 라우트는 200 을
+    내고 화면은 「닫았어요」를 적는데 장부는 그대로다. 안 한 일을 했다고 적는
+    것이 이 장부에서 제일 나쁜 결함이라, 못 닫으면 사유를 들고 죽는다.
     """
     store.setdefault("legs", [])
+    hit = next((l for l in store["legs"] if l["n"] == n), None)
+    if hit is None:
+        raise LegRejected(f"{n}번 다리가 없어요")
+    if hit.get("exit"):
+        raise LegRejected(f"{n}번 다리는 이미 {hit['exit']} 에 닫혔어요")
+    check_exit(hit, exit_t)
     store["legs"] = [{**l, "exit": exit_t, "exitLevel": float(exit_level)}
                      if l["n"] == n else l for l in store["legs"]]
     return store
