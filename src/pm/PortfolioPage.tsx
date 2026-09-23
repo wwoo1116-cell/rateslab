@@ -104,10 +104,14 @@ function knobWord(k: PaperLegKnobs): string {
   return `${k.lookback}일 · ${z}σ · ${ENTRY_WORD[k.entryMode]}`;
 }
 
-function PositionTable({ legs, busy, today, onClose }: {
+function PositionTable({ legs, busy, today, exitDateW, exitLevelW, onClose }: {
   legs: PaperPositionLeg[]; busy: boolean;
   /** 오늘(서울) — 청산일의 기본값이다. **`asof`(자료의 날)가 아니다.** */
   today: string;
+  /** 청산 칸 둘의 폭 — **부모가 유도해서 내려준다**. 훅은 행 루프 안에서 못
+   *  부르고, 유도에 쓰는 활자 탐침은 화면에 하나면 된다. */
+  exitDateW: number;
+  exitLevelW: number;
   onClose: (n: number, exit: string, level: number) => void;
 }) {
   /* 줄마다의 청산 레벨 입력 — 다리 번호로 잡는다(행 순서는 정렬이 바꾼다).
@@ -273,7 +277,7 @@ function PositionTable({ legs, busy, today, onClose }: {
                         체결일과 **같은 문법**이다(맨 텍스트 칸 + 오늘이 힌트):
                         이 화면은 날짜를 어디서나 ISO 로 치므로 둘이 달라지면
                         같은 일을 두 벌로 배우게 된다. */}
-                    <Box width={104}>
+                    <Box width={exitDateW}>
                       <TextInput size="s" fontSize="legal" height={CONTROL_H}
                         accessibilityLabel={`${l.n}번 다리 청산일 (YYYY-MM-DD)`}
                         value={exitT[l.n] ?? ''}
@@ -283,7 +287,7 @@ function PositionTable({ legs, busy, today, onClose }: {
                           setExitT((m) => ({ ...m, [l.n]: e.target.value }))}
                       />
                     </Box>
-                    <Box width={92}>
+                    <Box width={exitLevelW}>
                       <TextInput size="s" fontSize="legal" height={CONTROL_H}
                         accessibilityLabel={`${l.n}번 다리 청산 레벨 (%)`}
                         value={exitLv[l.n] ?? ''}
@@ -388,6 +392,10 @@ export function PortfolioPage() {
   const lbW = fitWidth('input', ['600'], ctlFont, 92);
   const zW = fitWidth('input', ['20.0'], ctlFont, 78);
   const modeW = fitWidth('select', ['이탈 즉시', '밴드 복귀'], ctlFont, 132);
+  /* 표 **안**의 청산 칸 둘 — 오늘 넣은 칸이고 손 상수였다. 날짜는 열 글자라
+     104 로는 글자 자리가 모자랐다(70 < 73.2). 같은 규칙으로 유도한다. */
+  const exitDateW = fitWidth('input', ['2026-09-23'], ctlFont, 104);
+  const exitLevelW = fitWidth('input', ['9.999'], ctlFont, 92);
 
   /**
    * 친 조건 → 보낼 것.
@@ -597,6 +605,8 @@ export function PortfolioPage() {
             legs={sheet.position.legs}
             busy={busy}
             today={sheet.today}
+            exitDateW={exitDateW}
+            exitLevelW={exitLevelW}
             onClose={(n, exit, level) =>
               /* 날도 레벨도 **내가 적은 것**이 그대로 간다 — 둘 다 비면 표가
                  오늘·마지막 종가로 채워서 넘긴다(종전 동작). 말이 되는 날인지는
@@ -676,6 +686,12 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
+            {/* ⚠ 이 칸은 **유도로 안 옮긴다** [실측 2026-09-23]. 죽은 폭이 27.5px
+                (T1 초과)인 건 맞지만, `Segmented` 의 알약은 `.sr-ctlfont`
+                (14px/600)를 쓰고 컨트롤 **값**은 13px/400 이다 — 값 폰트로 재서
+                상자를 121 로 좁혔더니 알약 합(122.5)이 **상자를 1.5px 넘었다**.
+                제대로 하려면 알약용 탐침이 하나 더 있어야 하고, 그건 이 회차의
+                범위 밖이다. 150 을 그대로 둔다(넘치는 것보다 남는 게 낫다). */}
             <Box width={150}>
               <Field label="크기 기준"
                 help="하나만 쳐요 — 나머지는 진입일 커브로 서버가 채워요. 둘 다 받으면 안 맞는 쌍이 장부에 남아요.">

@@ -64,6 +64,7 @@ import { BacktestUnavailable } from '@/lib/api';
 import { useFunding } from '@/state/funding';
 import { Cond } from '@/ui/Cond';
 import { NumField } from '@/ui/ControlCard';
+import { fitWidth, useControlFont } from '@/ui/fit';
 import { ErrorState, LoadingState } from '@/ui/DataState';
 import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 import { DROPDOWN_STYLES } from '@/ui/window/popup';
@@ -484,6 +485,17 @@ export function RvPage() {
     if (!data) return undefined;
     return data.sectors.find((s) => s.id === sectorParam) ?? data.sectors[0];
   }, [data, sectorParam]);
+
+  /* 섹터 칸 폭은 **라벨 집합**에서 나온다 [2026-09-23]. 160 은 손으로 적은
+     수였고 섹터가 늘어도 다시 안 셌다 — 이제 폴백으로만 남는다.
+     `data` 는 늦게 오므로 없는 동안은 빈 목록이고, 그때도 폴백이 선다. */
+  const [fontProbe, ctlFont] = useControlFont();
+  const sectorW = fitWidth(
+    'select',
+    useMemo(() => (data?.sectors ?? []).map((x) => x.label), [data]),
+    ctlFont,
+    160,
+  );
 
   /* 오늘의 한 줄 — 서버 랭크 1위 [OWNER 2026-08-19 문구: "지금 XX가 가장
    * 매력적"]. 근거(Score·버퍼·순위변동)가 같은 줄에 붙고, 누르면 이력 창. */
@@ -917,7 +929,10 @@ export function RvPage() {
               <TextLabel1 as="h3" noWrap>
                 같은 섹터끼리 — 만기 × Δy 총수익
               </TextLabel1>
-              <Box width={160}>
+              {/* 폭은 **섹터 라벨 집합**에서 나온다 [2026-09-23] — 160 은 손으로
+                  적은 수였고 섹터가 늘어도 다시 안 셌다. 폴백으로만 남는다. */}
+              <Box width={sectorW}>
+                {fontProbe}
                 {/* font legal(13) — 컨트롤 값 13px 규칙(popup.ts 의 근거). */}
                 <Select
                   size="s"

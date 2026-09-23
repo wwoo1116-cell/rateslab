@@ -44,7 +44,7 @@
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 
 /** 컨트롤 종류 — 크롬이 종류마다 다르다. */
-export type FitKind = 'select' | 'input' | 'readout';
+export type FitKind = 'select' | 'input' | 'readout' | 'segmented';
 
 /**
  * 크롬 = 글자가 **못 앉는** 폭. 브라우저 실측 2026-09-23(1920 · light · 13px SR):
@@ -53,13 +53,24 @@ export type FitKind = 'select' | 'input' | 'readout';
  * select   테두리 1+1 · 패딩 16+16 · 셰브론 32            = 66
  * input    테두리 1+1 · 패딩 16+16                        = 34   (입력 셋에서 동일)
  * readout  없음                                            =  0
+ * segmented 알약 **하나당** 32                             = 32×n (알약 둘에서 동일)
  * ```
+ *
+ * ⚠ `segmented` 만 **곱하기**다 — 알약이 제각기 제 글자를 담으므로 폭은
+ *   `Σ(글자 + 32)` 이지 「최장 하나 + 크롬」이 아니다. 실측 2026-09-23:
+ *   「명목」 56.2(글자 24.2) · 「DV01」 66.3(글자 34.3) — 차가 둘 다 정확히 32.
  *
  * ⚠ 이 수는 **CDS 의 것**이라 버전이 오르면 낡는다. 그래서 Playwright 가드가
  * 살아 있는 DOM 에서 다시 재서 이 상수와 맞는지 본다 — 안 맞으면 터진다.
  * 유도로 멈추지 않는 것이 이 리포의 규칙이다(DESIGN.md §7).
  */
-export const CHROME: Record<FitKind, number> = { select: 66, input: 34, readout: 0 };
+export const CHROME: Record<FitKind, number> = {
+  select: 66,
+  input: 34,
+  readout: 0,
+  /** 알약 **하나당**. `fitWidth` 가 개수만큼 곱한다. */
+  segmented: 32,
+};
 
 /**
  * 쿠션 — 캔버스 실측과 실제 렌더가 미세하게 다를 때의 여유.
@@ -125,6 +136,12 @@ export function fitWidth(
   fallback: number,
 ): number {
   if (!font) return fallback;
+  if (kind === 'segmented') {
+    /* 알약은 **나란히 선다** — 최장 하나가 아니라 전부의 합이다. */
+    let sum = 0;
+    for (const l of labels) sum += textWidth(l, font) + CHROME.segmented;
+    return Math.ceil(sum + FIT_CUSHION);
+  }
   let widest = 0;
   for (const l of labels) widest = Math.max(widest, textWidth(l, font));
   const edit = kind === 'input' ? EDIT_CH * textWidth('0', font) : 0;
@@ -164,25 +181,60 @@ export function useControlFont(): readonly [ReactElement, string | null] {
        효과는 영영 `null` 에 머문다 — 폭이 폴백 상수에 갇힌다. 백테스트 창이
        우연히 됐던 것은 컨트롤이 같은 커밋에 서기 때문이었다.
        그래서 **찾을 때까지** 프레임마다 다시 본다(1초 상한). */
-    let tries = 0;
-    let raf = 0;
+    let obs: MutationObserver | null = null;
     const read = (): boolean => {
       if (!live) return true;
-      /* 값이 앉는 요소를 그대로 잡는다 — 셀렉트는 트리거, 입력은 input. */
-      const el =
-        document.querySelector<HTMLElement>('input, [role="combobox"]') ?? ref.current;
-      if (!el) return false;
-      const f = getComputedStyle(el).font;
-      if (!f) return false;
-      setFont(f);
-      return true;
+      /* ★**첫 번째 `input` 을 집으면 안 된다** [실측 2026-09-23]. CDS `Select` 는
+         폼 의미를 위해 **숨은 입력**을 하나 두는데, 그게 문서 차례로 앞에 선다.
+         그리고 숨은 요소는 `getComputedStyle(el).font` 가 **빈 문자열**이라
+         — 예외도 안 나고 조용히 `null` 에 머문다. 폭이 폴백에 갇힌 채 화면은
+         멀쩡해 보이던 두 번째 얼굴이 이것이다.
+         그래서 **보이는 것 중에서** 고른다: `offsetParent` 가 있고 폭이 있고
+         `font` 가 실제로 직렬화되는 첫 요소. */
+      /* ★**탐침이 먼저다** [2026-09-23 · 2차]. 살아 있는 컨트롤에서 읽는 것이
+         원칙상 낫지만, 컨트롤이 하나도 없는 화면이 있다(`?g=cashbond` — 보이는
+         `input` 이 없고 Select 트리거는 `button` 이라 선택자에 안 걸린다).
+         그때 폰트가 영영 `null` 이 되고 폭이 폴백에 갇힌다.
+         탐침은 CSS 가 컨트롤 값 활자를 입혀 두므로(`theme/type.css` 의 그 블록)
+         어느 화면에서나 있고, 그 두 벌이 안 어긋나는지는 가드가 잰다. */
+      const cands: HTMLElement[] = [];
+      if (ref.current) cands.push(ref.current);
+      cands.push(
+        ...Array.from(
+          document.querySelectorAll<HTMLElement>('input, [role="combobox"]'),
+        ),
+      );
+      for (const el of cands) {
+        /* ⚠ 걸러내기는 **살아 있는 컨트롤에만** 건다. 탐침은 일부러 폭 0 ·
+           `visibility: hidden` 이라(자리를 안 먹으려고) 같은 잣대로 재면
+           **제 탐침을 제가 걸러낸다** — 실측 2026-09-23, 그래서 `?g=cashbond`
+           에서 폭이 폴백에 갇혀 있었다. 숨은 요소를 거르는 이유는 CDS 가 폼
+           의미로 두는 **숨은 `input`** 때문이고, 그건 `getComputedStyle().font`
+           가 빈 문자열이라 어차피 아래에서 걸린다. */
+        const isProbe = el === ref.current;
+        if (!isProbe && el.offsetParent === null) continue;
+        if (!isProbe && el.getBoundingClientRect().width === 0) continue;
+        const f = getComputedStyle(el).font;
+        if (!f) continue;
+        setFont(f);
+        return true;
+      }
+      return false;
     };
-    const poll = () => {
-      if (read() || tries > 60) return;
-      tries += 1;
-      raf = requestAnimationFrame(poll);
-    };
-    poll();
+    /* ★**프레임 세기로는 못 기다린다** [실측 2026-09-23]. 첫 판은 60프레임(≈1초)
+       상한으로 다시 봤는데, 포트폴리오는 장부를 **서버에서 받은 뒤에야** 컨트롤을
+       그린다 — 그 fetch 가 1초를 넘으면 후보가 0개인 채로 포기하고 폭이 폴백에
+       갇힌다(실측: `cands.length === 0`).
+       그래서 시간을 세지 않고 **DOM 이 바뀔 때마다** 다시 본다. 찾으면 끊는다. */
+    if (!read()) {
+      obs = new MutationObserver(() => {
+        if (read()) {
+          obs?.disconnect();
+          obs = null;
+        }
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+    }
     const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
     if (fonts?.ready) {
       void fonts.ready.then(() => {
@@ -193,7 +245,7 @@ export function useControlFont(): readonly [ReactElement, string | null] {
     }
     return () => {
       live = false;
-      if (raf) cancelAnimationFrame(raf);
+      obs?.disconnect();
     };
   }, []);
   const probe = (

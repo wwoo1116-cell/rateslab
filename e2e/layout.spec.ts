@@ -318,3 +318,179 @@ for (const vp of VIEWPORTS) {
     expect(r.lines.filter((l) => l.length === 1)).toEqual([]);
   });
 }
+
+/**
+ * ── 다른 화면 셋 — 「고쳤다」와 「고쳤다고 믿는다」를 가른다 ────────────────
+ *
+ * Phase B 1차에서 시뮬·필터 둘은 **코드만 바꾸고 아무도 안 봤다**. 게이트는
+ * 통과했지만 그건 tsc/lint 통과일 뿐이고, 폭이 실제로 맞는지는 이 파일만이
+ * 말할 수 있다. 명세가 「최소 3개 행 이상」을 요구한 이유가 그것이다.
+ */
+test.describe('다른 화면들 · 1440', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+  });
+
+  test('시뮬 — 종류 칸은 기준 안에, 상품 칸은 안 잘린다', async ({ page }) => {
+    /* ★**두 칸을 같은 잣대로 재면 안 된다** [실측 2026-09-23].
+     *
+     *  `종류` 의 라벨 집합은 코드 상수(`KIND_LABEL`)라 최장을 여기서 적을 수
+     *  있고, 그래서 T1(죽은 폭 ≤16)을 그대로 잰다.
+     *
+     *  `상품` 은 다르다 — 서버 카탈로그(종목군 × 만기)라 검정이 그 합집합을
+     *  싸게 셀 수 없다. 최장을 **손으로 적으면 그게 곧 RC2**(다시 안 세는 수)이고,
+     *  실제로 첫 판이 그랬다: 「캐피탈채 AA- 10Y」로 적었다가 54.7px 를 죽은 폭
+     *  으로 잘못 신고했다. 진짜 최장은 그보다 넓다(상자 217 = 최장 147 + 66 + 4).
+     *
+     *  그래서 이 칸은 **위가 아니라 아래를 잰다**: 지금 고를 수 있는 목록의 최장이
+     *  들어가는가. 좁은 쪽 실패가 이 칸의 실제 병이었다 — 그 칸 주석이
+     *  「112 이던 시절 «국고채 3Y» 가 «국고…» 로 잘렸다」를 이미 적고 있다. */
+    await page.goto('/?g=sim');
+    await page.getByText('종류', { exact: true }).first().waitFor();
+    await settle(page);
+
+    const r = await measureRow(page, '종류', { 종류: '버터플라이' }, 2);
+    expect(r.found, '시뮬 줄을 못 찾았어요').toBe(true);
+    expect(Object.keys(r.dead), '종류 칸을 못 쟀어요').toContain('종류');
+    const fat = Object.entries(r.dead).filter(([, v]) => v > T1_DEAD_MAX);
+    expect(fat.map(([k, v]) => `${k} ${v}`)).toEqual([]);
+
+    /* 상품 — 지금 목록의 최장이 담기는가(하한). */
+    const fits = await page.evaluate(() => {
+      const leafOf = (t: string) =>
+        Array.from(document.querySelectorAll('*')).find(
+          (e) => e.children.length === 0 && e.textContent?.trim() === t,
+        ) as HTMLElement | undefined;
+      const lab = leafOf('상품');
+      let box: HTMLElement | null = lab?.parentElement ?? null;
+      while (box && !/width-/.test(String(box.className))) box = box.parentElement;
+      const trig = box?.querySelector<HTMLElement>('[role="combobox"],button');
+      if (!box || !trig) return null;
+      const valueLeaf =
+        Array.from(trig.querySelectorAll<HTMLElement>('*')).find(
+          (e) => e.children.length === 0 && e.textContent?.trim(),
+        ) ?? trig;
+      const cv = document.createElement('canvas').getContext('2d');
+      if (!cv) return null;
+      cv.font = getComputedStyle(valueLeaf).font;
+      trig.click();
+      return new Promise<{ box: number; widest: number } | null>((res) => {
+        setTimeout(() => {
+          const opts = Array.from(
+            document.querySelectorAll('[role="option"], li'),
+          ).map((o) => o.textContent?.trim() ?? '');
+          const widest = opts.reduce((m, o) => Math.max(m, cv.measureText(o).width), 0);
+          document.body.click();
+          res({ box: box!.getBoundingClientRect().width, widest });
+        }, 900);
+      });
+    });
+    expect(fits, '상품 칸을 못 찾았어요').not.toBeNull();
+    /* 크롬 66 을 빼고도 최장이 들어가야 한다. */
+    expect(
+      fits!.box - 66,
+      `상품 칸이 목록의 최장(${Math.round(fits!.widest)}px)을 못 담아요`,
+    ).toBeGreaterThanOrEqual(fits!.widest);
+  });
+
+  test('필터 둘 — 같은 라벨이면 같은 폭이다', async ({ page }) => {
+    /* ★이 시험이 잡는 것은 폭이 아니라 **두 벌**이다. 종전에는 같은 최장 라벨
+       「캐피탈채 AA-」에 백테스트 종목 칸이 168, `BondTypeFilter` 가 200 을 주고
+       있었다 — 둘 다 주석에 「실측」이라 적힌 채로. 유도를 지나면 같은 목록은
+       같은 수를 내야 한다. */
+    /* 종목군 필터는 **현금채권·자산스왑 탭에만** 선다(`app/page.tsx` 의 그 조건).
+       첫 판은 `?g=credit` 으로 갔다가 조용히 건너뛰었다 — 건너뛴 검정은 아무것도
+       안 지킨다. 탭 이름을 틀리는 것이 이 가드가 조용해지는 가장 쉬운 길이라,
+       못 찾으면 **실패시킨다**(아래). */
+    await page.goto('/?g=cashbond');
+    await page.getByText('종목군', { exact: true }).waitFor();
+    await settle(page);
+    const w = await page.evaluate(() => {
+      const lab = Array.from(document.querySelectorAll('*')).find(
+        (e) => e.children.length === 0 && e.textContent?.trim() === '종목군',
+      ) as HTMLElement | undefined;
+      if (!lab) return null;
+      let box: HTMLElement | null = lab.parentElement;
+      while (box && !/width-/.test(String(box.className))) box = box.parentElement;
+      return box ? Math.round(box.getBoundingClientRect().width) : null;
+    });
+    expect(w, '종목군 필터를 못 찾았어요 — 탭이 바뀌었나요?').not.toBeNull();
+    expect(w!).toBeGreaterThan(0);
+    /* 손 상수 200 이 그대로면 유도가 안 걸린 것이다. */
+    expect(w!, '폭이 손 상수 200 그대로예요 — 유도가 안 걸렸어요').not.toBe(200);
+  });
+
+  test('포트폴리오 표 — 청산 칸이 글자를 담는다', async ({ page }) => {
+    /* 오늘 넣은 칸이고 손 상수 104 였다 — 날짜 열 글자(73.2)에 크롬(34)과 편집
+       여유를 더하면 104 로는 **모자랐다**(죽은 폭 −18.7). 좁은 쪽 실패는 넓은
+       쪽보다 나쁘다: 글자가 잘린다. */
+    await page.goto('/?g=portfolio');
+    await page.getByText('룩백 (일)', { exact: true }).waitFor();
+    await settle(page);
+    const bad = await page.evaluate(() => {
+      const out: string[] = [];
+      for (const key of ['청산일', '청산 레벨']) {
+        const input = Array.from(document.querySelectorAll('input')).find((i) =>
+          (i.getAttribute('aria-label') ?? '').includes(key),
+        );
+        if (!input) continue;
+        let ctl: HTMLElement | null = input;
+        while (ctl && parseFloat(getComputedStyle(ctl).borderTopWidth) === 0) {
+          ctl = ctl.parentElement;
+        }
+        if (!ctl) continue;
+        const is = getComputedStyle(input);
+        const cv = document.createElement('canvas').getContext('2d');
+        if (!cv) continue;
+        cv.font = is.font;
+        const longest = key === '청산일' ? '2026-09-23' : '9.999';
+        const chrome =
+          ctl.getBoundingClientRect().width - input.clientWidth +
+          parseFloat(is.paddingLeft) + parseFloat(is.paddingRight);
+        const dead =
+          ctl.getBoundingClientRect().width - chrome -
+          2 * cv.measureText('0').width - cv.measureText(longest).width;
+        if (dead < 0 || dead > 16) out.push(`${key} ${Math.round(dead * 10) / 10}`);
+      }
+      return out;
+    });
+    /* 다리가 없는 날은 칸도 없다 — 그때는 잴 것이 없고 실패도 아니다. */
+    expect(bad, '청산 칸의 죽은 폭').toEqual([]);
+  });
+});
+
+/**
+ * ★탐침의 활자가 **컨트롤 값과 같은가** [2026-09-23].
+ *
+ * `ui/fit.tsx` 는 폭을 유도하려고 캔버스로 글자를 재고, 그 폰트를 탐침
+ * (`.sr-fitprobe`)에서 읽는다. 탐침의 활자는 `theme/type.css` 가 못 박는데,
+ * 그건 **컨트롤 값의 활자를 두 번째로 적는 것**이다 — 이 리포가 반복해서 밟은
+ * 「두 벌」이다.
+ *
+ * 두 벌을 두되 **대사로 묶는다**: 실제 컨트롤과 탐침의 계산된 폰트가 한 글자도
+ * 다르면 여기서 터진다. 어긋나면 모든 폭이 조용히 틀려지고, 화면은 멀쩡해
+ * 보인다 — 오늘 세 번 밟은 그 얼굴이라 사람 눈에 기대면 안 된다.
+ */
+test('탐침 활자 = 컨트롤 값 활자 · 1440', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?g=portfolio');
+  await page.getByText('룩백 (일)', { exact: true }).waitFor();
+  await settle(page);
+  const pair = await page.evaluate(() => {
+    const probe = document.querySelector<HTMLElement>('.sr-fitprobe');
+    const live = Array.from(document.querySelectorAll<HTMLElement>('input')).find(
+      (i) => i.offsetParent !== null && i.getBoundingClientRect().width > 0,
+    );
+    if (!probe || !live) return null;
+    const norm = (f: string) => f.replace(/\s*\/\s*[\d.]+px/, '').trim();
+    return { probe: norm(getComputedStyle(probe).font), live: norm(getComputedStyle(live).font) };
+  });
+  expect(pair, '탐침이나 컨트롤을 못 찾았어요').not.toBeNull();
+  expect(
+    pair!.probe,
+    `탐침과 컨트롤의 활자가 달라요 — 모든 폭이 조용히 틀려집니다
+` +
+      `  탐침: ${pair!.probe}
+  컨트롤: ${pair!.live}`,
+  ).toBe(pair!.live);
+});

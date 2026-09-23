@@ -3266,6 +3266,21 @@ tr.sr-mr-book > td {
  * `visibility: hidden` 이지 `display: none` 이 아니다: 후자는 계산된 폰트를
  * 못 읽게 만든다(박스가 없으므로). 스크린리더는 `aria-hidden` 이 막는다. */
 .sr-fitprobe {
+  /* ★활자를 **여기서 못 박는다** [2026-09-23 · 2차].
+   *
+   * 1차는 「살아 있는 컨트롤에서 읽는다」였다. 그 원칙은 옳지만 **컨트롤이 없는
+   * 화면이 있다** — `?g=cashbond` 는 보이는 `input` 이 하나도 없고 Select 트리거는
+   * `button` 이라 선택자에 안 걸렸다. 그러면 폰트가 영영 `null` 이고 폭은 폴백에
+   * 갇히는데, 화면은 멀쩡해 보인다(이 리포가 오늘 세 번 밟은 그 얼굴).
+   *
+   * 그래서 탐침이 **스스로** 컨트롤 값의 활자를 입는다: 13px/400 + 앱 폰트 스택.
+   * 이건 활자 선언이 두 벌이 된다는 뜻이라, `e2e/layout.spec.ts` 가 살아 있는
+   * 컨트롤과 이 탐침의 계산된 폰트가 **같은지 대조**한다 — 어긋나면 터진다.
+   * 「두 벌을 두되 대사로 묶는다」는 `GAP.field === 1.5` 와 같은 처방이다. */
+  font-family: var(--sr-font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  font-style: normal;
   position: absolute;
   visibility: hidden;
   pointer-events: none;
