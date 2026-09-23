@@ -57,7 +57,8 @@ import { DROPDOWN_STYLES } from '@/ui/window/popup';
  * [OWNER 2026-09-22 — "지금은 일단"]. 되살릴 때 임포트만 되돌리면 된다. */
 import {
   addLeg, closeLeg, fetchInstruments, fetchPaper, resetBook,
-  type PaperInstruments, type PaperLegKnobs, type PaperPositionLeg,
+  type PaperInstruments, type PaperLegKnobs, type PaperLegTrack,
+  type PaperPositionLeg,
   type PaperSheet,
 } from './api';
 
@@ -87,6 +88,10 @@ const SIDE_WORD: Record<string, string> = {
 /** 진입 규칙의 우리말 — **MR 화면의 그 낱말**을 그대로 쓴다
  *  (`mr/api.ts::MR_ENTRY_MODES`). 두 화면이 같은 규칙을 다르게 부르면 읽는
  *  사람이 어제 다리와 오늘 노브를 못 잇는다. */
+/** 「안 함」의 값 — `null` 을 쓰면 CDS 의 단일 선택 타입이 넓어져 호출부마다
+ *  null 체크가 붙는다(`StartFilter.ALL_STARTS` 와 같은 판단). */
+const NO_SERIES = 'none';
+
 const ENTRY_WORD: Record<PaperLegKnobs['entryMode'], string> = {
   level: '이탈 즉시',
   touch: '밴드 복귀',
@@ -102,6 +107,67 @@ function knobWord(k: PaperLegKnobs): string {
     .map((v) => String(Number(v.toFixed(2))))
     .join('/');
   return `${k.lookback}일 · ${z}σ · ${ENTRY_WORD[k.entryMode]}`;
+}
+
+/** z 한 글자 — 부호는 이 리포의 «−»(U+2212)다. `toFixed` 의 하이픈을 그대로
+ *  쓰면 같은 표 안에서 음수 기호가 두 벌이 된다. */
+function zWord(v: number | null | undefined): string {
+  if (v == null) return MINUS;
+  return `${v > 0 ? '+' : MINUS}${Math.abs(v).toFixed(2)}σ`;
+}
+
+/**
+ * 지금 닿았는가 — 한 칸 [OWNER 2026-09-23].
+ *
+ * 세 가지를 **구별해서** 적는다. 셋을 뭉치면 읽는 사람이 엉뚱한 결론을 낸다:
+ *
+ *   닿음    「손절 −3.1σ」 — 사유와 수를 같이
+ *   아직    「−2.1σ」      — 재고 있고 아직 아니다
+ *   못 잼   「— 계열을 안 골랐어요」 — **안 닿은 것이 아니다**
+ *
+ * 닫힌 다리에는 아무것도 안 적는다 — 지난 일을 오늘 일처럼 적게 된다.
+ */
+function TrackCell({ track, open }: { track: PaperLegTrack | null; open: boolean }) {
+  if (!open) return <Text font="legal" as="span" color="fgMuted">{MINUS}</Text>;
+  if (!track) {
+    return (
+      <Text font="legal" as="span" color="fgMuted" noWrap>
+        {MINUS}
+      </Text>
+    );
+  }
+  if (track.why) {
+    /* 못 재는 이유는 **적는다**. 「—」만 두면 안 닿은 것으로 읽힌다. */
+    return (
+      <Text font="legal" as="span" color="fgMuted">
+        {`${MINUS} ${track.why}`}
+      </Text>
+    );
+  }
+  const z = zWord(track.z);
+  if (track.hit == null) {
+    return (
+      <VStack as="span" className="sr-name-stack">
+        <Text font="label2" as="span" tabularNumbers noWrap>{z}</Text>
+        <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+          {`진입 ${zWord(track.entryZ)}`}
+        </Text>
+      </VStack>
+    );
+  }
+  /* 손절은 하락색으로 갈라 세운다 — 청산은 계획대로 나가는 것이고 손절은
+     아니다(전략 창이 거래 사유에 쓰는 그 규칙과 같다). */
+  return (
+    <VStack as="span" className="sr-name-stack">
+      <Text font="label2" as="span" tabularNumbers noWrap
+        className={track.hit === 'stop' ? 'sr-down' : 'sr-up'}>
+        {`${track.hit === 'stop' ? '손절' : '청산'} ${z}`}
+      </Text>
+      <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+        {`진입 ${zWord(track.entryZ)} · ${track.asof ?? ''}`}
+      </Text>
+    </VStack>
+  );
 }
 
 function PositionTable({ legs, busy, today, exitDateW, exitLevelW, onClose }: {
@@ -153,6 +219,16 @@ function PositionTable({ legs, busy, today, exitDateW, exitLevelW, onClose }: {
               <ThHelp label="조건"
                 help="담을 때 얼린 그날의 조건이에요 — 룩백 · 진입/청산/손절 σ · 진입 규칙. Strategy 화면의 노브가 나중에 바뀌어도 이 값은 안 바뀌어요." />
             </TableCell>
+            {/* ★추적 [OWNER 2026-09-23 — "청산이랑 손절 추적할 수 있게"].
+                얼린 조건으로 **지금** 닿았는지를 화면이 말한다. 판정은 엔진의
+                문을 그대로 옮긴 것이다(손절 > 청산 · 교차선 · 방향은 진입일 z). */}
+            <TableCell as="th" scope="col">
+              {/* ⚠ 이름이 «지금» 이면 **열이 둘**이 된다 — 옆에 이미 마크를 적는
+                  「지금」이 있다(실측 2026-09-23). 이 칸이 말하는 것은 값이
+                  아니라 **밴드 위의 자리**라, 그 낱말을 쓴다. */}
+              <ThHelp label="밴드"
+                help="얼린 조건으로 지금 청산·손절에 닿았는지예요. 계열을 고른 다리에만 서요 — z 는 그 계열의 것이니까요. 판정 규칙은 백테스트 엔진과 같아요." />
+            </TableCell>
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
               <ThHelp label="내 레벨"
                 help="내가 실제로 체결한 금리예요. 그날 종가가 아니에요 — 그게 이 표가 생긴 이유예요." />
@@ -198,9 +274,19 @@ function PositionTable({ legs, busy, today, exitDateW, exitLevelW, onClose }: {
               <TableCell>
                 {/* 조건 없는 다리는 «—» 다 — 「전부 0 으로 들어갔다」가 아니라
                     「안 적었다」이고, 둘은 다른 말이다(서버의 공란 정책). */}
-                <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
-                  {l.knobs ? knobWord(l.knobs) : MINUS}
-                </Text>
+                <VStack as="span" className="sr-name-stack">
+                  <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+                    {l.knobs ? knobWord(l.knobs) : MINUS}
+                  </Text>
+                  {/* 계열은 조건 **밑에** 적는다 — 그 조건이 무엇 위에서 도는지가
+                      한 칸 안에서 읽혀야 한다. 안 고른 다리는 이 줄이 없다. */}
+                  <Text font="legal" as="span" color="fgMuted" noWrap>
+                    {l.series ?? ''}
+                  </Text>
+                </VStack>
+              </TableCell>
+              <TableCell>
+                <TrackCell track={l.track} open={l.open} />
               </TableCell>
               <TableCell className="sr-num" justifyContent="flex-end">
                 <Text font="label2" as="span" tabularNumbers noWrap>{l.level.toFixed(3)}</Text>
@@ -361,6 +447,10 @@ export function PortfolioPage() {
   const [sizeMode, setSizeMode] = useState<'notional' | 'dv01'>('notional');
   const [sizeVal, setSizeVal] = useState('');
   const [legTag, setLegTag] = useState('');
+  /** ★계열 — **묶음과 다른 칸**이다 [OWNER 2026-09-23]. 묶음은 부르는 이름이라
+   *  산술에 안 쓰고(그 칸 도움말의 규칙), 추적은 계열의 z 로 하므로 이 칸이
+   *  있어야 청산·손절이 선다. 안 고르면 조건만 적히고 추적은 안 한다. */
+  const [legSeries, setLegSeries] = useState('');
   /** ★그날의 조건 [트레이더 2026-09-23]. **다섯이 다 차야 같이 간다** — 서버가
    *  반쪽을 거절하고(「룩백만 적힌」 다리는 청산선을 못 그린다), 하나도 안 치면
    *  조건 없는 다리다(종전 동작이 기본값으로 산다).
@@ -392,6 +482,12 @@ export function PortfolioPage() {
   const lbW = fitWidth('input', ['600'], ctlFont, 92);
   const zW = fitWidth('input', ['20.0'], ctlFont, 78);
   const modeW = fitWidth('select', ['이탈 즉시', '밴드 복귀'], ctlFont, 132);
+  const seriesW = fitWidth(
+    'select',
+    ['안 함', ...(inst?.series ?? []).map((x) => x.label)],
+    ctlFont,
+    150,
+  );
   /* 표 **안**의 청산 칸 둘 — 오늘 넣은 칸이고 손 상수였다. 날짜는 열 글자라
      104 로는 글자 자리가 모자랐다(70 < 73.2). 같은 규칙으로 유도한다. */
   const exitDateW = fitWidth('input', ['2026-09-23'], ctlFont, 104);
@@ -749,6 +845,23 @@ export function PortfolioPage() {
                 라벨 위 · 32px 등고 · 바닥 정렬은 형제와 같다. */}
             </HStack>
             <HStack gap={GAP.field} alignItems="flex-end">
+            <Box width={seriesW}>
+              <Field label="계열"
+                help="이 다리가 속한 계열이에요. 고르면 얼린 조건으로 청산·손절이 닿았는지 화면이 말해요 — 안 고르면 조건만 적히고 추적은 안 해요.">
+                <Select size="s" font="legal" styles={DROPDOWN_STYLES}
+                  accessibilityLabel="계열"
+                  value={legSeries || NO_SERIES}
+                  onChange={(v: unknown) => {
+                    const id = String(v ?? NO_SERIES);
+                    setLegSeries(id === NO_SERIES ? '' : id);
+                  }}
+                  options={[
+                    { value: NO_SERIES, label: '안 함' },
+                    ...(inst?.series ?? []).map((x) => ({ value: x.id, label: x.label })),
+                  ]}
+                />
+              </Field>
+            </Box>
             <Box width={lbW}>
               <Field label="룩백 (일)"
                 help="이 다리를 담을 때의 조건이에요. 다섯을 다 채우면 같이 얼고, 하나라도 비면 조건 없는 다리로 담겨요.">
@@ -824,6 +937,7 @@ export function PortfolioPage() {
                       : { dv01: size * 1e4 }),
                     tag: legTag,
                     ...(knobs ? { knobs } : {}),
+                    ...(legSeries ? { series: legSeries } : {}),
                   }),
                   `${KIND_WORD[legKind]} ${legTenor} ${SIDE_WORD[legSide] ?? legSide}${
                     eul(SIDE_WORD[legSide] ?? legSide)} 담았어요.`);

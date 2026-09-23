@@ -816,3 +816,90 @@ class Test다리에_얼린_조건:
         assert got["lookback"] == 60 and isinstance(got["lookback"], int)
         assert got["entryZ"] == 2.5 and isinstance(got["entryZ"], float)
         assert got["entryMode"] == "touch"
+
+
+class Test청산_손절_추적:
+    """★얼린 조건으로 **지금** 닿았는가 [OWNER 2026-09-23].
+
+    이 시험이 지키는 것은 하나다 — **엔진과 같은 규칙인가.** 장부가 제 규칙으로
+    「청산 닿음」을 적으면 그 순간 이 데스크에 청산선이 둘이 된다.
+    """
+
+    OK = {"lookback": 3, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.0,
+          "entryMode": "level"}
+
+    def leg(self, vals, entry, knobs=None, series="BSS-2Y"):
+        pts = [{"t": f"2026-01-{i + 1:02d}", "v": v} for i, v in enumerate(vals)]
+        leg = {"entry": entry, "knobs": knobs if knobs is not None else self.OK,
+               "series": series}
+        return paper.track_leg(leg, points_of=lambda _s: pts)
+
+    def test_조건이나_계열이_없으면_None_이다(self):
+        """「못 잰다」와 「안 닿았다」는 다른 말이다."""
+        pts = [{"t": "2026-01-01", "v": 1.0}]
+        assert paper.track_leg({"entry": "2026-01-01", "knobs": None,
+                                "series": "BSS-2Y"}, points_of=lambda _s: pts) is None
+        assert paper.track_leg({"entry": "2026-01-01", "knobs": self.OK,
+                                "series": None}, points_of=lambda _s: pts) is None
+
+    def test_창이_안_차면_사유를_싣는다(self):
+        got = self.leg([1.0, 2.0], "2026-01-02")
+        assert got["hit"] is None and "룩백" in got["why"]
+
+    def test_방향은_진입일_z_의_부호가_정한다(self):
+        """엔진의 `position > 0` = 「아래에서 들어갔다」 = 진입 봉 z 가 음수."""
+        # 아래에서: 마지막이 창의 평균보다 훨씬 낮다 → z < 0 → 롱
+        down = self.leg([10.0, 10.0, 8.0], "2026-01-03")
+        assert down["dir"] == 1 and down["entryZ"] < 0
+        up = self.leg([10.0, 10.0, 12.0], "2026-01-03")
+        assert up["dir"] == -1 and up["entryZ"] > 0
+
+    def test_손절은_방향을_안_본다(self):
+        """`|z| ≥ stopZ` — 엔진의 그 줄 그대로."""
+        # 진입 뒤 같은 쪽으로 더 벌어진다(롱인데 더 내려감)
+        vals = [10.0, 10.0, 8.0, 9.0, 10.5, 0.0]
+        got = self.leg(vals, "2026-01-03", {**self.OK, "stopZ": 1.0})
+        assert got["dir"] == 1
+        assert abs(got["z"]) >= 1.0 and got["hit"] == "stop"
+
+    def test_청산은_교차선이고_방향을_본다(self):
+        """롱이면 `z ≥ −exitZ` — 밴드 안으로 **돌아온** 봉."""
+        # 롱 진입 뒤 중심선을 지나 위로. ⚠ 마지막 창이 **평평하면 σ=0 이라 z 가
+        # 없다** — 그건 「안 닿았다」가 아니라 「못 잰다」이므로 값을 움직여 둔다.
+        vals = [10.0, 10.0, 8.0, 9.0, 10.0, 11.0]
+        got = self.leg(vals, "2026-01-03", {**self.OK, "exitZ": 0.5, "stopZ": 9.0})
+        assert got["dir"] == 1 and got["hit"] == "exit"
+
+    def test_아직_안_닿았으면_hit_은_None(self):
+        vals = [10.0, 10.0, 8.0, 9.0, 10.5, 8.2]
+        got = self.leg(vals, "2026-01-03", {**self.OK, "exitZ": 0.0, "stopZ": 9.0})
+        assert got["dir"] == 1 and got["hit"] is None
+
+    def test_손절이_청산을_이긴다(self):
+        """같은 날 둘 다 참이면 **손절**이 이름을 갖는다 — 엔진의 우선순위.
+
+        손절 조건에서 나간 것을 「청산」이라 적으면 사후에 원인을 셀 수 없다.
+        """
+        # 롱인데 반대쪽으로 크게 지나감 → 청산선도 넘고 손절선도 넘는다
+        vals = [10.0, 10.0, 8.0, 9.0, 10.5, 30.0]
+        got = self.leg(vals, "2026-01-03", {**self.OK, "exitZ": 0.5, "stopZ": 1.0})
+        assert got["dir"] == 1
+        assert got["z"] >= -0.5, "청산 조건도 참이어야 이 검정이 성립한다"
+        assert abs(got["z"]) >= 1.0
+        assert got["hit"] == "stop"
+
+    def test_z_는_엔진의_그_함수다(self):
+        """장부와 엔진이 **같은 z** 를 쓴다 — 모집단 σ, 같은 창."""
+        from app import mrbacktest as bt
+        vals = [10.0, 11.0, 9.0, 12.0, 8.0, 13.0]
+        got = self.leg(vals, "2026-01-06", {**self.OK, "lookback": 3})
+        want = bt.rolling_series(vals, 3)["z"][-1]
+        assert got["z"] == round(want, 3)
+
+    def test_모르는_계열은_거절한다(self):
+        """오타 하나가 「영원히 추적 안 되는 다리」를 만든다."""
+        with pytest.raises(paper.LegRejected) as e:
+            paper.check_series("BSS-2년")
+        assert "모르는 계열" in str(e.value)
+        assert paper.check_series(None) is None
+        assert paper.check_series("  ") is None

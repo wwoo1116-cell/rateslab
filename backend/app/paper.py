@@ -56,6 +56,7 @@ import datetime as _dt
 from pathlib import Path
 from typing import Any, Callable
 
+from . import mr as mr_mod
 from . import mrbacktest as mrbt
 from . import mrmetrics as mrm
 
@@ -174,6 +175,102 @@ def check_entry(entry: str, today: str | None = None) -> None:
 LEG_KNOBS = ("lookback", "entryZ", "exitZ", "stopZ", "entryMode")
 
 
+def check_series(sid: str | None) -> str | None:
+    """계열이 실재하는가 — **묶음과 다른 칸**이다 [OWNER 2026-09-23].
+
+    묶음은 부르는 이름이고 산술에 안 쓴다(그 칸 도움말의 그 규칙). 그런데
+    청산·손절을 추적하려면 다리가 **자기 계열**을 알아야 한다 — z 가 계열의
+    것이기 때문이다. 그래서 칸을 하나 더 두고, 묶음은 그대로 둔다.
+
+    `None` 이면 추적 안 하는 다리다. 모르는 계열은 조용히 넘기지 않는다 —
+    오타 하나가 「영원히 추적 안 되는 다리」를 만들고, 화면은 아무 말도 안 한다.
+    """
+    if sid is None or not str(sid).strip():
+        return None
+    sid = str(sid).strip()
+    known = {s for s, _l, _k in mr_mod.SERIES}
+    if sid not in known:
+        raise LegRejected(f"모르는 계열이에요: {sid}")
+    return sid
+
+
+def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None
+              ) -> dict[str, Any] | None:
+    """얼린 조건으로 **지금** 청산·손절에 닿았는가 [OWNER 2026-09-23].
+
+    ## 엔진과 **같은 규칙**을 쓴다 — 두 벌이면 장부가 거짓말을 한다
+
+    z 는 `mrbacktest.rolling_series`(모집단 σ) 그대로다. 판정도 그 엔진의 문을
+    그대로 옮긴다(`mrbacktest.simulate` 의 그 블록):
+
+        손절   |z| ≥ stopZ                       — **방향을 안 본다**
+        청산   롱이면 z ≥ −exitZ · 숏이면 z ≤ exitZ  — 교차선이다
+        우선   **손절 > 청산** (같은 날 둘이 참이면 손절이 이름을 갖는다)
+
+    ## 방향은 **진입일 z 의 부호**가 정한다
+
+    엔진에서 `position > 0`(롱)은 «아래에서 들어간» 것이고, 그건 진입 봉의 z 가
+    음수였다는 뜻이다. 그래서 다리에 방향을 따로 안 적는다 — 적으면 화면이
+    방향을 두 번 정의하게 되고, 둘이 어긋나는 날 아무도 모른다.
+
+    조건이 없거나·계열이 없거나·창이 안 차면 **`None`** 이다. 「안 닿았다」가
+    아니라 「못 잰다」이고, 둘은 다른 말이다(이 파일의 공란 정책).
+    """
+    knobs = leg.get("knobs")
+    sid = leg.get("series")
+    if not knobs or not sid:
+        return None
+    lb = int(knobs["lookback"])
+
+    def blank(why: str) -> dict[str, Any]:
+        """못 잴 때도 **같은 모양**을 낸다 — 부르는 쪽이 분기하지 않게.
+        모양이 둘이면 화면이 `hit` 를 물었다가 `undefined` 를 받고, 그건
+        「안 닿았다」와 구별이 안 된다."""
+        return {"series": sid, "z": None, "entryZ": None, "dir": None,
+                "asof": None, "hit": None, "why": why}
+
+    getter = points_of or (lambda s: mr_mod.series_points(s)["points"])
+    try:
+        pts = getter(sid)
+    except Exception as exc:                      # noqa: BLE001 — 사유를 싣고 산다
+        return blank(f"계열을 못 읽었어요: {exc}")
+    dates = [p["t"] for p in pts]
+    vals = [float(p["v"]) for p in pts]
+    z = mrbt.rolling_series(vals, lb)["z"]
+    entry = str(leg.get("entry") or "")
+    at = [i for i, t in enumerate(dates) if t <= entry]
+    if not at:
+        return blank("진입일이 계열 표본보다 앞서요")
+    i0 = at[-1]
+    z0, z1 = z[i0], z[-1]
+    # ⚠ z 가 없는 이유가 **둘**이다 — 창이 안 찼거나(앞머리) σ 가 0 이거나
+    #   (값이 안 움직인 창). 한 문장으로 뭉치면 읽는 사람이 엉뚱한 데를 본다.
+    if z0 is None:
+        why = ("창이 아직 안 찼어요" if i0 < lb - 1 else "진입일 창의 σ 가 0 이에요")
+        return blank(f"{why} (룩백 {lb}일)")
+    if z1 is None:
+        why = ("창이 아직 안 찼어요" if len(vals) < lb else "지금 창의 σ 가 0 이에요")
+        return blank(f"{why} (룩백 {lb}일)")
+    # 방향 — 엔진의 `position` 과 같은 뜻. z0 가 0 이면 어느 쪽도 아니다.
+    if z0 == 0:
+        return blank("진입일 z 가 0 이라 방향을 못 정해요")
+    pos = 1 if z0 < 0 else -1
+    stop = abs(z1) >= float(knobs["stopZ"])
+    ex = float(knobs["exitZ"])
+    exit_hit = (z1 >= -ex) if pos > 0 else (z1 <= ex)
+    return {
+        "series": sid,
+        "z": round(z1, 3),
+        "entryZ": round(z0, 3),
+        "dir": pos,
+        "asof": dates[-1],
+        # 우선순위가 곧 이름이다 — 손절 조건에서 나간 것을 「청산」이라 적으면
+        # 사후에 원인을 셀 수 없다(엔진의 그 주석).
+        "hit": "stop" if stop else ("exit" if exit_hit else None),
+        "why": None,
+    }
+
+
 def check_knobs(knobs: dict | None) -> dict | None:
     """조건이 말이 되는 값인가 — 아니면 사유를 들고 죽는다(422).
 
@@ -236,7 +333,8 @@ def check_knobs(knobs: dict | None) -> dict | None:
 def add_leg(store: dict[str, Any], *, kind: str, tenor: str, side: str,
             entry: str, level: float, notional: float, dv01: float,
             tag: str = "", note: str = "",
-            knobs: dict | None = None) -> dict[str, Any]:
+            knobs: dict | None = None,
+            series: str | None = None) -> dict[str, Any]:
     """다리 하나를 쌓는다. `exit` 는 비워 둔다(아직 들고 있다).
 
     `knobs` 는 **그날의 조건을 얼린 것**이다(`check_knobs` 의 그 전말). 뒤에
@@ -245,6 +343,7 @@ def add_leg(store: dict[str, Any], *, kind: str, tenor: str, side: str,
     check_leg(kind, tenor, side)
     check_entry(entry)
     frozen = check_knobs(knobs)
+    sid = check_series(series)
     store.setdefault("legs", [])
     store["legs"] = [*store["legs"], {
         "n": len(store["legs"]) + 1,
@@ -256,6 +355,8 @@ def add_leg(store: dict[str, Any], *, kind: str, tenor: str, side: str,
         # 조건은 **없으면 없는 채로** 둔다 — 빈 사전이면 「전부 0 으로 들어갔다」
         # 로 읽히고, 그건 「안 적었다」와 다른 말이다.
         "knobs": frozen,
+        # 계열 — 추적이 서는 자리. 묶음과 **다른 칸**이다(`check_series`).
+        "series": sid,
         "exit": None, "exitLevel": None,
     }]
     if store.get("opened") is None:
@@ -734,7 +835,12 @@ def build_sheet(*, leg_of: Callable[..., dict],
                 failed.append({"id": f"leg{lg['n']}", "why": str(exc)})
         if mark_t:
             mark_days.append(mark_t)
-        pos_legs.append(score_leg(lg, mark, cost_bp=cost_bp, mark_t=mark_t))
+        row = score_leg(lg, mark, cost_bp=cost_bp, mark_t=mark_t)
+        # ── 추적 — **들고 있는 다리만** [OWNER 2026-09-23] ─────────────────
+        # 닫힌 다리에 「청산 닿음」을 적는 것은 지난 일을 오늘 일처럼 적는 것이다.
+        # 계열이나 조건이 없으면 `None` 이고, 화면이 그 사실을 그대로 적는다.
+        row["track"] = track_leg(lg) if row["open"] else None
+        pos_legs.append(row)
 
     rule_daily = merge_daily(rule_legs)
     man_daily = merge_daily(man_legs)

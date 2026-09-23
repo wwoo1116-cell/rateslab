@@ -174,6 +174,34 @@ export interface PaperLegKnobs {
   entryMode: 'level' | 'touch';
 }
 
+/**
+ * 청산·손절 **추적** [OWNER 2026-09-23 — "청산이랑 손절 추적할 수 있게"].
+ *
+ * 판정은 **엔진의 문을 그대로** 옮긴 것이다(`backend/app/paper.py::track_leg`):
+ * 손절 `|z| ≥ stopZ`(방향 무관) · 청산은 교차선이고 방향을 본다 · **손절이
+ * 먼저** 이름을 갖는다. 장부가 제 규칙으로 판정하면 이 데스크에 청산선이 둘이
+ * 된다.
+ *
+ * 방향은 **진입일 z 의 부호**가 정한다 — 엔진에서 「아래에서 들어갔다」가 곧
+ * 진입 봉 z 가 음수라는 뜻이다. 다리에 방향을 따로 안 적는 이유이기도 하다
+ * (적으면 화면이 방향을 두 번 정의한다).
+ */
+export interface PaperLegTrack {
+  series: string;
+  /** 지금 z. 못 재면 `null` 이고 `why` 가 사유를 진다. */
+  z: number | null;
+  /** 진입일의 z — 방향의 근거라 화면이 같이 적는다. */
+  entryZ: number | null;
+  /** +1 = 아래에서 들어감(롱) · −1 = 위에서. */
+  dir: number | null;
+  /** 이 판정이 선 날(계열의 마지막 관측). */
+  asof: string | null;
+  /** `stop` · `exit` · 아직이면 `null`. */
+  hit: 'stop' | 'exit' | null;
+  /** 못 잰 사유. 「안 닿았다」와 **다른 말**이라 칸이 따로 있다. */
+  why: string | null;
+}
+
 export interface PaperPositionLeg {
   n: number;
   kind: 'irs' | 'bond' | 'fut';
@@ -190,6 +218,12 @@ export interface PaperPositionLeg {
   /** 얼린 조건 — **안 적은 다리는 `null`** 이다(빈 사전이 아니다). 「안 적었다」와
    *  「전부 0 으로 들어갔다」는 다른 말이다. */
   knobs: PaperLegKnobs | null;
+  /** 이 다리가 속한 **계열**(`BSS-2Y` …). 묶음과 **다른 칸**이다 — 묶음은 부르는
+   *  이름이고 산술에 안 쓴다. 추적은 계열의 z 로 하므로 이 칸이 있어야 선다. */
+  series: string | null;
+  /** 얼린 조건으로 **지금** 닿았는가. 들고 있는 다리에만 서고, 못 잴 때도 같은
+   *  모양으로 온다(`why` 에 사유). */
+  track: PaperLegTrack | null;
   exit: string | null;
   exitLevel: number | null;
   open: boolean;
@@ -213,6 +247,9 @@ export interface PaperPositionLeg {
  *  (오너 예시가 그 자리였다 — 2년 국채선물은 KRX 에도 없다). `why` 는 빠진
  *  방향의 사유다(현물 매도). */
 export interface PaperInstruments {
+  /** 고를 수 있는 계열 — **서버가 낸다**. 화면이 제 손으로 적으면 없는 계열을
+   *  고를 수 있게 되고, 그 다리는 영원히 추적이 안 된다. */
+  series?: { id: string; label: string }[];
   asof: string | null;
   kinds: {
     kind: 'irs' | 'bond' | 'fut';
@@ -273,6 +310,8 @@ export const closeTrade = (n: number, exit: string) =>
 export const addLeg = (l: {
   kind: string; tenor: string; side: string; entry: string; level: number;
   notional?: number; dv01?: number; tag?: string; note?: string;
+  /** 이 다리가 속한 계열. 주면 청산·손절 추적이 선다. */
+  series?: string;
   /** 그날의 조건. 주면 이 다리에 **언다** — 안 주면 조건 없는 다리다.
    *
    *  ⚠ 숫자 칸은 **글자 그대로** 보낸다(`'60'`). 화면에서 `Number()` 로 바꾸면

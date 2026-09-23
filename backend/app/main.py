@@ -3528,6 +3528,8 @@ def paper_add_leg(body: dict) -> dict:
         paper.check_entry(entry)
         # 조건도 **여기서** 본다 — 아래까지 가면 사유가 다른 이름을 갖는다.
         paper.check_knobs(body.get("knobs"))
+        # 계열도 여기서 — 오타가 아래까지 가면 사유가 다른 이름을 갖는다.
+        paper.check_series(body.get("series"))
     except paper.LegRejected as exc:
         # 422 다 — 요청이 깨진 것이 아니라 **이 데스크가 안 하는 거래**다.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -3548,7 +3550,7 @@ def paper_add_leg(body: dict) -> dict:
     paper.add_leg(st, kind=kind, tenor=tenor, side=side, entry=entry,
                   level=level, notional=notional, dv01=dv01,
                   tag=str(body.get("tag") or ""), note=str(body.get("note") or ""),
-                  knobs=body.get("knobs"))
+                  knobs=body.get("knobs"), series=body.get("series"))
     paper.save(st)
     return {"ok": True, **_paper_sheet()}
 
@@ -3616,6 +3618,10 @@ def paper_instruments() -> dict:
     swap = [t for t in cashbond.ASW_TENORS]
     return {
         "asof": dates[-1] if dates else None,
+        # 계열 목록도 **서버가 낸다** [OWNER 2026-09-23]. 화면이 제 손으로 적으면
+        # 없는 계열을 고를 수 있게 되고, 그 다리는 영원히 추적이 안 된다.
+        # 이름은 MR 화면의 그것(`mr.SERIES`)이라 두 화면이 같은 낱말을 쓴다.
+        "series": [{"id": sid, "label": label} for sid, label, _k in mr_mod.SERIES],
         "kinds": [
             {"kind": "irs", "label": "IRS", "tenors": swap,
              "sides": [{"v": "pay", "label": "페이"},
