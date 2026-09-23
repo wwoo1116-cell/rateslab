@@ -55,7 +55,8 @@ import { DROPDOWN_STYLES } from '@/ui/window/popup';
  * [OWNER 2026-09-22 — "지금은 일단"]. 되살릴 때 임포트만 되돌리면 된다. */
 import {
   addLeg, closeLeg, fetchInstruments, fetchPaper, resetBook,
-  type PaperInstruments, type PaperPositionLeg, type PaperSheet,
+  type PaperInstruments, type PaperLegKnobs, type PaperPositionLeg,
+  type PaperSheet,
 } from './api';
 
 const MINUS = '−';
@@ -81,6 +82,26 @@ const SIDE_WORD: Record<string, string> = {
  *  ⚠ 부호는 **낱말이 아니라 `rateSign`** 이 진다 — 「페이」와 「선물 매도」가 같은
  *  쪽이고 「리시브」와 「매수」가 같은 쪽이다. 낱말로 색을 칠하면 계기마다 규약을
  *  다시 적게 되고, 그게 이 리포가 반복해서 밟은 자리다. */
+/** 진입 규칙의 우리말 — **MR 화면의 그 낱말**을 그대로 쓴다
+ *  (`mr/api.ts::MR_ENTRY_MODES`). 두 화면이 같은 규칙을 다르게 부르면 읽는
+ *  사람이 어제 다리와 오늘 노브를 못 잇는다. */
+const ENTRY_WORD: Record<PaperLegKnobs['entryMode'], string> = {
+  level: '이탈 즉시',
+  touch: '밴드 복귀',
+};
+
+/** 얼린 조건 한 줄 — `120일 · 2.5/0.5/3σ · 이탈 즉시`.
+ *
+ *  σ 셋을 슬래시로 잇는 것은 트레이더가 부르는 꼴 그대로다("2.5/0.5/3").
+ *  단위는 **묶음이 진다** — 숫자마다 σ 를 붙이면 한 줄이 세 번 같은 말을 한다
+ *  (CLAUDE.md 「얼라인」 의 «열 제목이 단위를 진다» 와 같은 규칙). */
+function knobWord(k: PaperLegKnobs): string {
+  const z = [k.entryZ, k.exitZ, k.stopZ]
+    .map((v) => String(Number(v.toFixed(2))))
+    .join('/');
+  return `${k.lookback}일 · ${z}σ · ${ENTRY_WORD[k.entryMode]}`;
+}
+
 function PositionTable({ legs, busy, today, onClose }: {
   legs: PaperPositionLeg[]; busy: boolean;
   /** 오늘(서울) — 청산일의 기본값이다. **`asof`(자료의 날)가 아니다.** */
@@ -116,6 +137,15 @@ function PositionTable({ legs, busy, today, onClose }: {
             </TableCell>
             <TableCell as="th" scope="col">
               <Text font="caption" as="span" color="fgMuted">묶음</Text>
+            </TableCell>
+            {/* ★조건 — 묶음 **오른쪽**이다 [트레이더 2026-09-23 · 자리는 오너].
+                「어제 60일/2.5/0.5/3 으로 들어갔는데 오늘 화면은 120/2.5/0/3」
+                이라 확인할 수가 없던 자리다. 다리는 그날의 조건으로 들어간 것이고
+                Strategy 노브는 오늘 것이라, 장부가 안 들고 있으면 청산선도 손절선도
+                딴 선이 된다. */}
+            <TableCell as="th" scope="col">
+              <ThHelp label="조건"
+                help="담을 때 얼린 그날의 조건이에요 — 룩백 · 진입/청산/손절 σ · 진입 규칙. Strategy 화면의 노브가 나중에 바뀌어도 이 값은 안 바뀌어요." />
             </TableCell>
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
               <ThHelp label="내 레벨"
@@ -158,6 +188,13 @@ function PositionTable({ legs, busy, today, onClose }: {
               </TableCell>
               <TableCell>
                 <Text font="legal" as="span" color="fgMuted" noWrap>{l.tag || MINUS}</Text>
+              </TableCell>
+              <TableCell>
+                {/* 조건 없는 다리는 «—» 다 — 「전부 0 으로 들어갔다」가 아니라
+                    「안 적었다」이고, 둘은 다른 말이다(서버의 공란 정책). */}
+                <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+                  {l.knobs ? knobWord(l.knobs) : MINUS}
+                </Text>
               </TableCell>
               <TableCell className="sr-num" justifyContent="flex-end">
                 <Text font="label2" as="span" tabularNumbers noWrap>{l.level.toFixed(3)}</Text>
@@ -318,8 +355,49 @@ export function PortfolioPage() {
   const [sizeMode, setSizeMode] = useState<'notional' | 'dv01'>('notional');
   const [sizeVal, setSizeVal] = useState('');
   const [legTag, setLegTag] = useState('');
+  /** ★그날의 조건 [트레이더 2026-09-23]. **다섯이 다 차야 같이 간다** — 서버가
+   *  반쪽을 거절하고(「룩백만 적힌」 다리는 청산선을 못 그린다), 하나도 안 치면
+   *  조건 없는 다리다(종전 동작이 기본값으로 산다).
+   *
+   *  기본값을 안 넣는 이유: 넣으면 **안 친 조건이 적힌 다리**가 생기고, 그건
+   *  「안 적었다」가 아니라 거짓이 된다. 빈 칸은 빈 칸이다. */
+  const [knobLb, setKnobLb] = useState('');
+  const [knobEntryZ, setKnobEntryZ] = useState('');
+  const [knobExitZ, setKnobExitZ] = useState('');
+  const [knobStopZ, setKnobStopZ] = useState('');
+  const [knobMode, setKnobMode] = useState<'level' | 'touch'>('level');
   /** 초기화 한 번 더 묻기 — 화면의 문이고, 서버가 확인 낱말로 둘째 문을 진다. */
   const [resetArm, setResetArm] = useState(false);
+
+  /**
+   * 친 조건 → 보낼 것.
+   *
+   * **다 비면 `undefined`**(조건 없는 다리 — 종전 동작). **하나라도 차 있으면
+   * 친 것을 그대로 보낸다** — 반쪽이면 서버가 「빠진 것: exitZ」라고 사유를
+   * 적는다.
+   *
+   * ★반쪽을 화면에서 조용히 버리지 않는 이유: 룩백만 치고 청산σ를 깜빡한
+   * 사람에게 조건 **없는** 다리가 담기면, 화면은 「담았어요」라고 적고 장부에는
+   * 안 적힌 조건이 남는다. 안 한 일을 했다고 적는 것이 이 장부에서 제일 나쁜
+   * 결함이다(`close_leg` 의 그 규율과 같은 자리).
+   *
+   * ⚠ 숫자로 **안 바꾸고 글자 그대로** 보낸다. `Number('')` 은 `0` 이라 빈
+   * 칸이 「0σ 로 들어갔다」가 되고, `Number('삼')` 은 `NaN` → JSON `null` 이라
+   * 사유가 「빠졌다」로 바뀐다. 서버가 파싱해야 「숫자가 아니에요: '삼'」을
+   * 말할 수 있다.
+   */
+  const knobs = (() => {
+    const raw = [knobLb, knobEntryZ, knobExitZ, knobStopZ].map((v) => v.trim());
+    if (raw.every((v) => !v)) return undefined;
+    const put = (v: string) => (v ? v : undefined);
+    return {
+      lookback: put(raw[0]),
+      entryZ: put(raw[1]),
+      exitZ: put(raw[2]),
+      stopZ: put(raw[3]),
+      entryMode: knobMode,
+    };
+  })();
 
   useEffect(() => {
     /* 한 번만 읽는다 — 계기 목록은 하루에 안 바뀐다. 실패해도 화면은 서고,
@@ -615,6 +693,63 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
+            {/* ★그날의 조건 다섯 [트레이더 2026-09-23]. 이 줄은 `flexWrap` 이라
+                좁으면 둘째 줄로 접힌다 — 칸이 열둘이 되는 자리고, 접히는 것이
+                줄이는 것보다 낫다(「낱말 중간 줄바꿈 금지」 5 와 같은 규율).
+                라벨 위 · 32px 등고 · 바닥 정렬은 형제와 같다. */}
+            <Box width={92}>
+              <Field label="룩백 (일)"
+                help="이 다리를 담을 때의 조건이에요. 다섯을 다 채우면 같이 얼고, 하나라도 비면 조건 없는 다리로 담겨요.">
+                <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                  accessibilityLabel="룩백 (일)"
+                  value={knobLb} placeholder="120"
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobLb(e.target.value)}
+                />
+              </Field>
+            </Box>
+            <Box width={78}>
+              <Field label="진입 σ">
+                <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                  accessibilityLabel="진입 σ"
+                  value={knobEntryZ} placeholder="2.5"
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobEntryZ(e.target.value)}
+                />
+              </Field>
+            </Box>
+            <Box width={78}>
+              <Field label="청산 σ">
+                <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                  accessibilityLabel="청산 σ"
+                  value={knobExitZ} placeholder="0.5"
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobExitZ(e.target.value)}
+                />
+              </Field>
+            </Box>
+            <Box width={78}>
+              <Field label="손절 σ">
+                <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                  accessibilityLabel="손절 σ"
+                  value={knobStopZ} placeholder="3"
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobStopZ(e.target.value)}
+                />
+              </Field>
+            </Box>
+            <Box width={132}>
+              <Field label="진입 규칙">
+                {/* 낱말은 MR 화면의 그것이다 — 두 화면이 같은 규칙을 다르게
+                    부르면 어제 다리와 오늘 노브를 못 잇는다. */}
+                <Select size="s" font="legal" styles={DROPDOWN_STYLES}
+                  accessibilityLabel="진입 규칙"
+                  value={knobMode}
+                  onChange={(v: unknown) =>
+                    setKnobMode(String(v ?? 'level') as 'level' | 'touch')}
+                  options={[
+                    { value: 'level', label: '이탈 즉시' },
+                    { value: 'touch', label: '밴드 복귀' },
+                  ]}
+                />
+              </Field>
+            </Box>
             <button
               type="button"
               className="sr-pillbtn"
@@ -636,6 +771,7 @@ export function PortfolioPage() {
                       ? { notional: size * 1e8 }
                       : { dv01: size * 1e4 }),
                     tag: legTag,
+                    ...(knobs ? { knobs } : {}),
                   }),
                   `${KIND_WORD[legKind]} ${legTenor} ${SIDE_WORD[legSide] ?? legSide}${
                     eul(SIDE_WORD[legSide] ?? legSide)} 담았어요.`);

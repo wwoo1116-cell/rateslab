@@ -3489,7 +3489,17 @@ def paper_add_leg(body: dict) -> dict:
     > "포지션은 써서 넣을 수 있게 … IRS pay receive 하나 씩 쌓는 방식으로"
 
     받는 것: `kind`(irs|bond|fut) · `tenor` · `side` · `entry` · `level`(%) ·
-    그리고 **`notional`(원) 또는 `dv01`(원/bp) 중 하나**.
+    그리고 **`notional`(원) 또는 `dv01`(원/bp) 중 하나**. `knobs` 는 선택이다 —
+    주면 **그날의 조건이 그 다리에 언다**(`paper.check_knobs` 의 그 전말).
+
+    ## `knobs` — 「어제 무슨 조건으로 들어갔나」 [트레이더 2026-09-23]
+
+    > "어제자에 진입한 조건은 60일, 2.5/0.5/3 … 오늘 보니까 120/2.5/0/3 이래서
+    >  확인할 수가 없게 됐다"
+
+    Strategy 화면의 노브는 **오늘 것**이라, 어제 다리를 오늘 노브로 읽으면 청산선도
+    손절선도 딴 선이 된다. 규칙 북(`paper.enroll`)은 처음부터 「조건을 그 자리에서
+    언다」였는데 포지션 카드만 그 규율 밖에 있었다.
 
     ## 둘 중 하나만 받는 이유 [OWNER 「둘 다 적는다」]
 
@@ -3516,6 +3526,8 @@ def paper_add_leg(body: dict) -> dict:
         # 그 날의 커브를 읽으므로, 깨진 날짜가 거기까지 가면 사유가 「커브를 못
         # 읽었다」로 바뀌어 진짜 원인이 가려진다.
         paper.check_entry(entry)
+        # 조건도 **여기서** 본다 — 아래까지 가면 사유가 다른 이름을 갖는다.
+        paper.check_knobs(body.get("knobs"))
     except paper.LegRejected as exc:
         # 422 다 — 요청이 깨진 것이 아니라 **이 데스크가 안 하는 거래**다.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -3535,7 +3547,8 @@ def paper_add_leg(body: dict) -> dict:
     st = paper.load()
     paper.add_leg(st, kind=kind, tenor=tenor, side=side, entry=entry,
                   level=level, notional=notional, dv01=dv01,
-                  tag=str(body.get("tag") or ""), note=str(body.get("note") or ""))
+                  tag=str(body.get("tag") or ""), note=str(body.get("note") or ""),
+                  knobs=body.get("knobs"))
     paper.save(st)
     return {"ok": True, **_paper_sheet()}
 

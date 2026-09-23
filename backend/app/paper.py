@@ -56,6 +56,7 @@ import datetime as _dt
 from pathlib import Path
 from typing import Any, Callable
 
+from . import mrbacktest as mrbt
 from . import mrmetrics as mrm
 
 #: 장부 파일. 리포 밖이 아니라 `backend/data/` 인 이유는 백업·이관이 한 자리에서
@@ -168,12 +169,82 @@ def check_entry(entry: str, today: str | None = None) -> None:
         raise LegRejected(f"체결일이 미래예요: {entry} (오늘 {now.isoformat()})")
 
 
+#: 다리와 같이 어는 조건의 칸들 — **`enroll` 의 `knobs` 와 같은 낱말**이다.
+#: 두 책이 같은 조건을 다른 이름으로 적으면 나중에 둘을 못 잇는다.
+LEG_KNOBS = ("lookback", "entryZ", "exitZ", "stopZ", "entryMode")
+
+
+def check_knobs(knobs: dict | None) -> dict | None:
+    """조건이 말이 되는 값인가 — 아니면 사유를 들고 죽는다(422).
+
+    ## 왜 장부가 조건을 드는가 [트레이더 2026-09-23]
+
+    > "어제자에 진입한 조건은 60일, 2.5/0.5/3 … 오늘 보니까 120/2.5/0/3 이래서
+    >  확인할 수가 없게 됐다"
+
+    다리는 **그날의 조건으로** 들어간 것인데 장부가 그 조건을 안 들고 있었다.
+    Strategy 화면의 노브는 오늘 것이라, 어제 다리를 오늘 노브로 읽으면 청산선도
+    손절선도 딴 선이 된다. 규칙 북(`enroll`)은 처음부터 「조건을 그 자리에서
+    언다」였는데 **포지션 카드만 그 규율 밖**에 있었다.
+
+    ## 범위는 `main._mr_check_knobs` 와 같다
+
+    같은 조건이 두 문을 지나는데 문마다 다른 값을 통과시키면, 장부에 엔진이
+    못 받는 조건이 적힌다 — 그때 그 다리는 「무슨 규칙이었는지」를 영원히 못
+    돌려준다. 다만 **프리셋으로는 안 막는다**: 프리셋은 화면이 고르는 칸이고,
+    장부는 «실제로 무엇으로 들어갔나» 를 적는 자리라 자유 입력을 받는다.
+
+    `None` 이면 조건 없는 다리다 — 옛 다리와 「그냥 담는」 다리가 그것이고,
+    빈 사전으로 바꾸지 않는다(«안 적었다» 와 «전부 0» 은 다른 말이다).
+    """
+    if knobs is None:
+        return None
+    got = {k: v for k, v in knobs.items() if v is not None}
+    if not got:
+        return None
+    unknown = set(got) - set(LEG_KNOBS)
+    if unknown:
+        raise LegRejected(f"모르는 조건이에요: {' · '.join(sorted(unknown))}")
+    missing = set(LEG_KNOBS) - set(got)
+    if missing:
+        # 반쪽 조건은 안 받는다 — 「룩백만 적힌」 다리는 청산선을 못 그린다.
+        raise LegRejected(
+            f"조건은 다섯이 다 있어야 해요 — 빠진 것: {' · '.join(sorted(missing))}")
+    try:
+        lb = int(got["lookback"])
+    except (TypeError, ValueError):
+        raise LegRejected(f"룩백이 숫자가 아니에요: {got['lookback']!r}") from None
+    if not 2 <= lb <= 600:
+        raise LegRejected(f"룩백이 범위를 벗어나요: {lb}일 (2~600)")
+    out: dict[str, Any] = {"lookback": lb}
+    for key, word in (("entryZ", "진입"), ("exitZ", "청산"), ("stopZ", "손절")):
+        try:
+            z = float(got[key])
+        except (TypeError, ValueError):
+            raise LegRejected(f"{word} σ가 숫자가 아니에요: {got[key]!r}") from None
+        if not 0.0 <= z <= 20.0:
+            raise LegRejected(f"{word} σ가 범위를 벗어나요: {z} (0~20)")
+        out[key] = z
+    mode = str(got["entryMode"])
+    if mode not in mrbt.ENTRY_MODES:
+        raise LegRejected(
+            f"진입 규칙이 이상해요: {mode} ({' | '.join(mrbt.ENTRY_MODES)})")
+    out["entryMode"] = mode
+    return out
+
+
 def add_leg(store: dict[str, Any], *, kind: str, tenor: str, side: str,
             entry: str, level: float, notional: float, dv01: float,
-            tag: str = "", note: str = "") -> dict[str, Any]:
-    """다리 하나를 쌓는다. `exit` 는 비워 둔다(아직 들고 있다)."""
+            tag: str = "", note: str = "",
+            knobs: dict | None = None) -> dict[str, Any]:
+    """다리 하나를 쌓는다. `exit` 는 비워 둔다(아직 들고 있다).
+
+    `knobs` 는 **그날의 조건을 얼린 것**이다(`check_knobs` 의 그 전말). 뒤에
+    Strategy 화면의 노브가 바뀌어도 이 다리가 무엇으로 들어갔는지는 안 바뀐다.
+    """
     check_leg(kind, tenor, side)
     check_entry(entry)
+    frozen = check_knobs(knobs)
     store.setdefault("legs", [])
     store["legs"] = [*store["legs"], {
         "n": len(store["legs"]) + 1,
@@ -182,6 +253,9 @@ def add_leg(store: dict[str, Any], *, kind: str, tenor: str, side: str,
         "entry": entry, "level": float(level),
         "notional": float(notional), "dv01": float(dv01),
         "tag": tag, "note": note,
+        # 조건은 **없으면 없는 채로** 둔다 — 빈 사전이면 「전부 0 으로 들어갔다」
+        # 로 읽히고, 그건 「안 적었다」와 다른 말이다.
+        "knobs": frozen,
         "exit": None, "exitLevel": None,
     }]
     if store.get("opened") is None:

@@ -150,6 +150,30 @@ export interface PaperSheet {
  *
  *  `rateSign` 이 이 물건의 전부다: +1 이면 금리가 오를 때 번다. 계기마다 낱말이
  *  다르지만(페이/리시브 · 매수/매도) 산술은 이 부호 하나를 지난다. */
+/**
+ * 다리와 같이 얼린 **그날의 조건** [트레이더 2026-09-23].
+ *
+ * > "어제자에 진입한 조건은 60일, 2.5/0.5/3 … 오늘 보니까 120/2.5/0/3 이래서
+ * >  확인할 수가 없게 됐다"
+ *
+ * Strategy 화면의 노브는 **오늘 것**이라, 어제 다리를 오늘 노브로 읽으면 청산선도
+ * 손절선도 딴 선이 된다. 규칙 북(`enroll`)은 처음부터 조건을 얼리고 있었고
+ * 포지션 카드만 그 규율 밖에 있었다.
+ *
+ * ⚠ **다섯이 다 있거나 아예 없거나**다 — 서버가 반쪽을 거절한다(「룩백만 적힌」
+ * 다리는 청산선을 못 그린다). 그래서 이 타입에 선택 칸이 없다.
+ */
+export interface PaperLegKnobs {
+  lookback: number;
+  entryZ: number;
+  exitZ: number;
+  stopZ: number;
+  /** `level` = 이탈 즉시 · `touch` = 밴드 복귀. 낱말은 MR 화면과 **같은 것**을
+   *  쓴다(`mr/api.ts::MR_ENTRY_MODES`) — 두 화면이 같은 규칙을 다르게 부르면
+   *  읽는 사람이 둘을 못 잇는다. */
+  entryMode: 'level' | 'touch';
+}
+
 export interface PaperPositionLeg {
   n: number;
   kind: 'irs' | 'bond' | 'fut';
@@ -163,6 +187,9 @@ export interface PaperPositionLeg {
   dv01: number;
   tag: string;
   note: string;
+  /** 얼린 조건 — **안 적은 다리는 `null`** 이다(빈 사전이 아니다). 「안 적었다」와
+   *  「전부 0 으로 들어갔다」는 다른 말이다. */
+  knobs: PaperLegKnobs | null;
   exit: string | null;
   exitLevel: number | null;
   open: boolean;
@@ -246,6 +273,13 @@ export const closeTrade = (n: number, exit: string) =>
 export const addLeg = (l: {
   kind: string; tenor: string; side: string; entry: string; level: number;
   notional?: number; dv01?: number; tag?: string; note?: string;
+  /** 그날의 조건. 주면 이 다리에 **언다** — 안 주면 조건 없는 다리다.
+   *
+   *  ⚠ 숫자 칸은 **글자 그대로** 보낸다(`'60'`). 화면에서 `Number()` 로 바꾸면
+   *  빈 칸이 `0` 이 되어 「0σ 로 들어갔다」가 되고, 못 읽는 글자는 `NaN` → JSON
+   *  `null` 이 되어 사유가 「빠졌다」로 바뀐다. 서버가 파싱해야 「숫자가
+   *  아니에요: '삼'」을 말할 수 있다. */
+  knobs?: Partial<Record<keyof PaperLegKnobs, string | number | undefined>>;
 }) => post(paperLegUrl(), l);
 
 /** 다리 하나 닫기. **청산 레벨도 내가 적는다** — 진입을 종가로 안 매겼다. */

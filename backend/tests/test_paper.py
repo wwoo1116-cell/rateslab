@@ -716,3 +716,103 @@ class Test청산:
         st = self._book(entry=today)
         paper.close_leg(st, 1, today, 4.2)
         assert st["legs"][0]["exit"] == today
+
+
+class Test다리에_얼린_조건:
+    """★다리는 **그날의 조건으로** 들어갔다 [트레이더 2026-09-23].
+
+    > "어제자에 진입한 조건은 60일, 2.5/0.5/3 … 오늘 보니까 120/2.5/0/3 이래서
+    >  확인할 수가 없게 됐다"
+
+    Strategy 화면의 노브는 **오늘 것**이다. 어제 다리를 오늘 노브로 읽으면
+    청산선도 손절선도 딴 선이 되고, 그러면 그 다리의 청산·손절을 추적할 수가
+    없다. 규칙 북(`enroll`)은 처음부터 「조건을 그 자리에서 언다」였는데
+    **포지션 카드만 그 규율 밖**에 있었다.
+    """
+
+    OK = {"lookback": 60, "entryZ": 2.5, "exitZ": 0.5, "stopZ": 3.0,
+          "entryMode": "level"}
+
+    def leg(self, knobs, **kw):
+        st = dict(paper.EMPTY, legs=[])
+        base = dict(kind="irs", tenor="2Y", side="pay", entry="2026-09-21",
+                    level=3.00, notional=1e10, dv01=1_900_000.0)
+        paper.add_leg(st, **{**base, **kw}, knobs=knobs)
+        return st["legs"][-1]
+
+    def test_조건은_다리에_그대로_언다(self):
+        """어제 친 값이 그대로 남는다 — 오늘 노브가 뭐든."""
+        got = self.leg(self.OK)["knobs"]
+        assert got == self.OK
+
+    def test_안_적은_다리는_None_이다_빈_사전이_아니다(self):
+        """★「안 적었다」와 「전부 0 으로 들어갔다」는 **다른 말**이다.
+
+        빈 사전으로 바꾸면 화면이 「룩백 0일 · 0/0/0σ」를 적게 되고, 그건 없는
+        사실을 적는 것이다(이 리포의 공란 정책).
+        """
+        assert self.leg(None)["knobs"] is None
+        assert self.leg({})["knobs"] is None
+        # 전부 None 인 사전도 «안 적은» 것이다 — 화면이 빈 칸을 그렇게 보낸다.
+        assert self.leg({k: None for k in paper.LEG_KNOBS})["knobs"] is None
+
+    def test_반쪽_조건은_거절한다(self):
+        """「룩백만 적힌」 다리는 청산선을 못 그린다 — 그런 조건은 안 받는다."""
+        for missing in paper.LEG_KNOBS:
+            half = {k: v for k, v in self.OK.items() if k != missing}
+            with pytest.raises(paper.LegRejected) as e:
+                self.leg(half)
+            assert missing in str(e.value)
+
+    def test_모르는_칸은_거절한다(self):
+        """조용히 버리면 장부에 안 적힌 조건이 적힌 줄 안다."""
+        with pytest.raises(paper.LegRejected) as e:
+            self.leg({**self.OK, "timeStop": 20})
+        assert "timeStop" in str(e.value)
+
+    @pytest.mark.parametrize("bad,why", [
+        ({"lookback": 1}, "룩백"),
+        ({"lookback": 601}, "룩백"),
+        ({"lookback": "예순"}, "룩백"),
+        ({"entryZ": -0.1}, "진입"),
+        ({"exitZ": 20.1}, "청산"),
+        ({"stopZ": "삼"}, "손절"),
+        ({"entryMode": "즉시"}, "진입 규칙"),
+    ])
+    def test_범위_밖은_사유를_들고_죽는다(self, bad, why):
+        """범위는 `main._mr_check_knobs` 와 **같다**.
+
+        두 문이 다른 값을 통과시키면 장부에 **엔진이 못 받는 조건**이 적히고,
+        그때 그 다리는 「무슨 규칙이었는지」를 영원히 못 돌려준다.
+        """
+        with pytest.raises(paper.LegRejected) as e:
+            self.leg({**self.OK, **bad})
+        assert why in str(e.value)
+
+    def test_프리셋_밖의_값도_받는다(self):
+        """★막는 것은 **범위**이지 프리셋이 아니다.
+
+        프리셋(룩백 20/60/120 …)은 화면이 고르는 칸이고, 장부는 «실제로 무엇으로
+        들어갔나» 를 적는 자리다. 프리셋으로 막으면 자유 입력으로 돌린 조건의
+        다리를 장부가 못 받는다.
+        """
+        odd = {**self.OK, "lookback": 77, "entryZ": 1.85}
+        assert self.leg(odd)["knobs"]["lookback"] == 77
+
+    def test_두_책이_같은_낱말을_쓴다(self):
+        """`enroll` 의 `knobs` 와 **같은 칸 이름**이다.
+
+        규칙 북과 포지션 카드가 같은 조건을 다른 이름으로 적으면 나중에 둘을
+        못 잇는다 — 이 리포가 반복해서 밟은 자리다.
+        """
+        st = dict(paper.EMPTY)
+        paper.enroll(st, "BSS-2Y", self.OK, today="2026-09-23")
+        assert set(st["enrolled"][0]["knobs"]) == set(paper.LEG_KNOBS)
+
+    def test_숫자로_바꿔서_넣는다(self):
+        """화면은 글자를 보낸다 — 장부에는 수로 앉아야 한다."""
+        got = self.leg({"lookback": "60", "entryZ": "2.5", "exitZ": "0.5",
+                        "stopZ": "3", "entryMode": "touch"})["knobs"]
+        assert got["lookback"] == 60 and isinstance(got["lookback"], int)
+        assert got["entryZ"] == 2.5 and isinstance(got["entryZ"], float)
+        assert got["entryMode"] == "touch"
