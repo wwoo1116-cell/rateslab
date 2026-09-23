@@ -1318,6 +1318,17 @@
         "exit": "2025-01-21",
         "exitValue": 3.4552,
         "id": "10Y",
+        "legParts": [
+          {
+            "carry": 38493500.0,
+            "funding": null,
+            "name": "IRS",
+            "pnl": 90865936.0,
+            "rolldown": -15645250.0,
+            "startup": 22263.0,
+            "valuation": 67995423.0
+          }
+        ],
         "legs": [
           {
             "dv01": 8.472473,
@@ -1344,6 +1355,17 @@
         "exit": "2024-10-02",
         "exitValue": 3.6982,
         "id": "9M",
+        "legParts": [
+          {
+            "carry": -13993173.0,
+            "funding": null,
+            "name": "IRS",
+            "pnl": -14271037.0,
+            "rolldown": 7551390.0,
+            "startup": -61406.0,
+            "valuation": -7767847.0
+          }
+        ],
         "legs": [
           {
             "dv01": 0.736816,
@@ -1370,6 +1392,17 @@
         "exit": "2024-10-28",
         "exitValue": 4.6995,
         "id": "3Y-10Y",
+        "legParts": [
+          {
+            "carry": -25104965.0,
+            "funding": null,
+            "name": "IRS",
+            "pnl": -43941224.0,
+            "rolldown": -17770413.0,
+            "startup": -179027.0,
+            "valuation": -886818.0
+          }
+        ],
         "legs": [
           {
             "dv01": 8.431776,
@@ -1403,6 +1436,17 @@
         "exit": "2025-01-21",
         "exitValue": -11.1881,
         "id": "2Y-5Y-10Y",
+        "legParts": [
+          {
+            "carry": 6389748.0,
+            "funding": null,
+            "name": "IRS",
+            "pnl": 11323791.0,
+            "rolldown": 6342367.0,
+            "startup": 32411.0,
+            "valuation": -1440735.0
+          }
+        ],
         "legs": [
           {
             "dv01": 4.586879,
@@ -1443,6 +1487,17 @@
         "exit": "2025-01-21",
         "exitValue": 3.5331,
         "id": "1.5Y",
+        "legParts": [
+          {
+            "carry": 36389390.0,
+            "funding": null,
+            "name": "IRS",
+            "pnl": 51184039.0,
+            "rolldown": -1714682.0,
+            "startup": 95863.0,
+            "valuation": 16413468.0
+          }
+        ],
         "legs": [
           {
             "dv01": 1.455512,

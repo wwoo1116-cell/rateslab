@@ -53,6 +53,7 @@ import {
   isBondKind,
   isFuturesKind,
   runErrorMessage,
+  type BacktestLegParts,
   type BacktestPosition,
   type BacktestResult,
   type BookKind,
@@ -63,7 +64,7 @@ import {
 import { TimeChart } from '@/chart/TimeChart';
 import { fmtLevel, unitSuffix } from '@/lib/format';
 import { seriesUrl } from '@/lib/staticPaths';
-import { fmtKrw, fmtKrwFromMan, splitCashBondKrw, splitKrw } from '@/lib/krw';
+import { fmtKrw, fmtKrwFromMan, manUnits, splitCashBondKrw, splitKrw } from '@/lib/krw';
 import { useFunding } from '@/state/funding';
 import type { Row } from '@/table/rows';
 import { Field, Segmented } from '@/ui/ControlCard';
@@ -259,6 +260,196 @@ function decompose(result: BacktestResult) {
   if (!hasFunding)
     return { ...splitKrw(result.pnl, valuation, rolldown, startup), uFund: null, hasTheta };
   return { ...splitCashBondKrw(result.pnl, valuation, rolldown, funding, startup), hasTheta };
+}
+
+/** 줄 하나의 분해 — `decompose` 와 **같은 헬퍼·같은 규칙**이다. 「자세히」의
+ *  다리 줄이 바로 위에 선 그 줄과 세로로 닫히게 하려고 같은 수를 쓴다. */
+function splitToParts(p: BacktestPosition): Parts {
+  const hasTheta = p.carry != null || p.rolldown != null;
+  if (p.funding == null) {
+    return {
+      ...splitKrw(p.pnl, p.valuation, p.rolldown ?? 0, p.startup ?? 0),
+      uFund: null,
+      hasTheta,
+    };
+  }
+  return {
+    ...splitCashBondKrw(p.pnl, p.valuation, p.rolldown ?? 0, p.funding, p.startup ?? 0),
+    hasTheta,
+  };
+}
+
+/** 헤드라인 분해의 모양 — `decompose` 가 내는 것과 같은 칸들. */
+type Parts = { uPnl: number; uVal: number; uRoll: number; uCarry: number;
+               uFund: number | null; hasTheta: boolean };
+
+/** 다리 한 줄 — 성분마다 **없으면 `null`**(0 이 아니다). */
+export type LegRow = {
+  name: string;
+  uVal: number | null;
+  uRoll: number | null;
+  uCarry: number | null;
+  uFund: number | null;
+};
+
+/**
+ * 북을 **다리 이름으로** 묶는다 [OWNER 2026-09-23 — "스왑과 채권의 평가,
+ * 롤다운, 캐리, 조달도 같이 보여줄래?"].
+ *
+ * 합계 칸만 보면 「캐리 +1억 2,270만원」이 채권 쿠폰인지 스왑 고정인지 알 수
+ * 없다. 실측(ASW:KTB:3Y, 2025-09-22~): 합계 평가 **+1,865만원**이 실은
+ * 국고 −3억 8,773만 + IRS +4억 638만이다 — 두 다리가 거의 상쇄된 결과가 한
+ * 숫자에 접혀 있었다. 하루씩은 이미 갈라 보였고(일별 대사) 누적만 안 갈라졌다.
+ *
+ * ## 무엇이 닫혀야 하는가 — **열이다**
+ *
+ * 이 리포의 가산성 규칙은 원래 **가로**다(`splitCashBondKrw` 의 그 주석:
+ * "행은 반드시 가로로 더해진다"). 그 규칙은 헤드라인 줄에서 그대로 산다 —
+ * 아래에서 `head` 를 **한 글자도 안 바꾼다**.
+ *
+ * 다리 줄에는 **총손익 칸을 안 둔다**(오너가 고른 배치). 총손익이 없으므로
+ * 가로로 닫을 대상이 없고, 읽는 사람이 실제로 더해 보는 것은 **세로**다 —
+ * 「국고 조달 −1억 2,964만원」이 헤드라인 조달과 같은 수여야 한다. 그래서
+ * 열을 정확히 닫는다.
+ *
+ * 방법은 `splitKrw` 와 **같은 수법**이다: 앞의 다리들은 제 값을 한 번씩
+ * 반올림하고, **마지막으로 값을 가진 다리가 잔차를 진다**. 칸마다 최대
+ * 1만원이고, 그 대가로 세로 합이 헤드라인과 한 원도 안 어긋난다.
+ *
+ * 다리가 하나뿐인 묶음(순수 스왑만의 북 같은)은 **빈 목록을 낸다** — 합계와
+ * 같은 수를 한 번 더 적는 줄은 아무것도 안 말한다.
+ */
+export function legRows(positions: BacktestPosition[], head: Parts): LegRow[] {
+  /* 서버는 줄마다 `legParts` 를 반드시 싣는다(다리 하나짜리도). 옛 세션에서
+     복원한 결과에만 없어서, 그때는 다리 줄을 아예 안 그린다 — 일부만 묶으면
+     열이 조용히 안 닫힌다. */
+  if (positions.some((p) => !p.legParts?.length)) return [];
+
+  /* 이름 차례를 **처음 본 순서**로 고정한다. 서버가 내는 차례가 곧 그 상품의
+     차례이고(자산스왑 = 채권 다음 IRS), 정렬을 새로 정하면 두 화면이 같은
+     북을 다른 차례로 적는다. */
+  const order: string[] = [];
+  const sum = new Map<string, { val: number; roll: number | null;
+                                carry: number | null; fund: number | null }>();
+  for (const p of positions) {
+    for (const lg of p.legParts as BacktestLegParts[]) {
+      if (!sum.has(lg.name)) { order.push(lg.name); sum.set(lg.name, {
+        val: 0, roll: null, carry: null, fund: null }); }
+      const g = sum.get(lg.name)!;
+      /* 개시는 평가에 접는다 — 헤드라인과 **같은 규칙**이다(`splitKrw` 의 그
+         주석). 다리마다 다른 규칙을 쓰면 세로 합이 어긋난다. */
+      g.val += lg.valuation + (lg.startup ?? 0);
+      /* 「없음」과 「0」을 가른다: 하나라도 값이 있으면 그 칸은 숫자가 되고,
+         끝까지 아무 줄도 값을 안 주면 공란으로 남는다(공란 정책). */
+      if (lg.rolldown != null) g.roll = (g.roll ?? 0) + lg.rolldown;
+      if (lg.carry != null) g.carry = (g.carry ?? 0) + lg.carry;
+      if (lg.funding != null) g.fund = (g.fund ?? 0) + lg.funding;
+    }
+  }
+  if (order.length < 2) return [];
+
+  const rows: LegRow[] = order.map((name) => {
+    const g = sum.get(name)!;
+    return {
+      name,
+      uVal: manUnits(g.val),
+      uRoll: g.roll == null ? null : manUnits(g.roll),
+      uCarry: g.carry == null ? null : manUnits(g.carry),
+      uFund: g.fund == null ? null : manUnits(g.fund),
+    };
+  });
+
+  /* 열마다 **값을 가진 마지막 줄**이 잔차를 진다. 값이 없는 줄에 잔차를 실으면
+     없던 성분이 생긴다(선물 다리의 캐리 같은) — 그건 반올림이 아니라 거짓말이다. */
+  const settle = (key: 'uVal' | 'uRoll' | 'uCarry' | 'uFund',
+                  target: number | null) => {
+    if (target == null) return;
+    let last = -1;
+    for (let i = 0; i < rows.length; i += 1) if (rows[i][key] != null) last = i;
+    if (last < 0) return;
+    const others = rows.reduce(
+      (acc, r, i) => acc + (i === last ? 0 : (r[key] ?? 0)), 0);
+    rows[last][key] = target - others;
+  };
+  settle('uVal', head.uVal);
+  settle('uRoll', head.hasTheta ? head.uRoll : null);
+  settle('uCarry', head.hasTheta ? head.uCarry : null);
+  settle('uFund', head.uFund);
+  return rows;
+}
+
+/**
+ * 분해 표 — 헤드라인 한 줄과 다리 줄들이 **한 격자**에 선다
+ * [OWNER 2026-09-23].
+ *
+ * 이 줄들의 쓸모는 「국고 조달 −1억 2,964만원이 헤드라인 조달과 같은 수인가」를
+ * 눈으로 확인하는 것이라, 칸이 세로로 안 맞으면 그 확인을 못 한다. 격자의
+ * 근거와 대가(flex 줄바꿈을 잃는 것)는 `theme/type.css` 의 `.sr-bt-decomp`.
+ *
+ * 성분 수가 북마다 다르므로(선물만의 북은 평가 하나) 열 수를 여기서 센다 —
+ * CSS 에 못 박으면 그 북에서 빈 열이 선다.
+ */
+function Decomp({ head, legs }: { head: Parts; legs: LegRow[] }) {
+  const cols = 1 + 1 + (head.hasTheta ? 2 : 0) + (head.uFund != null ? 1 : 0);
+  return (
+    <div
+      className="sr-bt-decomp"
+      style={{ gridTemplateColumns: `repeat(${cols}, max-content)` }}
+    >
+      {/* 헤드라인 줄 — 이름 홈통은 비운다(자리가 「합계」를 말한다). */}
+      <span className="sr-bt-legname" />
+      <Part label="평가" u={head.uVal} />
+      {/* FUT 아웃라이트만의 북은 평가가 전부다 — 없는 성분에 0 을 안 적는다
+          (decompose 의 hasTheta 주석). */}
+      {head.hasTheta ? (
+        <>
+          <Part label="롤다운" u={head.uRoll} />
+          <Part label="캐리" u={head.uCarry} />
+        </>
+      ) : null}
+      {head.uFund != null ? <Part label="조달" u={head.uFund} /> : null}
+      {legs.map((row) => (
+        <LegCells
+          key={row.name}
+          row={row}
+          hasTheta={head.hasTheta}
+          hasFunding={head.uFund != null}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** 다리 한 줄의 칸들 — 헤드라인의 `Part` 들과 **같은 낱말·같은 차례**다.
+ *  격자의 칸이므로 감싸는 상자를 두지 않는다(두면 그 줄만 한 칸이 된다). */
+function LegCells({ row, hasTheta, hasFunding }: {
+  row: LegRow; hasTheta: boolean; hasFunding: boolean;
+}) {
+  /* 없는 성분은 **em dash** 다 — 0 을 적으면 「캐리가 0원이었다」는 다른 말이
+     되고, 칸을 아예 비우면 다음 성분이 그 열로 밀려 세로가 어긋난다. */
+  const cell = (u: number | null) => (u == null ? '—' : fmtKrwFromMan(u));
+  const tone = (u: number | null) =>
+    u == null || u === 0 ? undefined : u > 0 ? 'sr-up' : 'sr-down';
+  const items: [string, number | null][] = [['평가', row.uVal]];
+  if (hasTheta) items.push(['롤다운', row.uRoll], ['캐리', row.uCarry]);
+  if (hasFunding) items.push(['조달', row.uFund]);
+  return (
+    <>
+      <TextCaption as="span" color="fgMuted" noWrap className="sr-bt-legname">
+        {row.name}
+      </TextCaption>
+      {items.map(([label, u]) => (
+        <HStack key={label} gap={0.5} alignItems="baseline">
+          <TextCaption as="span" color="fgMuted" noWrap>
+            {label}
+          </TextCaption>
+          <TextCaption as="span" tabularNumbers noWrap className={tone(u)}>
+            {cell(u)}
+          </TextCaption>
+        </HStack>
+      ))}
+    </>
+  );
 }
 
 /** 크기(노셔널·DV01)는 **부호가 없다**. `fmtKrw` 는 부호 있는 돈을 위한 것이라
@@ -493,6 +684,9 @@ export function BacktestWindow({
   };
 
   const parts = result ? decompose(result) : null;
+  /* 다리별 분해 — 헤드라인이 선 뒤에 그 값을 기준으로 세로를 닫는다
+     [OWNER 2026-09-23]. 다리가 하나뿐인 북에서는 빈 목록이라 줄이 안 선다. */
+  const legs = result && parts ? legRows(result.positions, parts) : [];
   const hasBond = book.some(isBondRow);
 
   return (
@@ -903,18 +1097,14 @@ export function BacktestWindow({
                   항목마다 부호색을 준다(v1 과 같은 규칙) — 어느 성분이 벌었고
                   어느 쪽이 까먹었는지가 이 줄의 전부라서, 셋을 한 색으로 두면
                   다시 읽어야 한다. */}
-              <HStack gap={1} flexWrap="wrap">
-                <Part label="평가" u={parts.uVal} />
-                {/* FUT 아웃라이트만의 북은 평가가 전부다 — 없는 성분에 0 을 안
-                    적는다(decompose 의 hasTheta 주석). */}
-                {parts.hasTheta ? (
-                  <>
-                    <Part label="롤다운" u={parts.uRoll} />
-                    <Part label="캐리" u={parts.uCarry} />
-                  </>
-                ) : null}
-                {parts.uFund != null ? <Part label="조달" u={parts.uFund} /> : null}
-              </HStack>
+              {/* ★다리별이 밑에 붙는다 [OWNER 2026-09-23 — "스왑과 채권의
+                  평가, 롤다운, 캐리, 조달도 같이 보여줄래?"]. 합계 한 줄은
+                  **두 다리가 상쇄된 뒤**의 수라 어느 다리가 무엇을 했는지를
+                  안 말한다 — 실측으로 합계 평가 +1,864만원이 국고 −3억 8,773만
+                  + IRS +4억 637만인 자리가 있다. 하루씩은 일별 대사가 이미
+                  갈라 보이고 있었고 **누적만 안 갈라져 있었다.**
+                  세로로 더하면 위 줄이 나온다(`legRows` 의 그 규칙). */}
+              <Decomp head={parts} legs={legs} />
               {/* 구간 안에서 어디까지 갔었나 — 같은 응답이 이미 담고 있다.
                   "bp" 가 든 문장이 뒤에 붙을 수 있어 TextLegal 이다. */}
               <TextLegal as="span" color="fgMuted" tabularNumbers>
@@ -1139,33 +1329,32 @@ export function BacktestWindow({
                           ))}
                           {/* 성분은 split 헬퍼를 거친다(가산성 가드) — 셋의 합이
                               표시 정밀도에서 줄 손익과 닫히도록 캐리가 잔차를
-                              진다. FSW 만 여기 오므로 캐리·롤다운은 숫자다. */}
+                              진다. FSW 만 여기 오므로 캐리·롤다운은 숫자다.
+
+                              다리 줄이 밑에 붙는다 [OWNER 2026-09-23]. 퓨처스왑에서
+                              합쳐지는 것은 **평가뿐**이라(캐리·롤다운·개시는 통째로
+                              IRS 것이다) 이 줄이 서면 「캐리는 전부 IRS」가 눈에
+                              보인다. 선물 다리의 캐리·롤다운은 0 이 아니라
+                              **없음**이라 «—» 로 선다.
+
+                              종전에 여기 있던 «평가 · 캐리 · 롤다운» 한 줄은
+                              `Decomp` 의 **첫 행이 그대로 그것**이라 걷었다 —
+                              같은 수를 두 번 적으면 어느 쪽이 정본인지 읽는
+                              사람이 묻게 된다. */}
                           {(() => {
-                            const u = splitKrw(
-                              p.pnl,
-                              p.valuation,
-                              p.rolldown ?? 0,
-                              p.startup ?? 0,
-                            );
-                            return (
-                              <TextCaption as="span" color="fgMuted" tabularNumbers noWrap>
-                                평가 {fmtKrwFromMan(u.uVal)} · 캐리 {fmtKrwFromMan(u.uCarry)} ·
-                                롤다운 {fmtKrwFromMan(u.uRoll)}
-                              </TextCaption>
-                            );
+                            const h = splitToParts(p);
+                            return <Decomp head={h} legs={legRows([p], h)} />;
                           })()}
                         </VStack>
                       </details>
                     ) : null
                   ) : (
                     (() => {
-                      const u = splitCashBondKrw(
-                        p.pnl,
-                        p.valuation,
-                        p.rolldown ?? 0,
-                        p.funding ?? 0,
-                        p.startup ?? 0,
-                      );
+                      /* 다리별 [OWNER 2026-09-23]. 종전에는 성분 한 줄 + 스왑
+                         다리의 **총손익 하나**뿐이라, 채권 쿠폰과 스왑 고정 중
+                         어느 쪽이 캐리를 냈는지 이 자리에서 못 읽었다. 성분
+                         한 줄은 `Decomp` 의 첫 행이 그대로라 걷었다. */
+                      const h = splitToParts(p);
                       return (
                         <details className="sr-bt-legs">
                           <summary>
@@ -1174,16 +1363,10 @@ export function BacktestWindow({
                             </TextCaption>
                           </summary>
                           <VStack gap={0.25} paddingY={0.5}>
-                            <TextCaption as="span" color="fgMuted" tabularNumbers noWrap>
-                              평가 {fmtKrwFromMan(u.uVal)} · 캐리 {fmtKrwFromMan(u.uCarry)} ·
-                              롤다운 {fmtKrwFromMan(u.uRoll)} · 조달 {fmtKrwFromMan(u.uFund)}
-                            </TextCaption>
-                            {p.kind === 'assetswap' && p.swapPnl != null ? (
+                            <Decomp head={h} legs={legRows([p], h)} />
+                            {p.kind === 'assetswap' && p.swapEntryRate != null ? (
                               <TextCaption as="span" color="fgMuted" tabularNumbers noWrap>
-                                스왑 다리 {fmtKrw(p.swapPnl)} · 진입금리{' '}
-                                {p.swapEntryRate != null
-                                  ? `${fmtLevel(p.swapEntryRate, '%')}%`
-                                  : '—'}
+                                스왑 진입금리 {fmtLevel(p.swapEntryRate, '%')}%
                               </TextCaption>
                             ) : null}
                           </VStack>

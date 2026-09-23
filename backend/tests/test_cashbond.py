@@ -869,3 +869,147 @@ class TestReconTiesOutOnLiveData:
         a = sum(r["actual"] for r in cash["rows"] if r["actual"] is not None)
         b = sum(r["actual"] for r in asw["rows"] if r["actual"] is not None)
         assert a != b, "자산스왑 대사가 채권 다리만 세고 있다"
+
+
+class TestLegParts:
+    """다리별 성분 [OWNER 2026-09-23 — "스왑과 채권의 평가, 롤다운, 캐리, 조달도
+    같이 보여줄래?"].
+
+    합계 칸만 보면 「캐리 +2억 8,185만원」이 채권 쿠폰인지 스왑 고정인지 알 수
+    없다. 실측(ASW:KTB:3Y · 2025-09-22~): 합계 **평가 +1,865만원**이 실은
+    국고 −3억 8,773만 + IRS +4억 638만이다 — 두 다리가 거의 상쇄된 결과가 한
+    숫자에 접혀 있었다.
+
+    하루씩은 이미 갈라 보였다(`book_recon(with_legs=True)` — [OWNER 2026-09-04
+    「국고매수와 IRS Pay 를 별개로 뜨게 해줘」]). **누적만 안 갈라져 있었다.**
+    """
+
+    @pytest.fixture(scope="class")
+    def client(self):
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        with TestClient(app) as c:
+            yield c
+
+    #: 열을 닫는 산술은 화면이 하는 것과 같다 — 없는 성분(`None`)은 0 으로 세지
+    #: 않고, 있는 값만 더한다.
+    KEYS = ("valuation", "rolldown", "carry", "startup")
+
+    def _rows(self, client, positions: str) -> list[dict]:
+        r = client.get("/api/backtest", params={"positions": positions})
+        assert r.status_code == 200, r.text
+        return r.json()["positions"]
+
+    @pytest.mark.parametrize("positions", [
+        "3Y,1,1e10,2025-09-22",                 # 순수 스왑
+        "3Y-10Y,1,1e10,2025-09-22",             # 커브 — 상품 다리는 둘, 자산은 하나
+        "CB:KTB:3Y,1,1e10,2025-09-22",          # 현금채권
+        "FUT:3Y,1,1e10,2025-09-22",             # 선물 아웃라이트
+        "ASW:KTB:3Y,1,1e10,2025-09-22",         # 자산스왑
+        "FSW:3Y,1,1e10,2025-09-22",             # 퓨처스왑
+    ])
+    def test_every_row_carries_leg_parts(self, client, positions):
+        """**줄마다 반드시 온다** — 다리가 하나인 줄도 한 칸짜리로.
+
+        일부만 실으면 혼합 북에서 화면이 다리 이름으로 묶을 때 열이 **조용히**
+        안 닫힌다(빠진 줄의 몫이 어느 다리에도 안 들어간다).
+        """
+        for p in self._rows(client, positions):
+            assert p.get("legParts"), f"{p.get('label') or p['id']} 에 legParts 가 없어요"
+
+    @pytest.mark.parametrize("positions", [
+        "ASW:KTB:3Y,1,1e10,2025-09-22",
+        "ASW:BD:3Y,1,1e10,2025-09-22",
+        "FSW:3Y,1,1e10,2025-09-22",
+        # 혼합 북 — 자산스왑 · 순수 스왑 · 퓨처스왑이 한 북에.
+        "ASW:KTB:3Y,1,1e10,2025-09-22;3Y,-1,1e10,2025-09-22;FSW:3Y,1,1e10,2025-09-22",
+    ])
+    def test_the_legs_add_back_to_the_row(self, client, positions):
+        """성분마다 **다리의 합 = 줄의 합계 칸**, 그리고 다리 손익의 합 = 줄 손익.
+
+        이것이 깨지면 화면의 세로가 헤드라인과 안 맞는다 — 읽는 사람이 더해서
+        위 줄이 안 나오면 그 화면은 틀린 것이다(이 리포의 가산성 규칙).
+        """
+        for p in self._rows(client, positions):
+            legs = p["legParts"]
+            for k in self.KEYS:
+                got = sum(l[k] for l in legs if l[k] is not None)
+                want = p.get(k) or 0.0
+                assert abs(got - want) <= 1, (
+                    f"{p.get('label') or p['id']} 의 {k}: 다리합 {got} ≠ 합계 {want}")
+            assert abs(sum(l["pnl"] for l in legs) - p["pnl"]) <= 2
+
+    def test_absent_parts_are_blank_not_zero(self, client):
+        """선물 다리엔 캐리·롤다운·개시가 **없다** — 0 이 아니라 `None` 이다.
+
+        0 을 적으면 「그 기간 캐리가 0원이었다」는 다른 말이 된다. 합성채는 만기가
+        고정이라 늙지 않고, 그래서 그 성분이 **존재하지 않는다**(`futures.py`).
+        조달도 마찬가지다: 스왑·선물에는 조달할 원금이 없다.
+        """
+        p = self._rows(client, "FSW:3Y,1,1e10,2025-09-22")[0]
+        fut = next(l for l in p["legParts"] if l["name"] == "선물")
+        irs = next(l for l in p["legParts"] if l["name"] == "IRS")
+        assert fut["rolldown"] is None and fut["carry"] is None
+        assert fut["startup"] is None and fut["funding"] is None
+        assert fut["valuation"] == fut["pnl"], "선물 다리는 손익이 전부 평가다"
+        # 캐리·롤다운은 **통째로 스왑 다리 것**이다 — 합계 칸이 곧 IRS 다리다.
+        assert irs["carry"] == p["carry"] and irs["rolldown"] == p["rolldown"]
+        assert irs["funding"] is None, "IRS 에는 조달할 원금이 없다"
+
+    def test_funding_belongs_to_the_bond_leg_alone(self, client):
+        """자산스왑의 조달은 **채권 다리만** 진다 — 스왑 쪽은 공란."""
+        p = self._rows(client, "ASW:KTB:3Y,1,1e10,2025-09-22")[0]
+        bond, irs = p["legParts"]
+        assert bond["funding"] == p["funding"] and bond["funding"] < 0
+        assert irs["funding"] is None
+
+    def test_the_bond_leg_is_named_for_its_type(self, client):
+        """★이름은 **종목군**이다 — 그리고 어휘는 이미 있던 것을 쓴다.
+
+        일별 대사가 「국고」로 박혀 있었는데 자산스왑은 여덟 종목군 전부에 설 수
+        있어(`bond_types_for` 가 ASW 를 다 내놓는다) **은행채 자산스왑도 「국고」**
+        라고 적히고 있었다 [2026-09-23].
+
+        ⚠ 고칠 때 `creditmatrix.BOND_TYPES`(국고채·은행채 AAA …)를 쓰면 **KTB 의
+        이름까지 바뀐다** — 없던 어휘를 하나 더 만드는 셈이고, 첫 판이 그래서
+        `test_mixedbook` 과 `test_mr_legrecon` 을 깨뜨렸다. 이 표가 쓰는 사전은
+        `universe.CURVE_LABEL` 이고 KTB 는 그대로 「국고」다.
+        """
+        ktb = self._rows(client, "ASW:KTB:3Y,1,1e10,2025-09-22")[0]
+        bd = self._rows(client, "ASW:BD:3Y,1,1e10,2025-09-22")[0]
+        assert [l["name"] for l in ktb["legParts"]] == ["국고", "IRS"]
+        assert [l["name"] for l in bd["legParts"]] == ["은행", "IRS"]
+
+    def test_the_daily_recon_uses_the_same_leg_name(self, client):
+        """하루와 누적이 **같은 낱말**로 다리를 부른다.
+
+        일별 대사는 백테스트 응답에 `recon` 으로 얹혀 온다(별도 라우트가 아니다
+        — KRD 범프가 비싸서 엔진 함수만 둘로 나눠져 있다). 행과 **열 머리**
+        (`legTenors`)를 같이 잰다: 머리가 「국고」인데 행이 「은행채 AAA」면
+        읽는 사람이 한 표를 두 표로 읽는다.
+        """
+        r = client.get("/api/backtest",
+                       params={"positions": "ASW:BD:3Y,1,1e10,2026-05-13"})
+        assert r.status_code == 200, r.text
+        bond = r.json()["recon"]["bond"]
+        named = [d for d in bond["rows"] if d.get("legs")]
+        assert named, "다리 블록이 서야 이 검정이 성립한다"
+        assert [l["name"] for l in named[0]["legs"]] == ["은행", "IRS"]
+        assert [l["name"] for l in bond["legTenors"]] == ["은행", "IRS"]
+
+    def test_the_netted_view_really_was_hiding_the_legs(self, client):
+        """★이 기능이 있어야 하는 이유를 **수로** 박는다.
+
+        합계 평가는 두 다리 각각보다 **한 자릿수 작다** — 합계만 보면 「금리가
+        거의 안 움직였다」로 읽히는데, 실제로는 두 다리가 각자 4억쯤 움직이고
+        서로 상쇄한 것이다. 이 항등식이 깨지면 이 화면의 존재 이유가 사라지므로,
+        수가 바뀌면 여기서 한 번 멈춰서 다시 보게 한다.
+        """
+        p = self._rows(client, "ASW:KTB:3Y,1,1e10,2025-09-22")[0]
+        bond, irs = p["legParts"]
+        assert abs(bond["valuation"]) > 10 * abs(p["valuation"])
+        assert abs(irs["valuation"]) > 10 * abs(p["valuation"])
+        # 부호가 반대라 상쇄된다 — 그게 「접혀 있었다」의 뜻이다.
+        assert bond["valuation"] * irs["valuation"] < 0

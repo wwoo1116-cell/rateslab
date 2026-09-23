@@ -559,6 +559,24 @@ def _run_one(
         "startup": round(last_start, 0),
         "cash": round(last_cash, 0),
     }
+    # ── 다리별 성분 — 스왑 줄은 **다리가 하나**다 [OWNER 2026-09-23] ─────────
+    # 커브·플라이도 하나로 센다: 3s10s 는 상품 다리가 둘이어도 «IRS 포지션
+    # 하나» 이고, 이 열의 뜻은 「어느 자산의 성분인가」이지 「몇 개를 거래했나」
+    # 가 아니다(상품 다리 서술은 위 `legs` 가 이미 지고 있다).
+    #
+    # 한 줄짜리 북에서는 화면이 이 블록을 **안 그린다**(합계와 같은 수를 한 번
+    # 더 적는 꼴이라). 이것이 있어야 하는 자리는 **혼합 북**이다 — 자산스왑과
+    # 순수 스왑이 같이 선 북에서 「IRS」 열이 둘을 다 안아야 열이 닫힌다.
+    record["legParts"] = [{
+        "name": "IRS",
+        "valuation": record["valuation"],
+        "rolldown": record["rolldown"],
+        "carry": record["carry"],
+        "startup": record["startup"],
+        # 스왑에는 조달할 원금이 없다 — 0 이 아니라 공란이다(공란 정책).
+        "funding": None,
+        "pnl": record["pnl"],
+    }]
     return record, series, prev_day
 
 

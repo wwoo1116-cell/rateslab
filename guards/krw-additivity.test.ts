@@ -168,9 +168,23 @@ describe('행과 합계는 단위를 찍는다 — 독립 fmtKrw 호출이 아�
      * 섞인 북은 조달 칸이 하나 더 서고, 넷이 가로로 더해져야 한다. */
     const src = read('src/backtest/BacktestWindow.tsx');
     expect(src).toMatch(/splitCashBondKrw\(/);
-    /* 줄마다 넷을 찍는 자리 — 평가·캐리·롤다운·조달이 모두 단위를 지난다. */
-    const inline = src.match(/평가 \{fmtKrwFromMan[\s\S]{0,260}?조달 \{fmtKrwFromMan/);
-    expect(inline, '줄의 4분해가 단위 쌍둥이를 지나지 않는다').toBeTruthy();
+    /* 넷을 찍는 자리 [2026-09-23 개정]. 종전에는 인라인 JSX 한 줄
+       (`평가 {fmtKrwFromMan(u.uVal)} · … · 조달 {fmtKrwFromMan(u.uFund)}`)을
+       문자열로 찾았다. 다리별 분해가 붙으면서 그 줄이 `Decomp`/`LegCells` 의
+       **격자 칸**으로 바뀌었고, 라벨이 JSX 글자가 아니라 데이터가 됐다.
+
+       **재는 것은 그대로다** — 네 성분이 전부 단위 쌍둥이를 지나는가. 이제는
+       그리는 두 조각이 각각 `fmtKrwFromMan` 만 쓰는지를 본다(원값 `fmtKrw` 를
+       성분에 쓰는 것은 바로 아래 시험이 따로 막는다). */
+    const part = src.slice(src.indexOf('function Part('),
+                           src.indexOf('function Part(') + 700);
+    expect(part, '헤드라인 성분이 단위 쌍둥이를 안 지난다').toMatch(/fmtKrwFromMan\(/);
+    const legs = src.slice(src.indexOf('function LegCells('),
+                           src.indexOf('function LegCells(') + 1200);
+    expect(legs, '다리 성분이 단위 쌍둥이를 안 지난다').toMatch(/fmtKrwFromMan\(u\)/);
+    for (const label of ['평가', '롤다운', '캐리', '조달']) {
+      expect(legs, `다리 줄에 ${label} 칸이 없다`).toContain(`'${label}'`);
+    }
   });
 
   it('성분 칸에 원값 fmtKrw 가 직접 쓰이지 않는다', () => {
@@ -208,5 +222,111 @@ describe('판정기 자신 — 심어서 실패하는지', () => {
     expect(manUnits(pnl)).toBe(1); // ← 독립 반올림이면 1 vs 2
     const u = splitKrw(pnl, valuation);
     expect(u.uVal + u.uRoll + u.uCarry).toBe(u.uPnl); // 잔차 방식은 맞는다
+  });
+});
+
+/* ── 다리별 분해는 **세로로** 더해진다 [OWNER 2026-09-23] ────────────────────
+ *
+ * 위 가드들은 전부 **가로**다("행은 반드시 가로로 더해진다"). 다리 줄에는
+ * 총손익 칸이 없으므로(오너가 고른 배치) 가로로 닫을 대상이 없고, 읽는 사람이
+ * 실제로 더해 보는 것은 세로다 — 「국고 조달 −1억 2,964만원」이 헤드라인 조달과
+ * 같은 수여야 한다.
+ *
+ * `legRows` 는 그래서 `splitKrw` 와 **같은 수법**을 세로로 쓴다: 앞 다리들은 제
+ * 값을 한 번씩 반올림하고, **값을 가진 마지막 다리가 잔차를 진다.** 값이 없는
+ * 다리(선물의 캐리 같은)에 잔차를 실으면 없던 성분이 생기므로 거기엔 안 싣는다.
+ */
+
+import { legRows, type LegRow } from '../src/backtest/BacktestWindow';
+import type { BacktestPosition } from '../src/lib/api';
+
+/** 줄 하나 — 이 가드가 재는 칸만 채운다. */
+function pos(legParts: BacktestPosition['legParts'], o: Partial<BacktestPosition> = {}):
+  BacktestPosition {
+  return {
+    kind: 'assetswap', label: 'x', id: 'x', direction: 1, notional: 1e10,
+    entry: '2025-09-22', exit: '2026-09-22', closed: false, matured: false,
+    legs: [], entryValue: null, exitValue: null,
+    pnl: 0, valuation: 0, rolldown: 0, carry: 0, startup: 0, funding: null,
+    legParts, ...o,
+  } as BacktestPosition;
+}
+
+describe('다리별 분해 — 세로가 헤드라인과 닫힌다', () => {
+  /* 실측(ASW:KTB:3Y · 2025-09-22~2026-09-22 · 100억). 원 단위 그대로. */
+  const BOND = { name: '국고', valuation: -387_725_273, rolldown: 96_323_483,
+                 carry: 245_700_000, startup: 0, funding: -266_438_356,
+                 pnl: -312_140_146 };
+  const IRS = { name: 'IRS', valuation: 406_379_974, rolldown: -107_084_808,
+                carry: 36_150_685, startup: -16_151, funding: null,
+                pnl: 335_429_700 };
+  const ASW = pos([BOND, IRS], {
+    pnl: 23_289_554, valuation: 18_654_701, rolldown: -10_761_325,
+    carry: 281_850_685, startup: -16_151, funding: -266_438_356,
+  });
+  const head = splitCashBondKrw(ASW.pnl, ASW.valuation, ASW.rolldown!,
+                                ASW.funding!, ASW.startup!);
+  const parts = { ...head, hasTheta: true };
+
+  it('네 열이 모두 헤드라인과 **정확히** 닫힌다', () => {
+    const rows = legRows([ASW], parts);
+    expect(rows.map((r) => r.name)).toEqual(['국고', 'IRS']);
+    const col = (k: keyof LegRow) =>
+      rows.reduce((s, r) => s + ((r[k] as number | null) ?? 0), 0);
+    expect(col('uVal')).toBe(head.uVal);
+    expect(col('uRoll')).toBe(head.uRoll);
+    expect(col('uCarry')).toBe(head.uCarry);
+    expect(col('uFund')).toBe(head.uFund);
+  });
+
+  it('★합계가 두 다리를 **접고 있었다** — 이 화면의 존재 이유', () => {
+    /* 합계 평가 +1,864만원이 실은 국고 −3억 8,773만 + IRS +4억 637만이다.
+       한 자릿수가 아니라 **두 자릿수** 차이고, 부호가 반대라 상쇄된다. */
+    const rows = legRows([ASW], parts);
+    expect(head.uVal).toBe(1_864);
+    expect(rows[0].uVal).toBe(-38_773);
+    expect(rows[1].uVal).toBe(40_637);
+    expect(rows[0].uVal! + rows[1].uVal!).toBe(head.uVal);
+  });
+
+  it('조달은 채권 다리만 — IRS 는 `null` 이고 0 이 아니다', () => {
+    const rows = legRows([ASW], parts);
+    expect(rows[0].uFund).toBe(head.uFund);
+    expect(rows[1].uFund).toBeNull();
+  });
+
+  it('없는 성분에는 잔차를 안 싣는다 — 선물 다리의 캐리는 끝까지 `null`', () => {
+    /* 퓨처스왑: 합쳐지는 것은 평가뿐이고 캐리·롤다운은 통째로 IRS 것이다. */
+    const FUT = { name: '선물', valuation: -367_000_000, rolldown: null,
+                  carry: null, startup: null, funding: null, pnl: -367_000_000 };
+    const SWP = { name: 'IRS', valuation: 422_078_127, rolldown: -111_221_414,
+                  carry: 37_547_159, startup: -16_775, funding: null,
+                  pnl: 348_387_097 };
+    const fsw = pos([FUT, SWP], {
+      kind: 'futures', pnl: -18_612_903, valuation: 55_078_127,
+      rolldown: -111_221_414, carry: 37_547_159, startup: -16_775, funding: null,
+    });
+    const h = splitKrw(fsw.pnl, fsw.valuation, fsw.rolldown!, fsw.startup!);
+    const rows = legRows([fsw], { ...h, uFund: null, hasTheta: true });
+    expect(rows[0].uCarry).toBeNull();
+    expect(rows[0].uRoll).toBeNull();
+    /* 잔차가 갈 곳이 IRS 하나뿐이므로 그 칸이 헤드라인과 같아진다. */
+    expect(rows[1].uCarry).toBe(h.uCarry);
+    expect(rows[1].uRoll).toBe(h.uRoll);
+    expect(rows[0].uVal! + rows[1].uVal!).toBe(h.uVal);
+  });
+
+  it('다리가 한 묶음뿐이면 줄을 안 그린다 — 합계를 한 번 더 적는 셈이라', () => {
+    const swap = pos([{ name: 'IRS', valuation: 100, rolldown: 0, carry: 0,
+                        startup: 0, funding: null, pnl: 100 }],
+                     { kind: 'swap', pnl: 100, valuation: 100 });
+    const h = splitKrw(swap.pnl, swap.valuation, 0, 0);
+    expect(legRows([swap], { ...h, uFund: null, hasTheta: true })).toEqual([]);
+  });
+
+  it('한 줄이라도 `legParts` 가 없으면 아예 안 그린다 — 반쯤 묶으면 열이 샌다', () => {
+    const old = pos(undefined, { pnl: 1, valuation: 1 });
+    const h = splitKrw(1, 1, 0, 0);
+    expect(legRows([ASW, old], { ...h, uFund: null, hasTheta: true })).toEqual([]);
   });
 });

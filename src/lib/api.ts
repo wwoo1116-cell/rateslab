@@ -494,6 +494,45 @@ export interface BacktestPosition {
   swapPnl?: number | null;
   swapEntryRate?: number;
   aswSpread?: number;
+  /** 다리별 성분 [OWNER 2026-09-23]. **줄마다 반드시 온다** — 다리가 하나인
+   *  줄(순수 스왑·현금채권·선물 아웃라이트)도 한 칸짜리로 온다. 그래야 혼합
+   *  북에서 다리 이름으로 묶었을 때 열이 닫힌다. 옛 세션에서 복원한 결과에만
+   *  없다. */
+  legParts?: BacktestLegParts[];
+}
+
+/**
+ * 한 다리의 네 성분 [OWNER 2026-09-23 — "스왑과 채권의 평가, 롤다운, 캐리,
+ * 조달도 같이 보여줄래?"].
+ *
+ * 합계 칸만 보면 「캐리 +1억 2,270만원」이 채권 쿠폰인지 스왑 고정인지 알 수
+ * 없다. 실측(ASW:KTB:3Y, 2025-09-22~): 합계 평가 **+1,865만원**이 실은
+ * 국고 −3억 8,773만 + IRS +4억 638만이다 — 합계는 두 다리가 거의 상쇄된
+ * 결과이고, 그 사실이 한 숫자에 접혀 있었다.
+ *
+ * 하루씩은 이미 갈라 보였다(`BacktestReconLeg` — [OWNER 2026-09-04]).
+ * **누적만 안 갈라져 있었다.**
+ *
+ * ⚠ `BacktestPosition.legs`(`BacktestLeg`)와 **다른 것**이다 — 저쪽은 상품
+ * 다리 서술(만기·방향·명목·진입금리)이고 이쪽은 손익 성분이다.
+ */
+export interface BacktestLegParts {
+  /** 종목군의 **짧은 이름**(`국고`·`통안`·`은행` …) 또는 `IRS`·`선물`.
+   *
+   *  어휘는 서버의 `universe.CURVE_LABEL` 하나다 — 일별 대사의 다리 이름·열
+   *  머리(`legTenors`)와 **같은 낱말**이라, 두 화면이 같은 다리를 다르게 부르지
+   *  않는다. `label`(「국고채 3Y」)과는 다른 사전이다: 저쪽은 문장에 쓰는 긴
+   *  이름이고 이쪽은 칸이 좁은 표의 이름이다. */
+  name: string;
+  valuation: number;
+  /** 없는 성분은 `null` 이다 — 선물 다리엔 캐리·롤다운·개시가 **없고**,
+   *  0 을 적으면 「캐리가 0원이었다」는 다른 말이 된다(서버의 공란 정책). */
+  rolldown: number | null;
+  carry: number | null;
+  startup: number | null;
+  /** 조달은 **현물 채권 다리만** 진다. IRS·선물은 `null`. */
+  funding: number | null;
+  pnl: number;
 }
 
 /** 일별 대사 [OWNER, 2026-08-11] — one business day of the book: the

@@ -677,6 +677,51 @@ def run_one(
         "rolldown": swap_rec["rolldown"] if swap_rec else None,
         "startup": swap_rec["startup"] if swap_rec else None,
     }
+    # ── 다리별 성분 [OWNER 2026-09-23] ──────────────────────────────────────
+    # 퓨처스왑에서 **합쳐지는 것은 평가뿐**이다(위 줄) — 캐리·롤다운·개시는
+    # 통째로 스왑 다리 것이고 선물 다리엔 그 성분이 **없다**(합성채는 안 늙는다).
+    # 그래서 화면의 「캐리 +x」는 이미 전부 IRS 인데, 합계만 보면 그 사실이
+    # 안 보인다. 하루씩은 이미 갈라 보인다(`book_recon(with_legs=True)` 의 버킷).
+    #
+    # ⚠ 키가 `legs` 가 아니라 `legParts` 인 이유: 이 기록의 `legs` 는 **상품
+    #   다리 서술**(만기·방향·명목·진입가)이고 프런트 `BacktestLeg` 가 그것이다.
+    #
+    # 없는 성분에는 `None` 을 적는다 — 0 을 적으면 「캐리가 0원이었다」는 다른
+    # 말이 된다(이 리포의 공란 정책). 조달은 양쪽 다 없다: 선물엔 조달할 원금이
+    # 없고 IRS 에도 없다(현물 다리만 진다).
+    if pos.kind == KIND_FUT:
+        # 선물 아웃라이트 — 다리 하나고 손익이 전부 평가다(합성채는 안 늙는다).
+        # 없는 성분엔 공란을 적는다. 혼합 북의 열을 닫으려고 싣는다 [2026-09-23].
+        record["legParts"] = [{
+            "name": "선물",
+            "valuation": record["valuation"],
+            "rolldown": None,
+            "carry": None,
+            "startup": None,
+            "funding": None,
+            "pnl": record["pnl"],
+        }]
+    elif swap_rec is not None:
+        record["legParts"] = [
+            {
+                "name": "선물",
+                "valuation": round(fut_leg_pnl, 0),
+                "rolldown": None,
+                "carry": None,
+                "startup": None,
+                "funding": None,
+                "pnl": round(fut_leg_pnl, 0),
+            },
+            {
+                "name": "IRS",
+                "valuation": swap_rec["valuation"],
+                "rolldown": swap_rec["rolldown"],
+                "carry": swap_rec["carry"],
+                "startup": swap_rec["startup"],
+                "funding": None,
+                "pnl": swap_rec["pnl"],
+            },
+        ]
     return record, own, prev
 
 

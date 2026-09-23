@@ -53,6 +53,7 @@ from dataclasses import dataclass
 
 from . import creditmatrix as cm
 from . import funding as fd
+from .universe import CURVE_LABEL
 from .creditmatrix import CreditMatrix, CreditMatrixError
 
 log = logging.getLogger("app.cashbond")
@@ -499,10 +500,53 @@ def run_bond_position(
         # 진입일부터 경과이자가 붙으므로 결제 시차의 밤 자체가 없다.
         "startup": 0.0,
         "swapPnl": None,
+        # 다리 하나짜리 성분 [2026-09-23] — 자산스왑이면 바로 아래에서 둘로
+        # 덮어쓴다. 혼합 북에서 열이 닫히려면 모든 줄이 같은 꼴을 내야 한다.
+        "legParts": [{
+            "name": CURVE_LABEL.get(pos.bond_type, pos.bond_type),
+            "valuation": rec["valuation"],
+            "rolldown": rec["rolldown"],
+            "carry": rec["carry"],
+            "startup": 0.0,
+            "funding": rec["funding"],
+            "pnl": rec["pnl"],
+        }],
     }
 
     if pos.kind == KIND_ASW:
         srec, sown, sprev = _swap_leg(dataset, pos, leg, m, sample, imap, swap_cache)
+        # ── 다리별 성분을 **합치기 전에** 싣는다 [OWNER 2026-09-23] ──────────
+        # 바로 아래 줄이 넷을 더해 버리므로, 그 뒤에는 「캐리 +1억 2,270만원」이
+        # 채권 쿠폰인지 스왑 고정인지 화면이 말할 길이 없다. 하루씩은 이미
+        # 갈라 보이는데(`book_recon` 의 `row["legs"]` — [OWNER 2026-09-04
+        # 「국고매수와 IRS Pay 를 별개로 뜨게 해줘」]) **누적만 안 갈라졌다.**
+        #
+        # ⚠ 이름은 `legs` 가 아니라 `legParts` 다 — `legs` 는 이미 **상품 다리
+        #   서술**(만기·방향·명목·진입금리)이 쓰고 있다(`futures.py` 의 그 키와
+        #   프런트 `BacktestLeg`). 같은 낱말에 두 뜻을 주면 한쪽이 조용히 진다.
+        #
+        # 조달은 **채권 다리만** 진다 — 스왑 쪽에 0 을 적으면 「조달이 0원이었다」
+        # 는 다른 말이 된다(이 파일의 공란 정책).
+        rec["legParts"] = [
+            {
+                "name": CURVE_LABEL.get(pos.bond_type, pos.bond_type),
+                "valuation": rec["valuation"],
+                "rolldown": rec["rolldown"],
+                "carry": rec["carry"],
+                "startup": rec["startup"],
+                "funding": rec["funding"],
+                "pnl": rec["pnl"],
+            },
+            {
+                "name": "IRS",
+                "valuation": srec["valuation"],
+                "rolldown": srec["rolldown"],
+                "carry": srec["carry"],
+                "startup": srec["startup"],
+                "funding": None,
+                "pnl": srec["pnl"],
+            },
+        ]
         for key in ("valuation", "rolldown", "carry", "startup"):
             rec[key] = round(rec[key] + srec[key], 0)
         rec["swapPnl"] = srec["pnl"]
@@ -971,7 +1015,10 @@ def book_recon(
     목록이다. 처음에 `legs` 로 두었더니 그 리스트가 인자를 가려 «끔» 이 언제나
     켬으로 돌았고, 실측에서 비용이 안 줄어 잡혔다.)
 
-    켜면 행마다 `legs: [국고, IRS]` 와 `legTenors` 가 붙는다(자산스왑 북에서만).
+    켜면 행마다 `legs: [종목군, IRS]` 와 `legTenors` 가 붙는다(자산스왑 북에서만).
+    종목군 이름은 `universe.CURVE_LABEL`(국고·통안·은행 …)을 따른다 — 「국고」로
+    박혀 있어서 은행채 자산스왑도 국고라고 적히던 자리다 [2026-09-23]. KTB 의
+    이름은 그대로 「국고」다(그 사전이 원래 쓰던 그 낱말이다).
     기본이 꺼짐인 이유는 값이 아니라 **비용**이다: IRS 다리의 KRD 는 파 커브를
     노드마다 흔들어 다시 값매기는 것이라, 실측 2026-09-04 로 250일 창의 채권
     대사가 828ms → 4,599ms(5.55배)가 된다. 백테스트·시뮬의 채권 표는 그 다리를
@@ -1171,6 +1218,21 @@ def book_recon(
     # 어긋나는 칸은 빈칸으로 둔다 [OWNER 2026-09-04].
     #: 다리 블록을 실을 것인가 — 자산스왑 북이고 부른 쪽이 물었을 때만.
     want_legs = asw and with_legs
+
+    #: 채권 다리의 이름 — **종목군을 따른다** [2026-09-23]. 「국고」로 박혀
+    #: 있었는데 자산스왑은 여덟 종목군 전부에 설 수 있어(`bond_types_for` 가
+    #: ASW 를 다 내놓는다) 은행채 자산스왑도 「국고」라고 적히고 있었다.
+    #:
+    #: ★어휘는 **`universe.CURVE_LABEL`**(국고·통안·은행 …)이다. 대사표가 쓰던
+    #: 「국고」가 바로 그 사전의 KTB 이고, 이 표는 만기 열이 여럿이라 짧은 이름을
+    #: 쓰는 자리다. `creditmatrix.BOND_TYPES`(국고채·은행채 AAA …)로 고치면
+    #: KTB 의 이름까지 바뀌어 **없던 어휘를 하나 더 만드는** 셈이 된다 — 첫 판이
+    #: 그랬고 시험 둘이 그것을 잡았다.
+    #:
+    #: 종목군이 섞인 북은 한 낱말로 못 부르므로 「채권」이다 — 틀린 이름을
+    #: 적느니 덜 구체적인 이름을 적는다.
+    leg_name = (CURVE_LABEL.get(next(iter(types)), next(iter(types)))
+                if len(types) == 1 else "채권")
 
     swap_labels: list[str] = []
     if want_legs:
@@ -1387,7 +1449,13 @@ def book_recon(
                 s_total = round(sum(s_est.values()))
                 row["legs"] = [
                     {
-                        "name": "국고",
+                        # ★이름은 **종목군**이다 [2026-09-23]. 「국고」로 박혀
+                        # 있었는데 자산스왑은 여덟 종목군 전부에 설 수 있어
+                        # (`bond_types_for` 가 ASW 를 다 내놓는다) 은행채
+                        # 자산스왑도 「국고」라고 적히고 있었다. 누적 쪽
+                        # (`legParts`)과 **같은 이름**을 써야 두 화면이 같은
+                        # 다리를 같은 낱말로 부른다.
+                        "name": leg_name,
                         "krd": {lb: round(prev_krd[lb]) for lb in labels},
                         "dbp": b_dbp,
                         "est": {lb: round(b_est[lb]) for lb in labels},
@@ -1437,7 +1505,7 @@ def book_recon(
         }
         if want_legs:
             anchor["legs"] = [
-                {"name": "국고", "krd": {lb: round(prev_krd[lb]) for lb in labels},
+                {"name": leg_name, "krd": {lb: round(prev_krd[lb]) for lb in labels},
                  "dbp": {}, "est": {}, "estTotal": None, "actual": None,
                  "valuation": None, "carry": None, "rolldown": None,
                  "funding": None, "residual": None},
@@ -1451,8 +1519,10 @@ def book_recon(
     out = {"tenors": labels, "rows": rows, "truncated": start > first}
     if want_legs:
         # 표의 열은 두 다리의 **합집합**이다 — 화면이 이것으로 칸을 세운다.
+        # 이름은 행의 다리 이름과 **같아야 한다** — 머리가 「국고」인데 행이
+        # 「은행채 AAA」면 읽는 사람이 둘을 다른 표로 읽는다 [2026-09-23].
         out["legTenors"] = [
-            {"name": "국고", "tenors": labels},
+            {"name": leg_name, "tenors": labels},
             {"name": "IRS", "tenors": swap_labels},
         ]
     return out
