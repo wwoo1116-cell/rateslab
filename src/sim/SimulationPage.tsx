@@ -37,6 +37,7 @@ import { runErrorMessage, type WallSummary } from '@/lib/api';
 import { fmtLevel } from '@/lib/format';
 import { fmtKrw } from '@/lib/krw';
 import { Field, NumField, Segmented } from '@/ui/ControlCard';
+import { fitWidth, useControlFont } from '@/ui/fit';
 import { CONTROL_H } from '@/ui/controlHeight';
 import { useFillHeight } from '@/ui/useFillHeight';
 import { IsoDateField } from '@/ui/IsoDateField';
@@ -419,6 +420,21 @@ export function SimulationPage({
     return out;
   }, [catalog]);
 
+  /* ── 칸 폭은 **옵션 집합의 합집합**에서 [OWNER 2026-09-23] ─────────────────
+     종전 주석의 산술(«크롬 82 + 최장 115 = 197»)은 손계산이라 종목이 늘어도
+     다시 안 셌다. 상품 목록은 «주요/전체» 두 무리로 나뉘어 오므로 라벨을 통째로
+     펴서 잰다. 폴백은 그 상수 그대로다. */
+  const [fontProbe, ctlFont] = useControlFont();
+  const kindW = fitWidth('select', KIND_ORDER.map((k) => KIND_LABEL[k]), ctlFont, 160);
+  const prodLabels = useMemo(
+    () =>
+      Object.values(optionsByKind)
+        .flat()
+        .flatMap((g) => g.options.map((o) => o.label)),
+    [optionsByKind],
+  );
+  const prodW = fitWidth('select', prodLabels, ctlFont, 200);
+
   /** 그 종류에서 처음 고를 것 — **주요의 첫 번째**다 [v1]. 아무것도 안 만졌을 때
    * 평가되는 상품이 사람이 실제로 보는 것이어야 한다. */
   const firstOf = (k: InstrumentKind): string | undefined => {
@@ -528,7 +544,8 @@ export function SimulationPage({
                       실측) — 말줄임 금지 [OWNER 2026-08-25, CLAUDE.md]. 종류의
                       최장 «아웃라이트/버터플라이» 5자 ≈ 65px → 82+65=147, 여유
                       13px. 150 이던 시절 여유가 3px 라 폰트가 흔들리면 잘렸다. */}
-                  <Box width={160}>
+                  <Box width={kindW}>
+                    {fontProbe}
                     <Field label="종류">
                       {/* font legal(13) — 컨트롤 값 13px 규칙(popup.ts 의 근거). */}
                       <Select
@@ -567,7 +584,7 @@ export function SimulationPage({
                       «캐피탈채 AA- 10Y» ≈ 115px → 82+115=197. 열이 좁은 날은
                       flexWrap 이 명목 칸을 다음 줄로 접는다 — 접히는 건 되고
                       잘리는 건 안 된다. */}
-                  <Box width={200}>
+                  <Box width={prodW}>
                     <Field label="상품">
                       <Select
                         size="s"

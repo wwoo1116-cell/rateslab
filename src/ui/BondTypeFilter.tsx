@@ -4,6 +4,7 @@ import { Select } from '@coinbase/cds-web/alpha/select';
 import { Box } from '@coinbase/cds-web/layout';
 
 import { Field } from '@/ui/ControlCard';
+import { fitWidth, useControlFont } from '@/ui/fit';
 
 import { DROPDOWN_STYLES } from '@/ui/window/popup';
 
@@ -33,11 +34,22 @@ export function BondTypeFilter({
   value?: string;
   onChange: (v: string | undefined) => void;
 }) {
+  const [fontProbe, font] = useControlFont();
+  const w = fitWidth(
+    'select',
+    ['전체', ...types.map((t) => t.label)],
+    font,
+    200,
+  );
   if (types.length === 0) return null;
-  /* 폭 200: 가장 긴 라벨 "캐피탈채 AA-" 가 한 줄로 서는 폭 (StartFilter 의
-   * 같은 실측 계열). */
+  /* ★폭은 **유도**다 [OWNER 2026-09-23]. 200 은 「가장 긴 라벨 «캐피탈채 AA-» 가
+     한 줄로 서는 폭」이라 적힌 손 실측이었는데, **같은 최장 라벨**에 백테스트
+     창은 168 을 주고 있었다 — 둘 다 「실측」이라 적힌 채로 32px 이 달랐다.
+     이제 둘 다 `fitWidth` 를 지나므로 같은 목록에서 같은 수가 나온다.
+     200 은 첫 프레임 폴백으로만 남는다. */
   return (
-    <Box width={200}>
+    <Box width={w}>
+      {fontProbe}
       {/* font legal(13) — 컨트롤 값 13px 규칙(popup.ts 의 근거).
           `styles`(목록 폭)가 **빠져 있었다** [OWNER 2026-08-25 — "산금채 AAA
           이런거 다 잘려서 나오잖아"]: 이게 없으면 CDS 가 목록을 컨트롤 폭이

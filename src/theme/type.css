@@ -3255,3 +3255,34 @@ tr.sr-mr-book > td {
     -1px 0 0 var(--color-bgLine),
     -6px 0 8px -6px var(--sr-edge-shadow);
 }
+
+/* ── 활자 탐침 — 보이지 않는 글자 하나 [2026-09-23] ─────────────────────────
+ *
+ * `ui/fit.tsx` 가 컨트롤 폭을 유도하려면 **컨트롤이 쓰는 그 폰트**를 알아야 한다.
+ * 13px 은 CSS 클래스가 아니라 CDS 의 `legal` 토큰에서 오므로, 탐침도 CDS 글자로
+ * 렌더하고 여기서는 **자리만 지운다** — 활자는 안 건드린다(건드리면 재는 대상이
+ * 달라진다).
+ *
+ * `visibility: hidden` 이지 `display: none` 이 아니다: 후자는 계산된 폰트를
+ * 못 읽게 만든다(박스가 없으므로). 스크린리더는 `aria-hidden` 이 막는다. */
+.sr-fitprobe {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: pre;
+  inline-size: 0;
+  block-size: 0;
+  overflow: hidden;
+}
+
+/* ── 버튼 옆의 설명 글자 [2026-09-23 · T5] ──────────────────────────────────
+ *
+ * 행의 `gap` 은 **버튼↔버튼** 을 위한 값이다(6px → 글자 틈 38). 캡션은 패딩이
+ * 없어 같은 6px 이 글자 틈 22 로 보이므로, 그 차이(16px)를 이 요소가 스스로
+ * 진다 — 6 + 16 = 22px 상자 틈이고 글자 틈은 38 로 버튼 쌍과 같아진다.
+ *
+ * 산술의 정본은 `ui/gaps.ts::BUTTON_ROW` 이고, 그 둘이 어긋나면
+ * `guards/fit-policy.test.ts` 가 터진다. */
+.sr-gap-caption {
+  margin-inline-start: 16px;
+}

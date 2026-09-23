@@ -338,14 +338,36 @@ describe('가로 간격은 앱에 한 값이다 — 12px 동간격', () => {
   });
 
   it('컨트롤 행은 어디서나 gap 1.5(12px)다', () => {
+    /* 리터럴 `1.5` 와 토큰 `GAP.field` 를 **둘 다** 받는다 [OWNER 2026-09-23].
+       2026-09-23 의 폭·간격 정규화가 갭을 한 곳(`ui/gaps.ts`)으로 모으면서 이
+       자리가 `gap={GAP.field}` 가 됐다 — 화면의 12px 은 한 픽셀도 안 바뀌었고
+       글자만 달라졌다.
+
+       ⚠ **이래도 가드가 약해지지 않는다.** 토큰을 받는 대신 바로 아래에서
+       `GAP.field === 1.5` 를 못 박는다 — 그게 없으면 「토큰만 바꿔서 12px 이
+       아닌 값이 되는」 길이 열리고, 그건 이 가드가 막으려던 바로 그 일이다. */
+    const GAP_RE = String.raw`gap=\{(?:1\.5|GAP\.field)\}`;
     const rows: [string, RegExp][] = [
-      ['src/backtest/BacktestWindow.tsx', /<HStack gap=\{1\.5\} alignItems="flex-end" flexWrap="wrap">/],
-      ['src/mr/KnobBar.tsx', /<HStack gap=\{1\.5\} alignItems="flex-end" flexWrap="wrap">/],
-      ['src/mr/MrPage.tsx', /<HStack gap=\{1\.5\} alignItems="center" flexWrap="wrap">/],
-      ['src/rv/RvPage.tsx', /<HStack gap=\{1\.5\} alignItems="center" flexWrap="wrap">/],
-      ['src/sim/SimulationPage.tsx', /<HStack gap=\{1\.5\} alignItems="flex-end"/],
+      ['src/backtest/BacktestWindow.tsx',
+        new RegExp(`<HStack ${GAP_RE} alignItems="flex-end" flexWrap="wrap">`)],
+      ['src/mr/KnobBar.tsx',
+        new RegExp(`<HStack ${GAP_RE} alignItems="flex-end" flexWrap="wrap">`)],
+      ['src/mr/MrPage.tsx',
+        new RegExp(`<HStack ${GAP_RE} alignItems="center" flexWrap="wrap">`)],
+      ['src/rv/RvPage.tsx',
+        new RegExp(`<HStack ${GAP_RE} alignItems="center" flexWrap="wrap">`)],
+      ['src/sim/SimulationPage.tsx',
+        new RegExp(`<HStack ${GAP_RE} alignItems="flex-end"`)],
     ];
     for (const [f, re] of rows) expect(src(f), f).toMatch(re);
+  });
+
+  it('★그 토큰은 **12px 그대로다** — 값이 바뀌면 여기서 터진다', () => {
+    /* 위 시험이 토큰을 받아 주는 대가다. 「한 곳에 모으기」가 「한 곳에서 조용히
+       바꾸기」가 되면 안 된다 — 09-02 의 결정은 **수** 에 대한 것이었다. */
+    const gaps = src('src/ui/gaps.ts');
+    expect(gaps, 'GAP.field 가 1.5(12px)가 아니에요').toMatch(/field:\s*1\.5/);
+    expect(gaps, 'INK.field 가 12px 가 아니에요').toMatch(/field:\s*12/);
   });
 });
 

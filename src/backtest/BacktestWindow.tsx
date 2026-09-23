@@ -68,6 +68,8 @@ import { fmtKrw, fmtKrwFromMan, manUnits, splitCashBondKrw, splitKrw } from '@/l
 import { useFunding } from '@/state/funding';
 import type { Row } from '@/table/rows';
 import { Field, Segmented } from '@/ui/ControlCard';
+import { fitWidth, useControlFont } from '@/ui/fit';
+import { BUTTON_ROW, GAP } from '@/ui/gaps';
 import { CONTROL_H } from '@/ui/controlHeight';
 import { IsoDateField } from '@/ui/IsoDateField';
 import { loadCd } from '@/ui/PreviewPane';
@@ -111,6 +113,18 @@ const EOK = 1e8;
  * 선물 둘 [OWNER, 2026-08-25]은 닫힌 어휘(3Y·10Y 각 두 개)라 종목 드롭다운
  * 하나로 끝난다 — 만기 칸도 종목군 칸도 필요 없다. */
 const KIND_ORDER: BookKind[] = ['swap', 'cashbond', 'assetswap', 'futures', 'futuresswap'];
+/** 입력 칸의 **포맷 최대값** — 옵션 집합이 없는 칸은 포맷터가 최대를 말한다.
+ *  표의 열 폭이 「오늘 데이터가 아니라 포맷 최대값」으로 서는 것과 같은 규칙
+ *  (DESIGN.md §5.1). 날짜는 ISO 열 글자라 늘 같은 폭이다. */
+const SIZE_WIDEST = ['9,999'] as const;
+const DATE_WIDEST = ['2026-09-23'] as const;
+/** 「진입 레벨」은 **읽기 전용 칸**이지만 칸이다 [OWNER 2026-09-23] — 입력과 같은
+ *  규칙으로 폭을 받는다. 두 줄 중 긴 쪽이 폭을 정하고, 각 줄의 최대는
+ *  `entryLevelLines` 의 네 갈래를 편 것이다(가격·내재·bp·CD). */
+const LEVEL_WIDEST = [
+  '-9,999.99가격', '내재 9.9999%', '-999.9bp', 'IRS − 내재', '9.9999%', 'CD 9.9999%',
+] as const;
+
 const KIND_LABEL: Record<BookKind, string> = {
   swap: '스왑',
   cashbond: '현금채권',
@@ -118,6 +132,9 @@ const KIND_LABEL: Record<BookKind, string> = {
   futures: '국채선물',
   futuresswap: '퓨처스왑',
 };
+
+/** 종류 칸이 가질 수 있는 **모든** 라벨 — 폭은 여기서 나온다. */
+const KIND_LABEL_ALL = Object.values(KIND_LABEL);
 
 /**
  * 진입일 이후 첫 관측 — **실행 전에 보여줄 진입 레벨** [v1 OWNER 피드백,
@@ -565,6 +582,44 @@ export function BacktestWindow({
     [rows],
   );
 
+  /* ── 칸 폭은 **옵션 집합의 합집합**에서 나온다 [OWNER 2026-09-23] ──────────
+     종전에는 칸마다 손으로 잰 상수였고(`Box width={168}` 옆의 그 주석들) 서로
+     안 맞았다 — 같은 최장 라벨 「캐피탈채 AA-」에 여기는 168, `BondTypeFilter`
+     는 200. 둘 다 「실측」이라 적혀 있었다. Phase A 실측에서 이 행의 **여덟 칸이
+     전부** T1(죽은 폭 ≤16px)을 실패했다(만기 칸: 최장 25px, 상자 116px).
+
+     **지금 종류가 아니라 모든 종류**로 재는 이유가 둘이다:
+       · 종류를 바꿀 때 칸이 안 움직인다(표의 「오늘 데이터가 아니라」와 같은 규칙)
+       · 줄마다 종류가 달라도 **열이 맞는다** — 종전에는 채권 줄과 스왑 줄의
+         칸이 서로 다른 자리에서 시작했다.
+     폴백은 종전 상수 그대로다 — 첫 프레임은 종전과 같은 화면이다. */
+  const [fontProbe, ctlFont] = useControlFont();
+  const kindW = fitWidth('select', KIND_LABEL_ALL, ctlFont, 140);
+  const instW = fitWidth(
+    'select',
+    useMemo(
+      () => [
+        ...cashbondTypes.map((t) => t.label),
+        ...swapOptions.map((o) => o.label),
+        ...FUTURES_OPTIONS.map((o) => o.label),
+        ...FUTURESSWAP_OPTIONS.map((o) => o.label),
+      ],
+      [cashbondTypes, swapOptions],
+    ),
+    ctlFont,
+    168,
+  );
+  const tenorW = fitWidth(
+    'select',
+    useMemo(() => cashbondRows.map((r) => r.tenor), [cashbondRows]),
+    ctlFont,
+    116,
+  );
+  /* 규모는 «억» 단위 정수 — 이 창의 상한(`MAX_NOTIONAL_EOK`)이 최장 글자다. */
+  const sizeW = fitWidth('input', SIZE_WIDEST, ctlFont, 88);
+  const dateW = fitWidth('input', DATE_WIDEST, ctlFont, 150);
+  const levelW = fitWidth('readout', LEVEL_WIDEST, ctlFont, 96);
+
   /** 채권 행을 id 로 찾는 표 — 만기 목록과 단위가 여기서 나온다. */
   const bondById = useMemo(
     () => new Map(cashbondRows.map((r) => [r.id, r])),
@@ -800,6 +855,10 @@ export function BacktestWindow({
       ]}
     >
       <VStack gap={2} padding={2} width="100%">
+        {/* 활자 탐침 — 보이지 않는 글자 하나. 컨트롤 폭을 유도하려면 컨트롤이
+            쓰는 그 폰트를 알아야 하고, 13px 은 CSS 가 아니라 CDS 의 `legal`
+            토큰에서 온다(`ui/fit.tsx` 의 그 문단). */}
+        {fontProbe}
         {/* ── 북 ───────────────────────────────────────────────────────────── */}
         <VStack gap={1} width="100%">
           {book.map((r) => {
@@ -828,13 +887,27 @@ export function BacktestWindow({
                     그래서 얼마(진입 레벨) 넷이 읽혔다. 그 문법이 앱에서 은퇴한
                     이유는 `theme/type.css` 의 그 자리에 있다(리듬이 두 벌로
                     갈렸고, 상자 안 죽은 폭에 흔들려 선언과 화면이 달랐다). */}
-                <HStack gap={1.5} alignItems="flex-end" flexWrap="wrap">
+                {/* ★접히는 단위는 **요소가 아니라 묶음**이다 [OWNER 2026-09-23 · T4].
+                    종전에는 평평한 목록에 `flexWrap` 이라 ✕ 가 **모든 폭에서
+                    혼자** 다음 줄에 섰다(실측 1020/980/900/800/700 전부). 이제
+                    칸을 셋으로 묶는다 — 무엇을(종류·종목·만기) / 얼마나·언제
+                    (규모·진입일·청산일) / 그래서 얼마·지우기(진입 레벨·✕).
+
+                    ⚠ **틈은 안 바꾼다.** 묶음 사이도 칸 사이와 같은 12px 이다 —
+                    [OWNER 2026-09-02 「가로 근접성 리듬 폐기하고 그냥 동간격으로」]
+                    가 살아 있는 결정이라, 여기서 얻는 것은 «접히는 단위» 뿐이고
+                    «리듬» 은 다시 안 들인다. `INK.group`(24) 은 토큰에 있지만 이
+                    행에는 안 쓴다. */}
+                <HStack gap={GAP.field} alignItems="flex-end" flexWrap="wrap">
+                  <HStack gap={GAP.field} alignItems="flex-end">
                   {/* 종류 140 — 가장 긴 라벨 "현금채권" 이 13px legal 로 ~52px 이고
                       CDS 컨트롤의 크롬(좌우 패딩 + 셰브론)이 82px 을 먹는다(이 창의
                       다른 칸들과 같은 실측 산술). 132 이던 시절 그 합(134)이 상자보다
                       2px 컸다 — 자기 주석의 산술이 이미 어긋나 있었다
-                      [OWNER 2026-08-25 말줄임 금지]. */}
-                  <Box width={140}>
+                      [OWNER 2026-08-25 말줄임 금지]. 그 수는 2026-09-23 에
+                      **유도로 바뀌었다** — `kindW` 가 `KIND_LABEL` 전부를 재고,
+                      140 은 첫 프레임 폴백으로만 남는다. */}
+                  <Box width={kindW}>
                     <Field label="종류">
                       {/* font legal(13) — 컨트롤 값 13px 통일(popup.ts 의 근거). */}
                       <Select
@@ -856,10 +929,12 @@ export function BacktestWindow({
                       />
                     </Field>
                   </Box>
-                  {/* 160 → 168 [OWNER 2026-08-25 말줄임 금지]: 최장 «캐피탈채
-                      AA-» ≈ 76px + 크롬 82 = 158 — 2px 모자라 잘렸다. 같은
-                      라벨에 BondTypeFilter 는 200 을 준다(다른 크롬). */}
-                  <Box width={168}>
+                  {/* 160 → 168 [OWNER 2026-08-25] → **유도** [2026-09-23].
+                      그 시절 산술(«캐피탈채 AA-» 76 + 크롬 82 = 158)은 손계산이라
+                      종목군이 늘어도 다시 안 셌고, 같은 라벨에 `BondTypeFilter`
+                      가 200 을 주는 **두 벌**이 서 있었다. 이제 `instW` 가 채권·
+                      스왑·선물 라벨을 통째로 재므로 둘이 같은 수가 된다. */}
+                  <Box width={instW}>
                     <Field label="종목">
                       <Select
                         size="s"
@@ -883,9 +958,10 @@ export function BacktestWindow({
                   {/* 만기 칸은 채권에만 선다 [OWNER — "Cash Bond에서는 종목, 테너로"].
                       스왑은 종목 이름이 이미 만기를 말한다(3s10s 의 두 다리). */}
                   {bond ? (
-                    /* 92 → 116 [OWNER 2026-08-25 말줄임 금지]: 크롬 82 를 빼면
-                       글자 자리가 10px 라 «10Y»·«1.5Y» 도 잘렸다. */
-                    <Box width={116}>
+                    /* 92 → 116 [OWNER 2026-08-25] → **유도** [2026-09-23].
+                       116 은 최장 «1.5Y»(25px) + 크롬 66 보다 25px 넓어 T1 을
+                       실패했다 — 「3M 이 공사채 AAA 만큼 넓다」가 이 칸이다. */
+                    <Box width={tenorW}>
                       <Field label="만기">
                         <Select
                           size="s"
@@ -899,7 +975,9 @@ export function BacktestWindow({
                       </Field>
                     </Box>
                   ) : null}
-                  <Box width={88}>
+                  </HStack>
+                  <HStack gap={GAP.field} alignItems="flex-end">
+                  <Box width={sizeW}>
                     <Field label="규모 (억)">
                       {/* fontSize legal(13) — 컨트롤 값 13px 통일(popup.ts 의 근거).
                           height 32 — 이 행의 등고. 13px 패스가 `Select` 는
@@ -921,7 +999,7 @@ export function BacktestWindow({
                       종전 근거였던 «네이티브가 ISO 로 보인다» 는 **로케일
                       의존**이라 en-US 에서는 08/24/2026 이 된다. 라벨은
                       컨트롤이 지므로 `Field` 를 벗었다. */}
-                  <Box width={150}>
+                  <Box width={dateW}>
                     <IsoDateField
                       label="진입일"
                       value={r.entry}
@@ -933,7 +1011,7 @@ export function BacktestWindow({
                       }
                     />
                   </Box>
-                  <Box width={150}>
+                  <Box width={dateW}>
                     <IsoDateField
                       label="청산일"
                       value={r.exit}
@@ -947,7 +1025,9 @@ export function BacktestWindow({
                       꽂히는지**가 실행을 누르기 전에 읽혀야 한다. 그 날짜에 관측이
                       없으면(휴일·데이터 끝 이후) 서버가 스냅할 그 날의 값을 그대로
                       보여준다 — 규칙이 하나여야 두 개의 진입 레벨이 안 생긴다. */}
-                  <Box width={96}>
+                  </HStack>
+                  <HStack gap={GAP.field} alignItems="flex-end">
+                  <Box width={levelW}>
                     <Field label="진입 레벨">
                       {/* 컨트롤이 아닌 값도 컨트롤과 같은 32px 상자에 담는다.
                           이 행은 `alignItems="flex-end"` 라 바닥이 정렬되는데, 그
@@ -1001,6 +1081,7 @@ export function BacktestWindow({
                   >
                     ✕
                   </button>
+                  </HStack>
                 </HStack>
                 {/* 방향은 **자기 줄의 세그먼트**다 [2026-08-21, 시뮬레이션의 같은
                     자리와 같은 판단]. 드롭다운이던 시절 이 칸은 264px 였다 — 가장
@@ -1027,7 +1108,13 @@ export function BacktestWindow({
             );
           })}
 
-          <HStack gap={1} alignItems="center" flexWrap="wrap">
+          {/* ★버튼 줄의 틈은 **관계별**이다 [OWNER 2026-09-23 · T5].
+              종전에는 한 값(6px)이었는데 글자 틈이 **38 대 22** 로 갈렸다 —
+              버튼은 제 패딩 16 을 좌우로 지고 캡션은 맨 글자라, 상자를 균일하게
+              맞추면 눈에는 안 균일하다. 그래서 상자 틈을 **글자 틈이 같아지도록**
+              준다(`ui/gaps.ts::BUTTON_ROW` 의 그 산술). 행의 기본 틈은
+              버튼↔버튼이고, 캡션 앞의 넓은 틈은 그 요소가 스스로 진다. */}
+          <HStack gap={BUTTON_ROW.betweenButtons} alignItems="center" flexWrap="wrap">
             <Button
               variant="secondary"
               size="xs"
@@ -1052,7 +1139,7 @@ export function BacktestWindow({
               {running ? '계산 중…' : '실행'}
             </Button>
             {book.length >= MAX_POSITIONS ? (
-              <TextCaption as="span" color="fgMuted">
+              <TextCaption as="span" color="fgMuted" className="sr-gap-caption">
                 한 창에 {MAX_POSITIONS}줄까지예요.
               </TextCaption>
             ) : null}
@@ -1060,7 +1147,7 @@ export function BacktestWindow({
                 TextCaption 은 uppercase 라 "+10bp (Setting)" 이 "+10BP (SETTING)"
                 이 된다(v1 실측 함정). 문장·단위는 TextLegal 이 진다. */}
             {hasBond ? (
-              <TextLegal as="span" color="fgMuted">
+              <TextLegal as="span" color="fgMuted" className="sr-gap-caption">
                 채권 조달 {funding.basis === 'base' ? '기준금리' : '콜금리'}{' '}
                 {funding.spreadBp >= 0 ? '+' : ''}
                 {funding.spreadBp}bp (Setting)

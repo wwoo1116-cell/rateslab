@@ -4,6 +4,7 @@ import { Select } from '@coinbase/cds-web/alpha/select';
 import { Box } from '@coinbase/cds-web/layout';
 
 import { Field } from '@/ui/ControlCard';
+import { fitWidth, useControlFont } from '@/ui/fit';
 
 import { DROPDOWN_STYLES } from '@/ui/window/popup';
 
@@ -40,11 +41,15 @@ export function StartFilter({
   value?: string;
   onChange: (v: string | undefined) => void;
 }) {
+  /* ★폭은 **유도**다 [OWNER 2026-09-23]. 200 은 「168 에서 `1Y3M` 이 두 줄로
+     접혔다」는 손 실측이었다 — 그 진단은 옳았지만 답이 상수라, 시작점 라벨이
+     늘어도 다시 안 셌다. 200 은 첫 프레임 폴백으로만 남는다. */
+  const [fontProbe, font] = useControlFont();
+  const w = fitWidth('select', ['전체', ...starts], font, 200);
   if (starts.length === 0) return null;
-  /* 폭 200: 드롭다운 목록이 컨트롤 폭을 따라가는데, 168 에서는 가장 긴 라벨인
-   * `1Y3M` 이 두 줄로 접혔다(실측 2026-08-14). 시작점 라벨은 그 꼴이 최대다. */
   return (
-    <Box width={200}>
+    <Box width={w}>
+      {fontProbe}
       {/* 라벨이 "시작" 이고 값이 "1Y 시작" 이면 화면에는 "시작 1Y 시작" 이 남는다
           (실측 2026-08-14). 라벨이 단위를 지고 값은 값만 진다. */}
       {/* font legal(13) — 컨트롤 값 13px 규칙(popup.ts 의 근거).

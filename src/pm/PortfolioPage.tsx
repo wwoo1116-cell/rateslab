@@ -46,6 +46,8 @@ import { directionClass } from '@/table/tint';
 import { Cond } from '@/ui/Cond';
 import { Field, Segmented } from '@/ui/ControlCard';
 import { CONTROL_H } from '@/ui/controlHeight';
+import { fitWidth, useControlFont } from '@/ui/fit';
+import { GAP } from '@/ui/gaps';
 import { ErrorState, LoadingState } from '@/ui/DataState';
 import { ThHelp } from '@/ui/ThHelp';
 import { DROPDOWN_STYLES } from '@/ui/window/popup';
@@ -369,6 +371,24 @@ export function PortfolioPage() {
   /** 초기화 한 번 더 묻기 — 화면의 문이고, 서버가 확인 낱말로 둘째 문을 진다. */
   const [resetArm, setResetArm] = useState(false);
 
+  /* ── 칸 폭은 **옵션 집합의 합집합**에서 [OWNER 2026-09-23] ─────────────────
+     진단에서 이 줄의 **열두 칸이 전부** T1(죽은 폭 ≤16px)을 실패했다(21~130px).
+     계기를 바꾸면 만기·방향 목록이 따라 바뀌므로 **모든 계기의 목록을 합쳐서**
+     잰다 — 그래야 고를 때 칸이 안 움직인다. 폴백은 종전 상수 그대로다. */
+  const [fontProbe, ctlFont] = useControlFont();
+  const allKinds = inst?.kinds ?? [];
+  const kindW = fitWidth('select', allKinds.map((k) => k.label), ctlFont, 130);
+  const tenorW = fitWidth('select', allKinds.flatMap((k) => k.tenors), ctlFont, 110);
+  const sideW = fitWidth('select', allKinds.flatMap((k) => k.sides.map((d) => d.label)),
+                         ctlFont, 140);
+  const rateW = fitWidth('input', ['9.9999'], ctlFont, 130);
+  const sizeW = fitWidth('input', ['9,999.9'], ctlFont, 140);
+  const dateW = fitWidth('input', ['2026-09-23'], ctlFont, 140);
+  const tagW = fitWidth('input', ['BSS 2Y 스티프너'], ctlFont, 150);
+  const lbW = fitWidth('input', ['600'], ctlFont, 92);
+  const zW = fitWidth('input', ['20.0'], ctlFont, 78);
+  const modeW = fitWidth('select', ['이탈 즉시', '밴드 복귀'], ctlFont, 132);
+
   /**
    * 친 조건 → 보낼 것.
    *
@@ -587,8 +607,18 @@ export function PortfolioPage() {
           />
           {/* 담는 줄 — 얼라인 캐논 그대로(라벨 위 · 32px 등고 · 바닥 정렬 ·
               폭은 감싸는 Box 가 준다). */}
-          <HStack gap={1.5} alignItems="flex-end" paddingX={2} paddingBottom={0.5} flexWrap="wrap">
-            <Box width={130}>
+          {/* ★접히는 단위는 **묶음**이다 [OWNER 2026-09-23 · T4]. 칸이 열넷이라
+              1440 에서도 접히는데, 평평한 목록이면 끝의 요소 하나가 혼자 선다
+              (Playwright 가드가 그것을 잡았다). 넷으로 묶는다 —
+              무엇을(계기·만기·방향) / 얼마에·얼마나(체결금리·크기기준·명목) /
+              언제·무엇으로(체결일·묶음) / 그날의 조건(다섯 + 담기).
+              담기 버튼은 **마지막 묶음 안**이다: 혼자 두면 그 버튼이 또 혼자 선다.
+              ⚠ 틈은 안 바꾼다 — 묶음 사이도 12px(09-02 의 그 결정). */}
+          <HStack gap={GAP.field} alignItems="flex-end" paddingX={2} paddingBottom={0.5}
+            flexWrap="wrap">
+            <HStack gap={GAP.field} alignItems="flex-end">
+            <Box width={kindW}>
+              {fontProbe}
               <Field label="계기">
                 <Select size="s" font="legal" styles={DROPDOWN_STYLES}
                   accessibilityLabel="계기"
@@ -610,7 +640,7 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
-            <Box width={110}>
+            <Box width={tenorW}>
               <Field label="만기">
                 <Select size="s" font="legal" styles={DROPDOWN_STYLES}
                   accessibilityLabel="만기"
@@ -621,7 +651,7 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
-            <Box width={140}>
+            <Box width={sideW}>
               <Field label="방향"
                 help="부호는 낱말이 아니라 「금리가 오르면 버는가」로 저장돼요 — 페이와 선물 매도가 같은 쪽이에요.">
                 <Select size="s" font="legal" styles={DROPDOWN_STYLES}
@@ -633,7 +663,9 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
-            <Box width={130}>
+            </HStack>
+            <HStack gap={GAP.field} alignItems="flex-end">
+            <Box width={rateW}>
               <Field label="체결 금리(%)"
                 help="내가 실제로 받은 레벨이에요. 종가가 아니라 이걸 적는 게 이 표의 존재 이유예요.">
                 <TextInput size="s" fontSize="legal" height={CONTROL_H}
@@ -658,7 +690,7 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
-            <Box width={140}>
+            <Box width={sizeW}>
               <Field label={sizeMode === 'notional' ? '명목(억)' : 'DV01(만원/bp)'}>
                 <TextInput size="s" fontSize="legal" height={CONTROL_H}
                   accessibilityLabel={sizeMode === 'notional' ? '명목 (억)' : 'DV01 (만원/bp)'}
@@ -668,7 +700,9 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
-            <Box width={140}>
+            </HStack>
+            <HStack gap={GAP.field} alignItems="flex-end">
+            <Box width={dateW}>
               <Field label="체결일">
                 <TextInput size="s" fontSize="legal" height={CONTROL_H}
                   accessibilityLabel="체결일 (YYYY-MM-DD)"
@@ -682,7 +716,7 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
-            <Box width={150}>
+            <Box width={tagW}>
               <Field label="묶음"
                 help="다리들을 부르는 이름이에요(예 「BSS 2Y」). 산술에는 안 써요 — 묶음이 산술을 지면 화면이 BSS 를 다시 정의하게 돼요.">
                 <TextInput size="s" fontSize="legal" height={CONTROL_H}
@@ -697,7 +731,9 @@ export function PortfolioPage() {
                 좁으면 둘째 줄로 접힌다 — 칸이 열둘이 되는 자리고, 접히는 것이
                 줄이는 것보다 낫다(「낱말 중간 줄바꿈 금지」 5 와 같은 규율).
                 라벨 위 · 32px 등고 · 바닥 정렬은 형제와 같다. */}
-            <Box width={92}>
+            </HStack>
+            <HStack gap={GAP.field} alignItems="flex-end">
+            <Box width={lbW}>
               <Field label="룩백 (일)"
                 help="이 다리를 담을 때의 조건이에요. 다섯을 다 채우면 같이 얼고, 하나라도 비면 조건 없는 다리로 담겨요.">
                 <TextInput size="s" fontSize="legal" height={CONTROL_H}
@@ -707,7 +743,7 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
-            <Box width={78}>
+            <Box width={zW}>
               <Field label="진입 σ">
                 <TextInput size="s" fontSize="legal" height={CONTROL_H}
                   accessibilityLabel="진입 σ"
@@ -716,7 +752,7 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
-            <Box width={78}>
+            <Box width={zW}>
               <Field label="청산 σ">
                 <TextInput size="s" fontSize="legal" height={CONTROL_H}
                   accessibilityLabel="청산 σ"
@@ -725,7 +761,7 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
-            <Box width={78}>
+            <Box width={zW}>
               <Field label="손절 σ">
                 <TextInput size="s" fontSize="legal" height={CONTROL_H}
                   accessibilityLabel="손절 σ"
@@ -734,7 +770,7 @@ export function PortfolioPage() {
                 />
               </Field>
             </Box>
-            <Box width={132}>
+            <Box width={modeW}>
               <Field label="진입 규칙">
                 {/* 낱말은 MR 화면의 그것이다 — 두 화면이 같은 규칙을 다르게
                     부르면 어제 다리와 오늘 노브를 못 잇는다. */}
@@ -779,6 +815,7 @@ export function PortfolioPage() {
             >
               다리 담기
             </button>
+            </HStack>
           </HStack>
           <Box paddingX={2} paddingBottom={2}>
             <Text font="legal" as="span" color="fgMuted" maxWidth={760}>

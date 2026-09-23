@@ -34,7 +34,7 @@ importers:
         version: 5.2.1
       next:
         specifier: 15.4.8
-        version: 15.4.8(@babel/core@7.29.7(supports-color@7.2.0))(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
+        version: 15.4.8(@babel/core@7.29.7(supports-color@7.2.0))(@playwright/test@1.63.0)(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
       react:
         specifier: 19.1.2
         version: 19.1.2
@@ -45,6 +45,9 @@ importers:
       '@eslint/eslintrc':
         specifier: ^3.3.1
         version: 3.3.6
+      '@playwright/test':
+        specifier: ^1.63.0
+        version: 1.63.0
       '@testing-library/react':
         specifier: ^16.3.0
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
@@ -877,6 +880,11 @@ packages:
   '@nolyfill/is-core-module@1.0.39':
     resolution: {integrity: sha512-nn5ozdjYQpUCZlWGuxcJY/KpxkWQs4DcbMCmKojjyrYDEAGy4Ce19NN4v5MduafTwJlbKc99UA8YhSVqq9yPZA==}
     engines: {node: '>=12.4.0'}
+
+  '@playwright/test@1.63.0':
+    resolution: {integrity: sha512-oxMK4vllB9RK5NQ2l1pq1IfOf2AvnEuj/vYGDj0H2nMtmtZpKtCwt/l00GEO6xjGfpBNAvjovvYdCm50dRQkpQ==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   '@popperjs/core@2.11.8':
     resolution: {integrity: sha512-P1st0aksCrn9sGZhp8GMYwBnQsbvAWsZAX44oXNNvLHGqAOcoVxmjZiohstwQ7SqKnbR47akdNi+uleWD8+g6A==}
@@ -2640,6 +2648,16 @@ packages:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
 
+  playwright-core@1.63.0:
+    resolution: {integrity: sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.63.0:
+    resolution: {integrity: sha512-+7ziBLidS4NaNCdt57SUDT+wYmmd5fmiQejUic/kb+YsYSCPyOOE9sebzMjNmQrsnNpDJqd4WHvV/8lfKfUDUg==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
     engines: {node: '>= 0.4'}
@@ -3986,6 +4004,10 @@ snapshots:
       fastq: 1.20.1
 
   '@nolyfill/is-core-module@1.0.39': {}
+
+  '@playwright/test@1.63.0':
+    dependencies:
+      playwright: 1.63.0
 
   '@popperjs/core@2.11.8': {}
 
@@ -5738,7 +5760,7 @@ snapshots:
 
   negotiator@1.0.0: {}
 
-  next@15.4.8(@babel/core@7.29.7(supports-color@7.2.0))(react-dom@19.1.2(react@19.1.2))(react@19.1.2):
+  next@15.4.8(@babel/core@7.29.7(supports-color@7.2.0))(@playwright/test@1.63.0)(react-dom@19.1.2(react@19.1.2))(react@19.1.2):
     dependencies:
       '@next/env': 15.4.8
       '@swc/helpers': 0.5.15
@@ -5756,6 +5778,7 @@ snapshots:
       '@next/swc-linux-x64-musl': 15.4.8
       '@next/swc-win32-arm64-msvc': 15.4.8
       '@next/swc-win32-x64-msvc': 15.4.8
+      '@playwright/test': 1.63.0
       sharp: 0.34.5
     transitivePeerDependencies:
       - '@babel/core'
@@ -5875,6 +5898,12 @@ snapshots:
   picomatch@4.0.5: {}
 
   pkce-challenge@5.0.1: {}
+
+  playwright-core@1.63.0: {}
+
+  playwright@1.63.0:
+    dependencies:
+      playwright-core: 1.63.0
 
   possible-typed-array-names@1.1.0: {}
 

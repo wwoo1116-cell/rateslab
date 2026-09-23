@@ -29,6 +29,7 @@ import { SegmentedTabs } from '@coinbase/cds-web/tabs';
 import { Text } from '@coinbase/cds-web/typography';
 
 import { CONTROL_H } from './controlHeight';
+import { GAP } from './gaps';
 
 /** 설정 카드 한 장. v1 의 카드 열과 같은 문법이다. */
 export function ControlCard({
@@ -145,7 +146,10 @@ export function Field({
   children: React.ReactNode;
 }) {
   return (
-    <VStack className={className} gap={0.25} minWidth={0} flexGrow={1}>
+    /* 라벨→컨트롤 `INK.label` = 4px [OWNER 2026-09-23 · T2].
+       2px(`gap={0.25}`) 이던 자리다 — 진단에서 앱 **전역**이 T2(≥4)를 실패했고,
+       그 2px 은 한글 라벨의 디센더와 컨트롤 테두리를 붙여 놓고 있었다. */
+    <VStack className={className} gap={GAP.label} minWidth={0} flexGrow={1}>
       <Text as="span" font="legal" color="fgMuted" noWrap title={help}>
         {label}
       </Text>
