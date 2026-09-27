@@ -358,7 +358,11 @@ class TestPlumbing:
                          # 초기화는 **지우기가 아니다** — 옛 장부를 보관하고 새로
                          # 연다(`paper.reset`). 아래 「지우는 라우트는 없다」가
                          # 여전히 서는 이유가 그것이다.
-                         "/api/paper/reset"}
+                         "/api/paper/reset",
+                         # 그날의 1등 [OWNER 2026-09-23 「손으로 치되 1등을 제안」] —
+                         # **읽기**다. 장부에 쓰지 않고 옆에 설 뿐이라(`Test그날_1등_
+                         # 제안`) 위 「쓰기는 덧쓰기뿐」 규율과 무관하다.
+                         "/api/paper/suggest"}
 
     def test_지우는_라우트는_없다(self):
         """진 기록을 지우는 것이 생존 편향이 장부에 들어오는 가장 흔한 길이다."""
@@ -903,3 +907,181 @@ class Test청산_손절_추적:
         assert "모르는 계열" in str(e.value)
         assert paper.check_series(None) is None
         assert paper.check_series("  ") is None
+
+
+# ── 그날 1등 제안 ────────────────────────────────────────────────────────────
+class Test그날_1등_제안:
+    """★다리를 담을 때 **그날의 1등을 옆에 적는다** [OWNER 2026-09-23 — "들어간
+    시점에서의 최적 파라미터로" → 선택지에서 「손으로 치되 1등을 제안」].
+
+    고르지 않는다 — 장부는 여전히 내가 친 것을 언다(`add_leg` 는 한 자도 안
+    바뀐다). 여기서 재는 것은 셋이다: 격자가 **진입일까지의 자료만** 받는가
+    (미래를 안 보는가) · 순위 규약이 계획면(`mrplan.pick_cell`)과 같은가 · 못 낼
+    때 「1등이 없다」와 「못 잰다」를 가르는가.
+    """
+
+    @staticmethod
+    def _cell(**kw) -> dict:
+        base = dict(lookback=60, entryZ=2.0, exitZ=0.5, stopZ=2.5, entryMode="level",
+                    cdarRatio=None, totalPnl=0.0, maxDrawdown=0.0, numTrades=0,
+                    winRate=None)
+        base.update(kw)
+        return base
+
+    @staticmethod
+    def _grid_of(cells: list[dict]):
+        """주입할 `grid_of` — 받은 재료를 적어 두고 칸 목록을 그대로 낸다."""
+        seen: dict = {}
+
+        def grid_of(leg: dict, knobs: dict, *, span: str) -> dict:
+            seen["leg"] = leg
+            seen["knobs"] = knobs
+            seen["span"] = span
+            return {"span": span, "from": leg["dates"][0], "to": leg["dates"][-1],
+                    "days": len(leg["dates"]), "cells": cells}
+
+        return grid_of, seen
+
+    def test_격자는_진입일까지의_봉만_받는다(self):
+        """★미래를 안 본다. 진입일 뒤의 봉이 격자에 들어가면 「그날의 1등」이
+        아니라 「오늘의 1등을 그날에 붙인 것」이다 — 체결일을 뒤로 적은 다리에서
+        그 둘은 다른 칸이다."""
+        leg_of, dates, vals = _leg_of(600)
+        grid_of, seen = self._grid_of([self._cell(cdarRatio=1.0)])
+        out = paper.suggest("BSS-3Y", "2020-12-31", leg_of=leg_of, grid_of=grid_of)
+        got = seen["leg"]
+        assert got["dates"][-1] <= "2020-12-31"
+        assert got["dates"][-1] == max(t for t in dates if t <= "2020-12-31")
+        assert got["dates"] == dates[:len(got["dates"])], "앞머리는 그대로여야 한다"
+        assert len(got["vals"]) == len(got["dates"]), "값 열이 날짜 열과 같은 자리에서 잘려야 한다"
+        assert "r" not in got, "전체 표본의 시뮬을 잘린 재료와 같이 들고 가면 안 된다"
+        assert out["asof"] == got["dates"][-1]
+        assert seen["span"] == mrp.GRID_SPAN, "계획면과 같은 창이어야 같은 1등이다"
+        assert seen["knobs"] == mrp.BASE_KNOBS
+        assert out["inSample"] is True
+        assert out["top"]["rank"] == 1
+
+    def test_나란한_열을_전부_같은_자리에서_자른다(self):
+        """캐리·게이트·비용 경로·롤 마스크는 봉마다 한 칸씩인 열이다. 하나만
+        자르면 엔진이 어긋난 열을 곱한다 — 열쇠마다 길이를 잰다."""
+        leg_of, dates, vals = _leg_of(300)
+        n = len(dates)
+
+        def rich(sid, knobs, *, accounting=True):
+            base = leg_of(sid, knobs, accounting=accounting)
+            return {**base, "carryKrw": [1.0] * n, "gate": [True] * n,
+                    "costSeries": [0.5] * n, "tradable": [0.0] * n,
+                    "pts": [{"t": t, "v": v} for t, v in zip(dates, vals)],
+                    "carryLegs": [("a", [0.5] * n), ("b", [0.5] * n)]}
+
+        cut = paper.cut_leg(rich("BSS-3Y", KNOBS), dates[99])
+        for key in ("dates", "vals", "carryKrw", "gate", "costSeries", "tradable", "pts"):
+            assert len(cut[key]) == 100, key
+        assert all(len(xs) == 100 for _, xs in cut["carryLegs"])
+        # 없는 열은 없는 채로 둔다 — BSS 는 롤 마스크가 None 이다.
+        bare = paper.cut_leg({**rich("BSS-3Y", KNOBS), "tradable": None}, dates[99])
+        assert bare["tradable"] is None
+
+    def test_진입일_앞에_봉이_없으면_사유를_든다(self):
+        leg_of, _dates, _vals = _leg_of(100)
+        grid_of, seen = self._grid_of([self._cell(cdarRatio=1.0)])
+        out = paper.suggest("BSS-3Y", "2019-06-01", leg_of=leg_of, grid_of=grid_of)
+        assert out["top"] is None and out["list"] == []
+        assert "앞서요" in out["why"]
+        assert not seen, "재료가 없는데 격자를 돌리면 안 된다"
+
+    def test_표본이_룩백보다_짧으면_사유를_든다(self):
+        leg_of, dates, _vals = _leg_of(100)
+        grid_of, seen = self._grid_of([self._cell(cdarRatio=1.0)])
+        out = paper.suggest("BSS-3Y", dates[9], leg_of=leg_of, grid_of=grid_of)
+        assert out["top"] is None
+        assert "짧아요" in out["why"]
+        assert out["asof"] == dates[9], "못 재도 어느 날까지 봤는지는 적는다"
+        assert not seen
+
+    def test_전부_못_잰_칸이면_1등이_없다고_말한다(self):
+        """「1등이 없다」와 「못 잰다」는 다른 말이다 — `cells` 는 세고 `ranked` 는 0."""
+        leg_of, _dates, _vals = _leg_of(300)
+        grid_of, _seen = self._grid_of([self._cell(), self._cell(lookback=20)])
+        out = paper.suggest("BSS-3Y", "2020-09-01", leg_of=leg_of, grid_of=grid_of)
+        assert out["cells"] == 2 and out["ranked"] == 0
+        assert out["top"] is None
+        assert "순위를 못 매겼어요" in out["why"]
+
+    def test_순위_규약은_계획면과_같다(self):
+        """★두 벌을 둘 수밖에 없으면 대사로 묶는다 — `rank_cells` 의 1등은
+        `mrplan.pick_cell` 의 그 칸이어야 한다. 못 잰 칸은 빠지고, 동점은 격자
+        차례가 이긴다."""
+        cells = [
+            self._cell(lookback=20, cdarRatio=None),
+            self._cell(lookback=60, cdarRatio=0.8),
+            self._cell(lookback=120, cdarRatio=1.7),
+            self._cell(lookback=20, entryZ=2.5, cdarRatio=1.7),   # 동점 — 뒤 칸
+            self._cell(lookback=60, entryZ=2.5, cdarRatio=-0.2),
+        ]
+        ranked = paper.rank_cells(cells)
+        assert [c["rank"] for c in ranked] == [1, 2, 3, 4]
+        assert [c["cdarRatio"] for c in ranked] == [1.7, 1.7, 0.8, -0.2]
+        assert mrp.knobs_of(ranked[0]) == mrp.knobs_of(mrp.pick_cell(cells))
+        assert ranked[0]["lookback"] == 120 and ranked[1]["entryZ"] == 2.5
+        assert all(set(paper.SUGGEST_FIELDS) <= set(c) for c in ranked)
+        assert all(isinstance(c["lookback"], int) for c in ranked)
+
+    def test_실제_격자와_잇는다(self):
+        """`main._mr_optimize` 를 그대로 꽂아도 선다 — 잘린 재료가 그 함수의
+        입력 규약(날짜·값·기준 노브·방향)을 만족하는가."""
+        from app import main as M
+
+        leg_of, dates, vals = _leg_of(600)
+
+        def grid_of(leg: dict, knobs: dict, *, span: str) -> dict:
+            return M._mr_optimize(leg["dates"], leg["vals"],
+                                  {**knobs, "costBp": paper.COST_BP,
+                                   "notional": paper.NOTIONAL},
+                                  tuple(mr_mod.TRADABLE_DIRS["bss"]), span=span)
+
+        entry = dates[399]
+        out = paper.suggest("BSS-3Y", entry, leg_of=leg_of, grid_of=grid_of)
+        assert out["cells"] == 162, "프리셋 그대로면 162칸이다"
+        assert out["asof"] == entry
+        assert out["top"] is not None and out["top"]["rank"] == 1
+        assert out["list"][0] == out["top"]
+        assert set(mrp.KNOB_KEYS) <= set(out["top"])
+        # 같은 재료를 직접 돌린 1등과 같은 칸 — 이 함수가 격자를 손대지 않는다.
+        direct = M._mr_optimize(dates[:400], vals[:400],
+                                {**mrp.BASE_KNOBS, "costBp": paper.COST_BP,
+                                 "notional": paper.NOTIONAL},
+                                tuple(mr_mod.TRADABLE_DIRS["bss"]), span=mrp.GRID_SPAN)
+        assert mrp.knobs_of(out["top"]) == mrp.knobs_of(mrp.pick_cell(direct["cells"]))
+
+    def test_모르는_계열과_미래_진입일은_문에서_죽는다(self):
+        leg_of, _d, _v = _leg_of(100)
+        grid_of, seen = self._grid_of([])
+        with pytest.raises(paper.LegRejected, match="모르는 계열"):
+            paper.suggest("없는것", "2020-03-01", leg_of=leg_of, grid_of=grid_of)
+        with pytest.raises(paper.LegRejected, match="미래"):
+            paper.suggest("BSS-3Y", "2999-01-01", leg_of=leg_of, grid_of=grid_of)
+        with pytest.raises(paper.LegRejected, match="계열이 있어야"):
+            paper.suggest(None, "2020-03-01", leg_of=leg_of, grid_of=grid_of)
+        assert not seen
+
+    def test_라우트도_같은_문을_진다(self):
+        """자료를 안 읽고 죽는 셋 — 화면이 사유를 그대로 세운다(422)."""
+        from fastapi.testclient import TestClient
+
+        from app import main as M
+
+        c = TestClient(M.app)
+        r = c.get("/api/paper/suggest", params={"series": "없는것", "entry": "2026-09-21"})
+        assert r.status_code == 422 and "모르는 계열" in r.json()["detail"]
+        r = c.get("/api/paper/suggest", params={"series": "BSS-3Y", "entry": "2999-01-01"})
+        assert r.status_code == 422 and "미래" in r.json()["detail"]
+        r = c.get("/api/paper/suggest", params={"series": "BSS-3Y"})
+        assert r.status_code == 422
+
+    def test_장부는_한_자도_안_바뀐다(self):
+        """제안은 옆에 설 뿐이다 — `add_leg` 는 친 것을 언다(오너 선택)."""
+        import inspect
+
+        src = inspect.getsource(paper.add_leg)
+        assert "suggest" not in src and "rank_cells" not in src

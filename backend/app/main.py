@@ -3636,6 +3636,46 @@ def paper_instruments() -> dict:
     }
 
 
+#: 그날 1등의 메모 — (계열, 진입일, 자료 열쇠) 하나에 격자 한 바퀴다(라이브 2~3초,
+#: 퓨처스왑 9초 — 계획면 머리의 실측). **메모리에만** 둔다: 진입일이 자유라
+#: 디스크에 두면 날짜마다 파일이 쌓이고, 재기동 뒤 다시 도는 값은 몇 초다.
+#: 자료 열쇠가 바뀌면(아침 갱신) 그날 것은 저절로 낡은 열쇠가 되어 다시 돈다 —
+#: 과거 진입일이면 같은 수가 나오겠지만, 「같을 것」이라 믿고 안 돌리는 것이 이
+#: 리포가 밟아 온 조용한 실패다(`_mr_cache_key` 머리).
+_paper_suggest_memo: dict[tuple[str, str, str], dict] = {}
+_PAPER_SUGGEST_MEMO_MAX = 64
+
+
+@router.get("/api/paper/suggest")
+def paper_suggest(series: str, entry: str) -> dict:
+    """그날의 1등 — 다리를 담을 때 **옆에 적어 주는** 격자 1등 [OWNER 2026-09-23].
+
+    > "들어간 시점에서의 최적 파라미터로" → 선택지에서 「손으로 치되 1등을 제안」
+
+    고르지 않는다. 계열을 **진입일까지의 자료로** 계획면과 같은 격자에 돌려
+    (`_paper_leg`·`_mr_plan_grid` — 같은 고정값·같은 프리셋) 순위 전부를 돌려주고,
+    장부는 여전히 「내가 친 것」을 언다(`/api/paper/leg`). 산술은 `paper.suggest`.
+
+    ⚠ 이 1등은 **표본내**다(`inSample`). 화면이 그 사실을 같이 적는다 — 「1등」
+    이라고만 적으면 고르라는 말로 읽힌다(PBO 레인의 그 경고).
+    """
+    try:
+        sid = paper.check_series(series)
+        if sid is None:
+            raise paper.LegRejected("계열이 있어야 해요")
+        paper.check_entry(entry)
+    except paper.LegRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    key = (sid, entry, _mr_cache_key())
+    got = _paper_suggest_memo.get(key)
+    if got is None:
+        got = paper.suggest(sid, entry, leg_of=_paper_leg, grid_of=_mr_plan_grid)
+        if len(_paper_suggest_memo) >= _PAPER_SUGGEST_MEMO_MAX:
+            _paper_suggest_memo.pop(next(iter(_paper_suggest_memo)))
+        _paper_suggest_memo[key] = got
+    return got
+
+
 @router.post("/api/paper/close")
 def paper_close(body: dict) -> dict:
     """수동 북의 한 건을 닫는다."""

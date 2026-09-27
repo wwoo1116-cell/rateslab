@@ -208,6 +208,10 @@ export const paperCloseUrl = () => liveUrl("/api/paper/close");
 export const paperLegUrl = () => liveUrl("/api/paper/leg");
 export const paperLegCloseUrl = () => liveUrl("/api/paper/leg/close");
 export const paperInstrumentsUrl = () => liveUrl("/api/paper/instruments");
+/** 그날의 1등 — 계열을 진입일까지의 자료로 격자에 돌린 순위 [OWNER 2026-09-23]. */
+export const paperSuggestUrl = (series: string, entry: string) =>
+  liveUrl("/api/paper/suggest",
+          `series=${encodeURIComponent(series)}&entry=${encodeURIComponent(entry)}`);
 /* 초기화는 **지우기가 아니다** — 옛 장부를 보관하고 새로 연다. */
 export const paperResetUrl = () => liveUrl("/api/paper/reset");
 

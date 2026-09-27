@@ -48,6 +48,7 @@ MR 계획면은 스스로 이렇게 적는다 — 「조건을 고른 창과 성
 """
 from __future__ import annotations
 
+import bisect
 import json
 import os
 import tempfile
@@ -59,6 +60,7 @@ from typing import Any, Callable
 from . import mr as mr_mod
 from . import mrbacktest as mrbt
 from . import mrmetrics as mrm
+from . import mrplan as mrp
 
 #: 장부 파일. 리포 밖이 아니라 `backend/data/` 인 이유는 백업·이관이 한 자리에서
 #: 끝나기 때문이다(`krwswapdata` 와 같은 칸).
@@ -327,6 +329,128 @@ def check_knobs(knobs: dict | None) -> dict | None:
         raise LegRejected(
             f"진입 규칙이 이상해요: {mode} ({' | '.join(mrbt.ENTRY_MODES)})")
     out["entryMode"] = mode
+    return out
+
+
+# ── 그날 1등 제안 [OWNER 2026-09-23 — "들어간 시점에서의 최적 파라미터로"] ──────
+#
+# 오너는 선택지에서 **「손으로 치되 1등을 제안」**을 골랐다. 그래서 여기는 고르지
+# 않는다 — 다리를 담을 때 그 계열을 **진입일까지의 자료로** 격자에 돌려 그날 1등을
+# 옆에 적어 줄 뿐이고, 장부는 여전히 「내가 친 것」을 언다(`add_leg`).
+#
+# ## 왜 「진입일까지」인가
+#
+# 오늘 자료로 돌린 1등은 어제 다리의 조건이 아니다 — 어제는 오늘 봉을 몰랐다.
+# 계획면(`mrplan`)이 오늘 보여 주는 1등은 오늘 담는 다리에는 맞지만, 체결일을
+# 뒤로 적은 다리에는 미래를 본 수다. 그래서 봉마다 나란한 열을 진입일에서 잘라
+# 격자에 넘긴다(`cut_leg`).
+#
+# ## 이 수는 **표본내 1등**이다 — 화면이 그 사실을 같이 적어야 한다
+#
+# 격자는 고른 창에서 채점한다(계획면 머리 「조건도 성과도 지난 1년」). 그래서
+# 1등은 성과가 아니라 **선택의 산물**이고, PBO 레인(`docs/MR_LANE_STATE.md`
+# 「격자 과적합을 확률로」)이 그 위에 과적합 경고를 달아 두었다. 「1등」이라고만
+# 적으면 고르라는 말로 읽힌다 — 그래서 페이로드에 `inSample` 을 명시하고, 화면은
+# 그 옆에 경고 문장을 세운다.
+#
+# ## 산술을 새로 만들지 않는다
+#
+# 격자는 `main._mr_optimize` 의 얼굴(`grid_of`)이고, 순위 규약은 `mrplan.pick_cell`
+# 그대로다 — 못 잰 칸은 후보가 아니고, 동점은 격자 차례가 이긴다. 두 자리가 다른
+# 1등을 말하면 Strategy 와 Portfolio 가 같은 날 다른 조건을 권하게 된다.
+
+#: 1등 칸이 같이 싣는 성적 — 전부 `mrmetrics.score` 의 열쇠다(두 번째 정의 금지).
+SUGGEST_FIELDS = ("totalPnl", "maxDrawdown", "numTrades", "winRate")
+
+
+def cut_leg(leg: dict, entry: str) -> dict | None:
+    """진입일까지의 재료 — 봉마다 나란한 열을 **같은 자리**에서 자른다.
+
+    `_mr_leg` 가 낸 재료는 봉마다 한 칸씩인 열이 여럿이다(값·캐리·게이트·비용
+    경로·롤 마스크). 하나만 자르고 나머지를 두면 엔진이 어긋난 열을 곱한다 —
+    그래서 열쇠를 여기 늘어놓고 전부 같은 색인에서 자른다. 전체 표본의 시뮬
+    (`r`)은 잘린 재료와 안 맞으니 들고 가지 않는다.
+
+    진입일보다 앞선 봉이 하나도 없으면 `None` — 「재료가 없다」이지 빈 표가 아니다.
+    """
+    dates: list[str] = leg["dates"]
+    n = bisect.bisect_right(dates, entry)      # ISO 날짜는 글자 차례가 날짜 차례다
+    if n == 0:
+        return None
+    out = dict(leg)
+    for key in ("dates", "vals", "carryKrw", "gate", "costSeries", "tradable", "pts"):
+        v = leg.get(key)
+        if isinstance(v, list):
+            out[key] = v[:n]
+    out["carryLegs"] = [(nm, xs[:n]) for nm, xs in (leg.get("carryLegs") or [])]
+    out.pop("r", None)
+    return out
+
+
+def rank_cells(cells: list[dict], key: str = mrp.PLAN_RANK_KEY) -> list[dict]:
+    """격자 칸에 순위를 매긴다 — **`mrplan.pick_cell` 과 같은 규약**.
+
+    못 잰 칸(`None`)은 후보가 아니라 뺀다(0 으로 채우면 한복판에 끼어든다).
+    내림차순이고 **동점은 격자 차례**가 이긴다 — 안정 정렬이 그 일을 하므로
+    `pick_cell` 의 엄격한 `>` 와 같은 칸을 1등으로 낸다(시험이 그 항등을 잰다).
+    """
+    kept = [c for c in cells if c.get(key) is not None]
+    kept.sort(key=lambda c: -float(c[key]))
+    return [{**mrp.knobs_of(c), key: c[key],
+             **{f: c.get(f) for f in SUGGEST_FIELDS},
+             "rank": i}
+            for i, c in enumerate(kept, start=1)]
+
+
+def suggest(sid: str | None, entry: str, *, leg_of: Callable[..., dict],
+            grid_of: Callable[..., dict], rank_key: str = mrp.PLAN_RANK_KEY,
+            span: str = mrp.GRID_SPAN) -> dict[str, Any]:
+    """그날의 1등 — 계열 하나를 **진입일까지의 자료로** 격자에 돌린 결과.
+
+    `leg_of(sid, knobs, accounting=…)` 는 `main._paper_leg`, `grid_of(leg, knobs,
+    span=…)` 는 `main._mr_plan_grid` 의 얼굴이다 — 계획면과 **같은 고정값·같은
+    격자**라 오늘 담는 다리의 1등은 계획면의 1등과 같은 칸이다.
+
+    못 낼 때는 `top` 이 `None` 이고 `why` 가 사유를 진다 — 「1등이 없다」와
+    「못 잰다」는 다른 말이다(이 파일의 공란 정책). `list` 는 순위 전부다:
+    화면이 「내 조건은 몇 등」을 **찾기만** 하게(순위는 서버가 매긴다).
+    """
+    sid = check_series(sid)
+    if sid is None:
+        raise LegRejected("계열이 있어야 해요")
+    check_entry(entry)
+    labels = {s: l for s, l, _k in mr_mod.SERIES}
+    out: dict[str, Any] = {
+        "series": sid, "label": labels[sid], "entry": entry,
+        "asof": None, "from": None, "days": 0,
+        "span": span, "rankKey": rank_key,
+        # 표본내다 — 화면이 이 한 칸을 보고 경고 문장을 세운다.
+        "inSample": True,
+        "cells": 0, "ranked": 0, "top": None, "list": [], "why": None,
+    }
+    base = dict(mrp.BASE_KNOBS)
+    leg = leg_of(sid, base, accounting=False)
+    cut = cut_leg(leg, entry)
+    if cut is None:
+        out["why"] = "진입일이 계열 표본보다 앞서요"
+        return out
+    out["asof"] = cut["dates"][-1]
+    shortest = int(min(mr_mod.STRATEGY_PRESETS["lookback"]))
+    if len(cut["vals"]) < shortest + 1:
+        out["why"] = (f"진입일까지의 표본이 룩백보다 짧아요: {len(cut['vals'])}봉"
+                      f" (최소 {shortest + 1})")
+        return out
+    grid = grid_of(cut, base, span=span)
+    cells = grid.get("cells") or []
+    ranked = rank_cells(cells, rank_key)
+    out.update({
+        "from": grid.get("from"), "days": grid.get("days") or 0,
+        "cells": len(cells), "ranked": len(ranked),
+        "list": ranked, "top": ranked[0] if ranked else None,
+    })
+    if not ranked:
+        # 계획면의 그 문장 — 두 화면이 같은 상황을 다른 말로 적지 않는다.
+        out["why"] = "격자가 순위를 못 매겼어요(낙폭이 없어 CDaR 비가 안 서는 칸뿐)"
     return out
 
 

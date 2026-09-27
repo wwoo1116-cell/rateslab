@@ -56,11 +56,13 @@ import { DROPDOWN_STYLES } from '@/ui/window/popup';
  * `retireSeries` 는 계약(`api.ts`)과 라우트에 그대로 살아 있고 여기서만 안 부른다
  * [OWNER 2026-09-22 — "지금은 일단"]. 되살릴 때 임포트만 되돌리면 된다. */
 import {
-  addLeg, closeLeg, fetchInstruments, fetchPaper, resetBook,
-  type PaperInstruments, type PaperLegKnobs, type PaperLegTrack,
+  addLeg, closeLeg, fetchInstruments, fetchPaper, fetchSuggest, resetBook,
+  type PaperInstruments, type PaperLegTrack,
   type PaperPositionLeg,
-  type PaperSheet,
+  type PaperSheet, type PaperSuggest,
 } from './api';
+import { suggestLine } from './suggestLine';
+import { knobWord } from './words';
 
 const MINUS = '−';
 
@@ -85,29 +87,12 @@ const SIDE_WORD: Record<string, string> = {
  *  ⚠ 부호는 **낱말이 아니라 `rateSign`** 이 진다 — 「페이」와 「선물 매도」가 같은
  *  쪽이고 「리시브」와 「매수」가 같은 쪽이다. 낱말로 색을 칠하면 계기마다 규약을
  *  다시 적게 되고, 그게 이 리포가 반복해서 밟은 자리다. */
-/** 진입 규칙의 우리말 — **MR 화면의 그 낱말**을 그대로 쓴다
- *  (`mr/api.ts::MR_ENTRY_MODES`). 두 화면이 같은 규칙을 다르게 부르면 읽는
- *  사람이 어제 다리와 오늘 노브를 못 잇는다. */
 /** 「안 함」의 값 — `null` 을 쓰면 CDS 의 단일 선택 타입이 넓어져 호출부마다
  *  null 체크가 붙는다(`StartFilter.ALL_STARTS` 와 같은 판단). */
 const NO_SERIES = 'none';
 
-const ENTRY_WORD: Record<PaperLegKnobs['entryMode'], string> = {
-  level: '이탈 즉시',
-  touch: '밴드 복귀',
-};
-
-/** 얼린 조건 한 줄 — `120일 · 2.5/0.5/3σ · 이탈 즉시`.
- *
- *  σ 셋을 슬래시로 잇는 것은 트레이더가 부르는 꼴 그대로다("2.5/0.5/3").
- *  단위는 **묶음이 진다** — 숫자마다 σ 를 붙이면 한 줄이 세 번 같은 말을 한다
- *  (CLAUDE.md 「얼라인」 의 «열 제목이 단위를 진다» 와 같은 규칙). */
-function knobWord(k: PaperLegKnobs): string {
-  const z = [k.entryZ, k.exitZ, k.stopZ]
-    .map((v) => String(Number(v.toFixed(2))))
-    .join('/');
-  return `${k.lookback}일 · ${z}σ · ${ENTRY_WORD[k.entryMode]}`;
-}
+/* 진입 규칙의 우리말과 얼린 조건 한 줄(`knobWord`)은 `./words` 로 갔다 [2026-09-28]
+   — 「그날 1등」 줄이 표와 **같은 꼴**로 조건을 적어야 해서다. */
 
 /** z 한 글자 — 부호는 이 리포의 «−»(U+2212)다. `toFixed` 의 하이픈을 그대로
  *  쓰면 같은 표 안에서 음수 기호가 두 벌이 된다. */
@@ -558,6 +543,55 @@ export function PortfolioPage() {
       .finally(() => setBusy(false));
   }, []);
 
+  /* ── 그날의 1등 [OWNER 2026-09-23 — "들어간 시점에서의 최적 파라미터로"] ──
+     선택지에서 **「손으로 치되 1등을 제안」**을 고르셨다. 그래서 이 줄은 고르지
+     않는다 — 계열과 체결일이 서면 그 계열을 **진입일까지의 자료로** 격자에 돌린
+     1등을 담는 줄 아래에 적을 뿐이고, 담기는 것은 여전히 위 칸에 친 값이다.
+     「채택」 버튼을 두지 않는 것이 설계다: 그 버튼이 있으면 이 줄은 제안이 아니라
+     기본값이 되고, 「1등」은 고르라는 말로 읽힌다(PBO 레인의 경고 — 문장은
+     `suggestLine` 이 늘 같이 세우고, `guards/paper-suggest.test.ts` 가 잰다).
+
+     격자 한 바퀴가 2~3초(퓨처스왑 9초)라 **체결일을 다 친 뒤**(열 글자 꼴)에만
+     묻고, 자판이 멈춘 뒤 잠깐 기다린다. 같은 (계열·날)은 서버가 기억한다. */
+  const [suggest, setSuggest] = useState<PaperSuggest>();
+  const [suggestBusy, setSuggestBusy] = useState(false);
+  const [suggestFailed, setSuggestFailed] = useState<string>();
+  const entryTyped = legEntry.trim();
+  const entryReady = entryTyped === '' || /^\d{4}-\d{2}-\d{2}$/.test(entryTyped);
+  const suggestEntry = entryReady ? (entryTyped || sheet?.today) : undefined;
+  useEffect(() => {
+    setSuggest(undefined);
+    setSuggestFailed(undefined);
+    if (!legSeries || !suggestEntry) {
+      setSuggestBusy(false);
+      return undefined;
+    }
+    const ctl = new AbortController();
+    const timer = setTimeout(() => {
+      setSuggestBusy(true);
+      fetchSuggest(legSeries, suggestEntry, ctl.signal)
+        .then((s) => {
+          if (!ctl.signal.aborted) setSuggest(s);
+        })
+        .catch((e: unknown) => {
+          if (ctl.signal.aborted) return;
+          /* 404 = 라우트를 모르는 **옛 백엔드**. 조용히 빈 줄을 두면 「제안이
+             없는 날」과 구별이 안 된다 — 규약이 어긋난 채 배포하면 조용히
+             사라진다(인계문의 그 규칙: 백엔드 재기동이 먼저, 프런트 푸시가 뒤). */
+          setSuggestFailed(e instanceof BacktestUnavailable
+            ? '백엔드가 이 라우트를 몰라요 — 새 판으로 재기동해야 해요.'
+            : e instanceof Error ? e.message : String(e));
+        })
+        .finally(() => {
+          if (!ctl.signal.aborted) setSuggestBusy(false);
+        });
+    }, 350);
+    return () => {
+      clearTimeout(timer);
+      ctl.abort();
+    };
+  }, [legSeries, suggestEntry]);
+
 
   if (unavailable) {
     return (
@@ -947,6 +981,23 @@ export function PortfolioPage() {
             </button>
             </HStack>
           </HStack>
+          {legSeries ? (
+            /* 그날 1등 — 담는 줄 **아래** 한 줄. 컨트롤이 아니라 글이라 폭 유도가
+               없고, 계열을 안 고르면 아예 없다(담는 줄 e2e 가 재는 기하는 그대로다).
+               문장 전체는 `suggestLine` 이 만든다 — 경고가 빠진 갈래가 없게. */
+            <Box paddingX={2}>
+              <Text font="legal" as="span" color="fgMuted" maxWidth={760}>
+                {suggestLine({
+                  label: inst?.series?.find((x) => x.id === legSeries)?.label ?? legSeries,
+                  entryReady,
+                  busy: suggestBusy,
+                  failed: suggestFailed,
+                  got: suggest,
+                  knobs,
+                })}
+              </Text>
+            </Box>
+          ) : null}
           <Box paddingX={2} paddingBottom={2}>
             <Text font="legal" as="span" color="fgMuted" maxWidth={760}>
               {inst

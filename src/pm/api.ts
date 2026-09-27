@@ -22,7 +22,7 @@ import { BacktestUnavailable } from '@/lib/api';
 import type { MrSplit } from '@/mr/api';
 import {
   paperCloseUrl, paperEnrollUrl, paperInstrumentsUrl, paperLegCloseUrl,
-  paperLegUrl, paperResetUrl, paperRetireUrl, paperTradeUrl, paperUrl,
+  paperLegUrl, paperResetUrl, paperRetireUrl, paperSuggestUrl, paperTradeUrl, paperUrl,
 } from '@/lib/staticPaths';
 
 /** 하루 한 점. `cum` 은 **서버가 굴린** 누적이다. */
@@ -336,4 +336,96 @@ export async function fetchInstruments(): Promise<PaperInstruments> {
   if (r.status === 404) throw new BacktestUnavailable();
   if (!r.ok) throw new Error(`instruments: HTTP ${r.status}`);
   return r.json() as Promise<PaperInstruments>;
+}
+
+
+/**
+ * 그날의 1등 [OWNER 2026-09-23 — "들어간 시점에서의 최적 파라미터로" → 선택지에서
+ * 「손으로 치되 1등을 제안」].
+ *
+ * 다리를 담을 때 그 계열을 **진입일까지의 자료로** 격자(계획면과 같은 162칸)에
+ * 돌린 순위다. 고르지 않는다 — 장부는 여전히 내가 친 조건을 얼고, 이 표는 옆에
+ * 서기만 한다(`backend/app/paper.py::suggest`).
+ *
+ * ⚠ `inSample` — 고른 창에서 잰 순위라 **성과가 아니라 선택의 산물**이다(PBO
+ * 레인의 그 경고). 화면은 「1등」 옆에 반드시 그 문장을 세운다 — 「1등」이라고만
+ * 적으면 고르라는 말로 읽힌다.
+ *
+ * 순위는 **서버가 매긴다**(`rank`). 화면은 내 조건을 `list` 에서 **찾기만** 한다
+ * (`findCell`) — 여기서 다시 정렬하면 두 번째 정의가 생긴다.
+ */
+export interface PaperSuggestCell extends PaperLegKnobs {
+  rank: number;
+  cdarRatio: number | null;
+  totalPnl: number | null;
+  maxDrawdown: number | null;
+  /** 1년 창은 계열당 거래가 0~5건이라 순위가 잡음일 수 있다 — 화면이 같이 적는다. */
+  numTrades: number | null;
+  winRate: number | null;
+}
+
+export interface PaperSuggest {
+  series: string;
+  label: string;
+  entry: string;
+  /** 격자가 본 마지막 봉 — 진입일 이하의 마지막 관측. `null` 이면 재료가 없었다. */
+  asof: string | null;
+  from: string | null;
+  days: number;
+  span: string;
+  rankKey: string;
+  inSample: boolean;
+  cells: number;
+  ranked: number;
+  /** 1등. 못 냈으면 `null` 이고 `why` 가 사유를 진다 — 「없다」와 「못 잰다」는 다른 말. */
+  top: PaperSuggestCell | null;
+  list: PaperSuggestCell[];
+  why: string | null;
+}
+
+export async function fetchSuggest(
+  series: string, entry: string, signal?: AbortSignal,
+): Promise<PaperSuggest> {
+  const r = await fetch(paperSuggestUrl(series, entry), { signal });
+  /* 404 는 **옛 백엔드**다 — 라우트를 모르는 판. 조용히 빈 줄을 두면 「제안이
+     없는 날」과 구별이 안 된다(규약이 어긋난 채 배포하면 조용히 사라진다 — 인계문). */
+  if (r.status === 404) throw new BacktestUnavailable();
+  if (!r.ok) {
+    const detail = (await r.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(detail?.detail ?? `suggest: HTTP ${r.status}`);
+  }
+  return r.json() as Promise<PaperSuggest>;
+}
+
+/** 내 조건이 격자의 어느 칸인가 — **찾기만** 한다.
+ *
+ *  칸은 글자로 온다(`addLeg` 의 그 규율). `Number()` 로 같은지 보되, 하나라도
+ *  비거나 숫자가 아니면 `undefined` 다 — 반쪽 조건은 칸이 아니다. 프리셋 밖의
+ *  값(룩백 45)도 `undefined` 다: 격자는 화면이 고를 수 있는 값 위에서만 돈다
+ *  (`_mr_optimize` 머리). 그 둘은 부르는 쪽이 갈라 적는다. */
+export function findCell(
+  list: PaperSuggestCell[],
+  knobs: Partial<Record<keyof PaperLegKnobs, string | number | undefined>> | undefined,
+): PaperSuggestCell | undefined {
+  if (!knobs) return undefined;
+  const num = (v: string | number | undefined): number =>
+    v === undefined || String(v).trim() === '' ? NaN : Number(v);
+  const lb = num(knobs.lookback);
+  const ez = num(knobs.entryZ);
+  const xz = num(knobs.exitZ);
+  const sz = num(knobs.stopZ);
+  if (![lb, ez, xz, sz].every(Number.isFinite)) return undefined;
+  return list.find((c) =>
+    c.lookback === lb && c.entryZ === ez && c.exitZ === xz && c.stopZ === sz
+    && c.entryMode === knobs.entryMode);
+}
+
+/** 다섯 칸이 다 찼는가 — 「내 조건은 몇 등」을 적어도 되는 순간이다.
+ *  반쪽이면 등수도 「프리셋 밖」도 적지 않는다(둘 다 없는 사실이다). */
+export function knobsComplete(
+  knobs: Partial<Record<keyof PaperLegKnobs, string | number | undefined>> | undefined,
+): boolean {
+  if (!knobs) return false;
+  return (['lookback', 'entryZ', 'exitZ', 'stopZ'] as const)
+    .every((k) => knobs[k] !== undefined && String(knobs[k]).trim() !== '');
 }
