@@ -1633,6 +1633,85 @@ class Test묶음_소계:
         full = paper.group_legs([self._row(1, "A", pnl=1.0), self._row(2, "A", pnl=2.5)])[0]
         assert full["pnl"] == 3.5 and full["scoredPnl"] == 3.5 and full["pending"] == 0
 
+    def test_묶음_줄은_계열_값을_말한다(self):
+        """★[OWNER 2026-09-28 — "묶음으로 지금 얼마나 벌어져있는지 왜 안알려줘?"].
+        내 체결로 만든 진입 스프레드 · 지금 · Δ · 밴드 · 계열 청산·손절."""
+        dates = _dates(26)
+        curve = [5.0] * 19 + [-4.0] + [1.0] * 6                       # IRC-5Y-10Y, 20번째 급락
+        pts = [{"t": d, "v": v, "legs": [4.16, 4.16 - v / 100.0]} for d, v in zip(dates, curve)]
+        KN = {"lookback": 20, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.0, "entryMode": "level"}
+        rows = [
+            {"n": 1, "tag": "T", "pnl": 1.0, "open": True, "rateSign": -1, "dv01": 1e7,
+             "notional": 2e10, "kind": "irs", "tenor": "5Y", "level": 4.145,
+             "entry": dates[19], "series": "IRC-5Y-10Y", "knobs": KN},
+            {"n": 2, "tag": "T", "pnl": -1.0, "open": True, "rateSign": 1, "dv01": 1e7,
+             "notional": 1e10, "kind": "irs", "tenor": "10Y", "level": 4.195,
+             "entry": dates[20], "series": "IRC-5Y-10Y", "knobs": None},
+        ]
+        g = paper.group_legs(rows, points_of=lambda _s: pts)[0]
+        assert g["series"] == "IRC-5Y-10Y" and g["seriesWhy"] is None
+        # 내 체결로 만든 스프레드: (4.195 − 4.145) × 100 = 5.0bp — 계열 단위
+        assert g["myLevel"] == pytest.approx(5.0) and g["myBasis"] == "fill"
+        assert g["unit"] == "bp" and g["now"] == pytest.approx(1.0) and g["asof"] == dates[-1]
+        assert g["delta"] == pytest.approx(1.0 - 5.0)
+        # 진입은 묶음의 **첫** 체결일 — 그날의 계열 값도 같이
+        assert g["entryT"] == dates[19] and g["entryV"] == pytest.approx(-4.0)
+        # 조건은 조건 있는 첫 다리의 것, 밴드·청산·손절은 계열 값(내 다리 번역은 없다)
+        assert g["knobs"] == KN and g["knobsMixed"] is False
+        t = g["track"]
+        assert t["dir"] == 1 and t["exitLevel"] is not None and t["mine"] is None
+        assert t["legsNow"][0]["tenor"] == "10Y" and t["entryV"] == pytest.approx(-4.0)
+
+    def test_묶음_계열_시선의_빈_자리들(self):
+        dates = _dates(26)
+        curve = [5.0] * 19 + [-4.0] + [1.0] * 6
+        pts = [{"t": d, "v": v, "legs": [4.16, 4.16 - v / 100.0]} for d, v in zip(dates, curve)]
+        base = {"pnl": None, "open": True, "rateSign": -1, "dv01": 1e7, "notional": 1e10,
+                "kind": "irs", "level": 4.145, "entry": dates[19], "knobs": None}
+        # 반쪽 묶음(5Y 만) — 스프레드를 내 체결로 못 만들어 진입일 종가로 떨어진다
+        half = paper.group_series([{**base, "n": 1, "tag": "H", "tenor": "5Y", "series": "IRC-5Y-10Y"}],
+                                  points_of=lambda _s: pts)
+        assert half["myLevel"] == pytest.approx(-4.0) and half["myBasis"] == "close"
+        assert half["delta"] == pytest.approx(1.0 - (-4.0)) and half["track"] is None
+        # 계열 밖 계기가 섞여도(2Y) 내 스프레드는 안 세운다
+        extra = paper.group_series([
+            {**base, "n": 1, "tenor": "5Y", "series": "IRC-5Y-10Y"},
+            {**base, "n": 2, "tenor": "10Y", "rateSign": 1, "level": 4.195, "series": "IRC-5Y-10Y"},
+            {**base, "n": 3, "tenor": "2Y", "series": "IRC-5Y-10Y"},
+        ], points_of=lambda _s: pts)
+        assert extra["myBasis"] == "close"
+        # 계열이 갈리면 · 계열이 없으면 사유만 선다
+        mixed = paper.group_series([{**base, "n": 1, "tenor": "5Y", "series": "IRC-5Y-10Y"},
+                                    {**base, "n": 2, "tenor": "10Y", "series": "BSS-10Y"}],
+                                   points_of=lambda _s: pts)
+        assert mixed["series"] is None and "달라요" in mixed["seriesWhy"]
+        none = paper.group_series([{**base, "n": 1, "tenor": "5Y", "series": None}])
+        assert none["series"] is None and "없어요" in none["seriesWhy"] and none["now"] is None
+        # 조건이 다리마다 다르면 첫 것을 쓰고 그 사실을 적는다
+        k1 = {"lookback": 20, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.0, "entryMode": "level"}
+        k2 = {**k1, "lookback": 25}
+        mixk = paper.group_series([{**base, "n": 1, "tenor": "5Y", "series": "IRC-5Y-10Y", "knobs": k1},
+                                   {**base, "n": 2, "tenor": "10Y", "rateSign": 1, "level": 4.195,
+                                    "series": "IRC-5Y-10Y", "knobs": k2}],
+                                  points_of=lambda _s: pts)
+        assert mixk["knobs"] == k1 and mixk["knobsMixed"] is True and mixk["track"] is not None
+        # 계열을 못 읽으면 사유가 선다 — 죽지 않는다
+        def boom(_s):
+            raise RuntimeError("DB 꺼짐")
+        dead = paper.group_series([{**base, "n": 1, "tenor": "5Y", "series": "IRC-5Y-10Y"}], points_of=boom)
+        assert dead["series"] == "IRC-5Y-10Y" and "DB 꺼짐" in dead["seriesWhy"] and dead["now"] is None
+
+    def test_my_series_level_은_다리마다_하나씩일_때만(self):
+        t = paper.series_legs("bss", "BSS-3Y", {"t": "2026-09-23", "v": 4.25, "legs": [4.0375, 3.995]})
+        irs = {"kind": "irs", "tenor": "3Y", "level": 4.03}
+        bond = {"kind": "bond", "tenor": "3Y", "level": 4.00}
+        assert paper.my_series_level(t, [irs, bond]) == pytest.approx(3.0)      # (4.03 − 4.00) × 100
+        assert paper.my_series_level(t, [irs]) is None                            # 반쪽
+        assert paper.my_series_level(t, [irs, bond, dict(bond)]) is None          # 겹침
+        assert paper.my_series_level(t, [irs, bond, {"kind": "fut", "tenor": "3Y", "level": 4.1}]) is None
+        f = paper.series_legs("fut", "FUT-KTB3", {"t": "2026-09-23", "v": 4.134, "legs": [4.134]})
+        assert paper.my_series_level(f, [{"kind": "fut", "tenor": "3Y", "level": 4.13}]) == pytest.approx(4.13)
+
     def test_시트가_묶음과_전체_명목을_싣는다(self):
         leg_of, _d, _v = _leg_of(120)
         st = dict(paper.EMPTY, legs=[])

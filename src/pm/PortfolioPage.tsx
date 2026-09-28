@@ -270,6 +270,12 @@ function groupRows(legs: PaperPositionLeg[], groups: PaperPositionGroup[],
   return out;
 }
 
+/** 계열 값 한 칸 — 계열의 자기 단위(bp 둘째 자리 · % 셋째 자리). */
+function seriesWord(v: number | null | undefined, unit: string | null | undefined): string {
+  if (v == null) return MINUS;
+  return `${unit === '%' ? v.toFixed(3) : v.toFixed(2)}${unit ?? ''}`;
+}
+
 function SubtotalRow({ group: g, busy, onTrace }: {
   group: PaperPositionGroup;
   busy: boolean;
@@ -279,6 +285,13 @@ function SubtotalRow({ group: g, busy, onTrace }: {
   const blank = (
     <Text font="legal" as="span" color="fgMuted" noWrap>{MINUS}</Text>
   );
+  /* ★묶음 줄은 **계열 값**을 말한다 [OWNER 2026-09-28 — "묶음으로 지금 얼마나
+     벌어져있는지 왜 안알려줘?"]. 다리 줄이 다리의 금리(4.145)를 말하면 묶음 줄은
+     그 다리들이 이루는 계열(IRC-5Y-10Y 5.0bp)을 말한다 — 내 체결로 만든 진입
+     스프레드 · 지금 · Δ · 밴드 · 계열의 청산·손절. 전부 서버가 센다(`group_series`).
+     전체 줄은 계열이 하나가 아니라 이 칸들이 없다. */
+  const hasSeries = !!g.series && g.now != null;
+  const deltaTone = shown == null ? undefined : directionClass(shown);
   return (
     <TableRow style={{ height: ROW_H }}>
       <TableCell>
@@ -292,12 +305,60 @@ function SubtotalRow({ group: g, busy, onTrace }: {
         </VStack>
       </TableCell>
       <TableCell>{blank}</TableCell>
-      <TableCell>{blank}</TableCell>
-      <TableCell>{blank}</TableCell>
-      <TableCell className="sr-num" justifyContent="flex-end">{blank}</TableCell>
-      <TableCell className="sr-num" justifyContent="flex-end">{blank}</TableCell>
-      <TableCell className="sr-num" justifyContent="flex-end">{blank}</TableCell>
-      <TableCell className="sr-num" justifyContent="flex-end">{blank}</TableCell>
+      <TableCell>
+        {g.series ? (
+          <VStack as="span" className="sr-name-stack" title={g.seriesWhy ?? undefined}>
+            <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+              {g.knobs
+                ? `${knobWord(g.knobs)}${g.knobsMixed ? ' · 다리마다 달라요' : ''}`
+                : '조건 없음'}
+            </Text>
+            <Text font="legal" as="span" color="fgMuted" noWrap>{g.series}</Text>
+          </VStack>
+        ) : (
+          <Text font="legal" as="span" color="fgMuted" noWrap title={g.seriesWhy ?? undefined}>
+            {MINUS}
+          </Text>
+        )}
+      </TableCell>
+      <TableCell>
+        <TrackCell track={g.track ?? null} open />
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        <LevelCell track={g.track ?? null} open />
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        {hasSeries && g.myLevel != null ? (
+          <VStack as="span" className="sr-name-stack" alignItems="flex-end">
+            <Text font="label2" as="span" tabularNumbers noWrap>
+              {seriesWord(g.myLevel, g.unit)}
+            </Text>
+            <Text font="legal" as="span" color="fgMuted" noWrap>
+              {g.myBasis === 'fill' ? '내 체결로 만든 스프레드' : `${g.entryT ?? ''} 종가`}
+            </Text>
+          </VStack>
+        ) : blank}
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        {hasSeries ? (
+          <VStack as="span" className="sr-name-stack" alignItems="flex-end">
+            <Text font="label2" as="span" tabularNumbers noWrap color="fgMuted">
+              {seriesWord(g.now, g.unit)}
+            </Text>
+            <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+              {g.asof ? `${g.asof} 종가` : ''}
+            </Text>
+          </VStack>
+        ) : blank}
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        {hasSeries && g.delta != null ? (
+          /* 색은 **손익 부호**를 따른다 — 다리 줄의 Δ 와 같은 규칙. */
+          <Text font="label2" as="span" tabularNumbers noWrap className={deltaTone}>
+            {`${g.delta >= 0 ? '+' : '−'}${seriesWord(Math.abs(g.delta), g.unit)}`}
+          </Text>
+        ) : blank}
+      </TableCell>
       <TableCell className="sr-num" justifyContent="flex-end">
         <VStack as="span" className="sr-name-stack" alignItems="flex-end">
           <Text font="label2" as="span" tabularNumbers noWrap>

@@ -266,6 +266,13 @@ def series_legs(kind: str, sid: str, last: dict,
     return {"scale": scale, "legs": legs}
 
 
+def _bundle_irs(tenor: str, day: str) -> float | None:
+    """플라이 다리의 IRS 레벨 — `mrseries.bundle()` 에서(지연 import, 순환 회피).
+    없는 만기·없는 날은 `None` — 지어내지 않는다."""
+    from . import mrseries as mrs
+    return mrs.bundle()["irs"].get(tenor, {}).get(day)
+
+
 def leg_level_for(table: dict, my_kind: str, my_tenor: str, target: float
                   ) -> tuple[int, float] | None:
     """계열이 `target`(계열 단위)에 닿을 때 **내 다리**의 레벨 — (다리 색인, 레벨).
@@ -320,7 +327,8 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
                 "unit": None, "v": None, "ma": None, "sd": None,
                 "exitLevel": None, "stopLevel": None,
                 "exitGap": None, "stopGap": None,
-                "mine": None, "mineWhy": None}
+                "mine": None, "mineWhy": None,
+                "entryV": None, "legsNow": None}
 
     unit: str | None = None
     try:
@@ -378,9 +386,7 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
     mine_why: str | None = None
     kind = {s: k for s, _l, k in mr_mod.SERIES}.get(sid)
     if irs_of is None and points_of is None and kind == "irf":
-        def irs_of(tenor: str, day: str) -> float | None:  # noqa: E306 — 지연 import
-            from . import mrseries as mrs
-            return mrs.bundle()["irs"].get(tenor, {}).get(day)
+        irs_of = _bundle_irs
     table = series_legs(kind or "", sid, pts[-1], irs_of) if kind else None
     if table is None:
         mine_why = "계열의 다리 레벨을 못 읽었어요 — 계열 값으로 적어요"
@@ -437,6 +443,10 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
         "stopGap": round(pos * (v1 - stop_level), 4),
         "mine": mine,
         "mineWhy": mine_why,
+        # 진입일의 계열 값과 오늘의 다리 표 — 묶음 줄이 「지금 얼마나 벌어졌나」를
+        # 계열 값으로 말할 때 쓴다(`group_series`).
+        "entryV": round(vals[i0], 4),
+        "legsNow": None if table is None else table["legs"],
     }
 
 
@@ -803,13 +813,130 @@ def sum_legs(rows: list[dict], *, key: str, label: str, total: bool = False) -> 
     }
 
 
-def group_legs(rows: list[dict]) -> list[dict[str, Any]]:
+def series_snapshot(sid: str, entry: str, *,
+                    points_of: Callable[[str], list[dict]] | None = None,
+                    irs_of: Callable[[str, str], float | None] | None = None
+                    ) -> dict[str, Any]:
+    """계열의 **지금과 진입일** — 조건이 없어도 선다.
+
+    `{series, unit, asof, now, entryT, entryV, table, why}`. `table` 은 오늘의 다리
+    표(`series_legs`)이고, `why` 가 서면 나머지는 `None` 이다. 단위는 주입 경로에서도
+    종류로 정한다(스프레드·커브·플라이 bp · 선물 %) — 표의 눈금과 같은 규칙.
+    """
+    kind = {s: k for s, _l, k in mr_mod.SERIES}.get(sid)
+    empty: dict[str, Any] = {"series": sid, "unit": None, "asof": None, "now": None,
+                             "entryT": None, "entryV": None, "table": None, "why": None}
+    if kind is None:
+        return {**empty, "why": f"모르는 계열이에요: {sid}"}
+    unit: str | None = None
+    try:
+        if points_of is not None:
+            pts = points_of(sid)
+        else:
+            body = mr_mod.series_points(sid)
+            pts = body["points"]
+            unit = body.get("unit")
+    except Exception as exc:                      # noqa: BLE001 — 사유를 싣고 산다
+        return {**empty, "why": f"계열을 못 읽었어요: {exc}"}
+    if not pts:
+        return {**empty, "why": "계열에 점이 없어요"}
+    if irs_of is None and points_of is None and kind == "irf":
+        irs_of = _bundle_irs
+    at = [p for p in pts if p["t"] <= entry]
+    return {
+        "series": sid,
+        "unit": unit or ("%" if kind == "fut" else "bp"),
+        "asof": pts[-1]["t"],
+        "now": round(float(pts[-1]["v"]), 4),
+        "entryT": at[-1]["t"] if at else None,
+        "entryV": round(float(at[-1]["v"]), 4) if at else None,
+        "table": series_legs(kind, sid, pts[-1], irs_of),
+        "why": None,
+    }
+
+
+def my_series_level(table: dict, rows: list[dict]) -> float | None:
+    """내 체결로 만든 **진입 스프레드** — scale × Σ w_k·level_k.
+
+    계열의 다리마다 내 다리가 **정확히 하나씩** 있고 남는 다리가 없을 때만 선다
+    (5Y 리시브 4.145 + 10Y 페이 4.195 → IRC-5Y-10Y 5.0bp). 반쪽 묶음·겹치는 다리·
+    계열 밖 계기가 섞이면 `None` — 그때는 진입일 종가로 떨어지고 화면이 그 사실을 적는다.
+    """
+    total = 0.0
+    for lg in table["legs"]:
+        mine = [r for r in rows
+                if r.get("kind") == lg["kind"] and str(r.get("tenor")) == lg["tenor"]]
+        if len(mine) != 1:
+            return None
+        total += lg["w"] * float(mine[0]["level"])
+    if len(rows) != len(table["legs"]):
+        return None
+    return round(total * table["scale"], 4)
+
+
+def group_series(rows: list[dict], *,
+                 points_of: Callable[[str], list[dict]] | None = None,
+                 irs_of: Callable[[str, str], float | None] | None = None,
+                 cost_bp: float = COST_BP) -> dict[str, Any]:
+    """묶음의 **계열 시선** [OWNER 2026-09-28 — "묶음으로 지금 얼마나 벌어져있는지 왜
+    안알려줘?"].
+
+    묶음은 계열 거래다(스티프너 = 커브 하나). 다리 줄이 다리의 금리를 말하면 묶음
+    줄은 **계열 값**을 말해야 한다:
+
+        내 레벨   내 체결로 만든 진입 스프레드(`my_series_level`) — 못 세우면 진입일 종가
+        지금      계열의 마지막 값 · Δ = 지금 − 내 레벨 (계열 단위)
+        밴드·청산·손절   조건이 있는 다리의 조건으로 `track_leg` — 계열 값 그대로
+
+    조건이 없어도 지금·Δ 는 선다(조건은 밴드에만 필요하다). 다리들의 조건이 서로
+    다르면 첫 것을 쓰고 그 사실을 적는다(`knobsMixed`).
+    """
+    out: dict[str, Any] = {
+        "series": None, "seriesWhy": None, "unit": None, "asof": None, "now": None,
+        "entryT": None, "entryV": None, "myLevel": None, "myBasis": None, "delta": None,
+        "knobs": None, "knobsMixed": False, "track": None,
+    }
+    sids = {l.get("series") for l in rows if l.get("series")}
+    if not sids:
+        out["seriesWhy"] = "계열을 고른 다리가 없어요"
+        return out
+    if len(sids) > 1:
+        out["seriesWhy"] = f"다리들의 계열이 달라요: {' · '.join(sorted(sids))}"
+        return out
+    sid = next(iter(sids))
+    out["series"] = sid
+    entry = min(str(l["entry"]) for l in rows)
+    kn = [l["knobs"] for l in rows if l.get("knobs")]
+    if kn:
+        out["knobs"] = kn[0]
+        out["knobsMixed"] = any(k != kn[0] for k in kn[1:])
+    snap = series_snapshot(sid, entry, points_of=points_of, irs_of=irs_of)
+    if snap["why"]:
+        out["seriesWhy"] = snap["why"]
+        return out
+    out.update({k: snap[k] for k in ("unit", "asof", "now", "entryT", "entryV")})
+    my = my_series_level(snap["table"], rows) if snap["table"] else None
+    if my is not None:
+        out["myLevel"], out["myBasis"] = my, "fill"
+    else:
+        out["myLevel"], out["myBasis"] = snap["entryV"], ("close" if snap["entryV"] is not None else None)
+    if out["myLevel"] is not None and out["now"] is not None:
+        out["delta"] = round(out["now"] - out["myLevel"], 4)
+    if out["knobs"]:
+        out["track"] = track_leg({"entry": entry, "knobs": out["knobs"], "series": sid,
+                                  "kind": "", "tenor": ""},
+                                 points_of, irs_of=irs_of, cost_bp=cost_bp)
+    return out
+
+
+def group_legs(rows: list[dict], **series_kw: Any) -> list[dict[str, Any]]:
     """다리들을 **묶음(태그)** 으로 모아 소계를 낸다 [OWNER 2026-09-28 — "각 트레이드
     별과 포트폴리오 전체에서의 PnL"].
 
     「트레이드」는 이 데스크의 말로 묶음이다 — BSS 하나가 IRS 페이 + 선물 매수 두
     다리다. 묶음이 없는 다리는 제 혼자 트레이드다. 차례는 묶음의 첫 등장 순.
-    산술은 `sum_legs` 하나다 — 화면은 이 수를 **읽기만** 한다(§16).
+    산술은 `sum_legs` 하나다 — 화면은 이 수를 **읽기만** 한다(§16). 묶음의 계열
+    시선(지금 얼마나 벌어졌나)은 `group_series` 가 붙인다. `series_kw` 는 시험 주입.
     """
     order: list[str] = []
     by: dict[str, list[dict]] = {}
@@ -819,8 +946,9 @@ def group_legs(rows: list[dict]) -> list[dict[str, Any]]:
             by[k] = []
             order.append(k)
         by[k].append(l)
-    return [sum_legs(by[k], key=k,
-                     label=(by[k][0]["tag"] or f"{by[k][0]['n']}번 다리 (묶음 없음)"))
+    return [{**sum_legs(by[k], key=k,
+                        label=(by[k][0]["tag"] or f"{by[k][0]['n']}번 다리 (묶음 없음)")),
+             **group_series(by[k], **series_kw)}
             for k in order]
 
 

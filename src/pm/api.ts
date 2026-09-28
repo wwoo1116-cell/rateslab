@@ -169,6 +169,28 @@ export interface PaperPositionGroup {
   netDv01: number;
   grossDv01: number;
   openNotional: number;
+  /** ── 묶음의 **계열 시선** [OWNER 2026-09-28 — "묶음으로 지금 얼마나 벌어져있는지
+   *  왜 안알려줘?"]. 다리 줄이 다리의 금리를 말하면 묶음 줄은 계열 값을 말한다.
+   *  전체 줄(화면이 `position` 에서 옮겨 적는 것)에는 없다 — 계열이 하나가 아니다. */
+  series?: string | null;
+  /** 계열 시선을 못 세운 사유(계열 없음 · 계열이 갈림 · 못 읽음). */
+  seriesWhy?: string | null;
+  unit?: string | null;
+  asof?: string | null;
+  /** 계열의 지금 값(계열 단위). */
+  now?: number | null;
+  entryT?: string | null;
+  entryV?: number | null;
+  /** 내 레벨 — 내 체결로 만든 진입 스프레드(`fill`)거나, 못 세우면 진입일 종가(`close`). */
+  myLevel?: number | null;
+  myBasis?: 'fill' | 'close' | null;
+  /** 지금 − 내 레벨 (계열 단위) — 「얼마나 벌어졌나」. */
+  delta?: number | null;
+  /** 묶음의 조건(조건 있는 첫 다리) · 다리마다 다르면 `knobsMixed`. */
+  knobs?: PaperLegKnobs | null;
+  knobsMixed?: boolean;
+  /** 계열 밴드 — z·닿음·계열의 청산·손절 레벨(`mine` 은 없다). */
+  track?: PaperLegTrack | null;
 }
 
 /** 손으로 쌓은 다리 하나 — **계기 하나 · 내가 체결한 레벨**.
@@ -258,6 +280,10 @@ export interface PaperLegTrack {
     aligned: boolean | null;
   } | null;
   mineWhy: string | null;
+  /** 진입일의 계열 값 — 묶음 줄의 Δ 근거. */
+  entryV: number | null;
+  /** 오늘의 계열 다리 표(이름 · 만기 · 계기 · 부호 · 지금 값). 못 세우면 `null`. */
+  legsNow: { name: string; tenor: string; kind: string; w: number; v: number }[] | null;
 }
 
 export interface PaperPositionLeg {
