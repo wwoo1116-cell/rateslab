@@ -560,6 +560,53 @@ class TestFsw:
         assert nxt["legs"][1]["actual"] == pytest.approx(
             _money(two, lambda r: r["actual"]), abs=1.0)
 
+    def test_the_swap_leg_is_not_capped_before_the_futures_window(self):
+        """★선물 표 안의 IRS 다리가 **자기 달력의 250일 캡**에 앞머리가 잘려 표가
+        헤드라인과 안 닫혔다 [2026-09-28].
+
+        `swap_book_recon` 의 서빙용 캡(`RECON_MAX_DAYS`)은 IRS 달력에서 센다. IRS
+        달력(252일)이 선물 달력(245일)보다 길면 선물 창은 안 잘리는데 IRS 다리만
+        잘려, 첫 닷새의 IRS 행이 어느 버킷에도 안 들어가고 `truncated` 는 False
+        였다 — 실측 FSW 3Y 100억: Σ행 −4,869만 vs 헤드라인 −1,169만(차 −3,700만),
+        FSW 10Y 차 −1.15억. 이제 선물 창이 IRS 다리의 창을 정한다(`since`).
+
+        픽스처: IRS 252일 · 선물 245일(둘 다 첫날부터), IRS 가 날마다 움직인다.
+        """
+        n_irs, n_fut = 252, 245
+        assert n_fut < bt_engine.RECON_MAX_DAYS < n_irs
+        dates = _weekdays(dt.date(2025, 1, 6), n_irs)
+        short = dates[:n_fut]
+        rates = {n: [FLAT + 0.003 * ((i * 7) % 11) for i in range(n_irs)] for n in NODES}
+        ds = Dataset(dates=dates, series=rates, tenor_order=list(NODES), source="test")
+        path = [104.0 + 0.05 * ((i * 5) % 9) for i in range(n_fut)]
+
+        def mk(p: list[float], years: int) -> ft.FuturesSeries:
+            return ft.FuturesSeries(
+                dates=list(short), price_adj=list(p),
+                implied=[implied_yield(x, years) for x in p], price_ctr=list(p),
+            )
+
+        fut = ft.FuturesData(
+            series={"3Y": mk(path, 3), "10Y": mk([120.0] * n_fut, 10)},
+            watermark=("test", n_fut),
+        )
+        pos = ft.as_position("FSW:3Y", 1, 1e10, dates[0], None)
+        rec, _own, _prev = ft.run_one(fut, ds, pos, list(short))
+        out = ft.book_recon(fut, ds, [pos], with_legs=True)
+        assert out["truncated"] is False, "선물 창은 245행이라 안 잘려야 한다"
+        body = [r for r in out["rows"] if not r.get("carryover")]
+        assert len(body) == n_fut
+        # 첫 닷새의 IRS 행이 살아 있다 — 종전엔 여기가 전부 0 이었다.
+        head = [r["legs"][1]["actual"] or 0 for r in body[1:6]]
+        assert any(abs(v) > 0 for v in head), f"IRS 다리 앞머리가 비었다: {head}"
+        # 표의 합 = 헤드라인 — 마지막 밤의 포워드 세타와 행마다 1원 반올림만큼만
+        # 다를 수 있다(모듈 규약). 종전 결함은 이 자리가 수천만원이었다.
+        total = sum(r["actual"] or 0 for r in body)
+        irs_last = body[-1]["legs"][1]
+        theta = sum((irs_last.get(k) or 0) for k in ("carry", "rolldown", "startup"))
+        assert abs(total - rec["pnl"]) <= abs(theta) + len(body), (
+            f"Σ행 {total:,.0f} ≠ 헤드라인 {rec['pnl']:,.0f} (허용 {abs(theta) + len(body):,.0f})")
+
 
 # ── ④ 선물 대사표 ──────────────────────────────────────────────────────────
 

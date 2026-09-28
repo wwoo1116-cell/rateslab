@@ -325,8 +325,12 @@ describe('백테스트 대사도 다리로 갈라진다 — 하루 일곱 줄', 
   it('IRS 다리는 **버킷**으로 선물 달력에 얹힌다 — 돈이 보존된다', () => {
     const ft = raw('backend/app/futures.py');
     expect(ft).toMatch(/def _bucket_leg/);
-    /* 두 번째 정의 금지 — 값매김은 스왑 엔진이 하고 여기서는 접기만 한다. */
-    expect(ft).toMatch(/swap_rec = swap_book_recon\(dataset, swap_pos, with_krd=True\)/);
+    /* 두 번째 정의 금지 — 값매김은 스왑 엔진이 하고 여기서는 접기만 한다.
+       [2026-09-28] `since=need` — IRS 다리의 창은 **선물 창이 정한다**. 스왑 표의
+       서빙 캡(250행)을 자기 달력에서 세면 IRS 다리만 앞머리가 잘려 표가 헤드라인과
+       안 닫혔다(FSW 3Y −3,700만). 값매김은 여전히 스왑 엔진 것이다. */
+    expect(ft).toMatch(/swap_rec = swap_book_recon\(dataset, swap_pos, with_krd=True, since=need\)/);
+    expect(ft).toMatch(/need = window\[start - 1\] if start > 0 else window\[0\]/);
     /* Δbp 는 더한다(수준의 차라 이어 붙는다), 못 잰 노드는 공란이다. */
     expect(ft).toMatch(/dbp\[lb\] = round\(sum\(seen\), 2\) if seen else None/);
   });

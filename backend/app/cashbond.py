@@ -675,6 +675,49 @@ def asw_series(m: CreditMatrix, dataset, bond_type: str, tenor: str) -> list[flo
     return out
 
 
+def asw_series_between(
+    m: CreditMatrix, dataset, bond_type: str, tenor: str
+) -> list[float | None] | None:
+    """IRS 에 없는 민평 노드의 스프레드 축 — **이웃 IRS 노드 둘을 연수로 보간**
+    [2026-09-28].
+
+    `asw_series` 와 같은 수(IRS − 민평, bp, 민평 날짜)인데 IRS 쪽이 보간이다.
+    대상은 민평에만 있는 노드 중 **양쪽에 IRS 노드가 있는 것**(2.5Y ↔ 2Y·3Y)이고,
+    한쪽뿐이면(20Y·30Y) `None` — 외삽은 안 한다.
+
+    왜 보간이 정당한가: 스왑 다리는 파 커브를 노드 사이에서 보간해 값매겨진다
+    (`backtest._curve_at`). 2.5Y 잔존 스왑의 값은 2Y·3Y 노드 사이의 수에서 나오므로,
+    그 자리의 스프레드 Δ 를 같은 이웃으로 세우는 것은 엔진이 이미 하는 일을 설명
+    축에 옮겨 적는 것이다. 선형 보간과 커브의 보간이 다른 몫은 잔차 열에 남는다 —
+    그것이 잔차 열의 일이다. 이 함수를 **포지션에 쓰면 안 된다**(`ASW_TENORS` 머리).
+    """
+    from .curves import TENOR_T as IRS_T
+
+    y = cm.TENOR_YEARS.get(tenor)
+    if y is None:
+        return None
+    have = sorted((yy, k) for k, yy in IRS_T.items() if k in dataset.series)
+    below = [(yy, k) for yy, k in have if yy < y]
+    above = [(yy, k) for yy, k in have if yy > y]
+    if not below or not above:
+        return None
+    (y_lo, k_lo), (y_hi, k_hi) = below[-1], above[0]
+    w = (y - y_lo) / (y_hi - y_lo)
+    lo, hi = dataset.series[k_lo], dataset.series[k_hi]
+    pos = {d: i for i, d in enumerate(dataset.dates)}
+    mp = m.series(bond_type, tenor)
+    out: list[float | None] = []
+    for i, d in enumerate(m.dates):
+        j = pos.get(d)
+        a = mp[i]
+        if j is None or a is None or lo[j] is None or hi[j] is None:
+            out.append(None)
+            continue
+        b = lo[j] + w * (hi[j] - lo[j])
+        out.append(round((b - a) * 100, 2))
+    return out
+
+
 def series_for(m: CreditMatrix, dataset, series_id: str) -> list[float | None]:
     kind, bond_type, tenor = parse_id(series_id)
     if kind == KIND_CASH:
@@ -938,6 +981,19 @@ def theta_for_bond(
 # 43.7% 를 "고치려고" 자산스왑 KRD 에 스왑 다리를 더하지 말 것: 그러면 KRD 가
 # 스프레드 민감도이기를 그만두고 dbp 열과 짝이 안 맞는다.
 #
+# ## ★위 절은 2026-09-22 의 축 전환 뒤 **절반만 맞다** [2026-09-28]
+#
+# 합계 줄의 Δ 가 스프레드 축(IRS − 민평)이 되면서(`book_recon` 의 `asw_axis`)
+# 추정 열은 이제 「IRS 도 움직인」 스프레드 무브를 센다 — 위 분해의 잔차 항
+# (D_s − D_b)×ΔIRS 는 두 다리의 듀레이션 **차**만 남아 작다. 그래서 잔차/평가
+# 중앙값은 43.7% 가 아니라 **0.05 안팎이 정상**이다. 그런데 3Y 자산스왑만 0.54
+# 였다: 2.5Y 노드에 IRS 가 없어 그 칸의 Δ 를 비웠는데 3Y 채권의 KRD 가 석 달
+# 뒤부터 거기 앉아 추정이 ≈0 으로 무너진 것이다("국고채 3Y 자산스왑 이상하다").
+# 이웃 IRS 노드 보간으로 그 축을 세우자 0.05 로 내려왔다(`asw_series_between`).
+# 이제 핀은 위만 막는다 — 0.2 를 넘으면 축에 구멍이 났거나 축이 바뀐 것이다
+# (`tests/test_cashbond.py::test_the_asset_swap_estimate_explains_the_spread_move`).
+# 「KRD 에 스왑 다리를 더하지 말 것」은 그대로다 — 축은 스프레드 하나다.
+#
 # ## KRD 는 T+1 평가 기준
 #
 # IRS 쪽과 같다. 오늘 아침에 들고 있던 리스크를 내일 마킹으로 재는 것이 인포맥스
@@ -1072,16 +1128,32 @@ def book_recon(
         # 다른 칸이 전부 부호를 뒤집는데 2.5Y 만 Δ 가 그대로였다(±327원). 작지만
         # **그럴듯하게 틀린 수**이고, 이 리포의 공란 정책은 그런 칸을 0 이나
         # 근사로 채우지 않는다 — 못 재면 비운다(`dbp` 가 null 이 되고 화면이 «—»).
-        if asw and lb not in ASW_TENORS:
-            continue
+        #
+        # ★그런데 **3Y 자산스왑은 그 칸에 산다** [2026-09-28 — "국고채 3Y 자산스왑
+        # 이상하다"]. 3Y 채권은 석 달만 늙어도 잔존이 2.75Y 아래라 `_krd_bond` 가
+        # KRD 를 2.5Y 노드에 앉히는데, 그 노드의 Δ 가 비어 있으니 합계 줄의
+        # `est` 가 ≈0 으로 무너지고 **잔차 = 그날 손익 전부**가 된다. 실측
+        # 2025-09-22 진입 100억: 잔차 비율 Σ|잔차|/Σ|손익| 이 3Y 국고·은행채
+        # **0.54**, 나머지 만기(1Y·2Y·5Y·10Y)는 0.05~0.13. 03-24 한 줄이 잔차
+        # −1,078만인데 다리 블록의 잔차는 −2만·−5만이었다 — 다리는 맞고 합계 줄만
+        # 설명을 못 한 것이다.
+        #
+        # 그래서 **IRS 이웃 노드 둘 사이에 있는 민평 노드**(2.5Y ↔ 2Y·3Y)는 스프레드
+        # 축을 연수 보간으로 세운다(`asw_series_between`). 이것은 「못 재는 것을
+        # 채우는」 근사가 아니다 — 스왑 다리 자체가 파 커브를 노드 사이에서
+        # 보간해 값매겨지므로(`backtest._curve_at`), 2.5Y 의 IRS 는 엔진이 이미
+        # 쓰고 있는 수다. 이웃이 한쪽뿐인 노드(20Y·30Y)는 그대로 비운다.
+        # 포지션을 2.5Y 에 세우지 않는 규율(`ASW_TENORS`)은 그대로다 — 그건
+        # 「같은 만기 두 상품」의 전제이고, 여기는 설명 축이다.
         for t in types:
             if not m.has(t, lb):
                 continue
-            node_series[lb] = (
-                asw_series(m, dataset, t, lb)
-                if asw and lb in ASW_TENORS
-                else m.series(t, lb)
-            )
+            if asw and lb not in ASW_TENORS:
+                between = asw_series_between(m, dataset, t, lb)
+                if between is not None:
+                    node_series[lb] = between
+            else:
+                node_series[lb] = asw_series(m, dataset, t, lb) if asw else m.series(t, lb)
             break
     delta_scale = 1.0 if asw else 100.0
     # ── `asw_axis` — 합계 줄의 KRD 는 **그 줄이 쓰는 축의 것**이다 ────────────

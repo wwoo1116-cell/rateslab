@@ -736,6 +736,7 @@ def _book_recon(
     spans: list[tuple[int, int, bool]],
     cache: dict[int, np.ndarray],
     with_krd: bool = True,
+    since: dt.date | None = None,
 ) -> dict:
     """The daily reconciliation block for the whole book.
 
@@ -799,7 +800,11 @@ def _book_recon(
         })
 
     # 진입일부터 행이 선다 (평가 0 + 첫날 밤 포워드 세타 — 모듈 주석)
-    start = max(first, last - RECON_MAX_DAYS + 1)
+    if since is None:
+        start = max(first, last - RECON_MAX_DAYS + 1)
+    else:
+        # 부르는 쪽이 창을 정했다(`book_recon` 의 `since`) — 서빙용 캡은 안 건다.
+        start = max(first, bisect_left(dates, since))
     # budget guard: shrink the window rather than serve a 30-second response
     cost_per_day = sum(len(p["bump"]) + 3 for p in pos_info) or 1
     max_days = max(30, RECON_VALUATION_BUDGET // cost_per_day)
@@ -1055,9 +1060,20 @@ def run_backtest(dataset: Dataset, positions: list[Position]) -> dict:
 
 
 def book_recon(
-    dataset: Dataset, positions: list[Position], with_krd: bool = True
+    dataset: Dataset, positions: list[Position], with_krd: bool = True,
+    *, since: dt.date | None = None,
 ) -> dict:
     """The 일별 대사 block, as its own call [OWNER, 2026-08-11].
+
+    ## `since` — **창의 시작을 부르는 쪽이 정한다** [2026-09-28]
+
+    기본(`None`)은 서빙용 캡 그대로다: 마지막 `RECON_MAX_DAYS` 행. 그런데 이 표를
+    **다른 표 안에 다리로** 넣는 자리(`futures.book_recon` 의 퓨처스왑 IRS 다리)는
+    창을 자기 달력에서 따로 세운다 — 선물 창은 245행이라 안 잘리는데 IRS 달력은
+    252일이라 여기서만 잘려, 첫 닷새의 IRS 행이 어느 버킷에도 안 들어가고 표는
+    `truncated: False` 였다(실측 FSW 3Y 100억: Σ행 −4,869만 vs 헤드라인 −1,169만).
+    `since` 를 주면 그 날(이후 첫 행)부터 세우고 서빙용 캡은 안 건다. 범프 예산
+    가드는 그대로다 — 그쪽에 잘리면 부르는 쪽이 `rows[0]["t"]` 로 알 수 있다.
 
     Separate from `run_backtest` ON PURPOSE: the KRD bump pass costs several
     times the backtest itself, and every property test that replays books
@@ -1080,7 +1096,8 @@ def book_recon(
         raise BacktestError(f"at most {MAX_POSITIONS} positions")
     spans = [_span_of(dataset, p) for p in positions]
     cache: dict[int, np.ndarray] = {}
-    return _book_recon(dataset, positions, spans, cache, with_krd=with_krd)
+    return _book_recon(dataset, positions, spans, cache, with_krd=with_krd,
+                       since=since)
 
 
 def _quoted_value(dataset: Dataset, series_id: str, i: int) -> float | None:

@@ -897,7 +897,21 @@ def book_recon(fut: FuturesData, dataset, positions: list[FuturesPosition],
     swap_anchor: dict[str, float] = {}
     if want_legs:
         swap_pos = [fsw_swap_leg(fut, dataset, p)[0] for p in fsw]
-        swap_rec = swap_book_recon(dataset, swap_pos, with_krd=True)
+        # ★IRS 다리의 창은 **선물 창이 정한다** [2026-09-28]. 스왑 표의 서빙용 캡
+        # (`RECON_MAX_DAYS`)은 자기 달력에서 세므로, IRS 달력이 선물 달력보다 길면
+        # 선물 창은 안 잘리고 IRS 다리만 앞머리가 잘린다 — 첫 닷새의 IRS 행이 어느
+        # 버킷에도 안 들어가고 `truncated` 는 False 였다(실측 FSW 3Y 100억: Σ행
+        # −4,869만 vs 헤드라인 −1,169만 · FSW 10Y 차 −1.15억). 버킷 규칙상 행 k 는
+        # (window[k−1], window[k]] 의 IRS 행을 담으므로 그 앞 행부터 부른다.
+        need = window[start - 1] if start > 0 else window[0]
+        swap_rec = swap_book_recon(dataset, swap_pos, with_krd=True, since=need)
+        swap_body = [r for r in swap_rec["rows"] if not r.get("carryover")]
+        if swap_body:
+            got = dt.date.fromisoformat(swap_body[0]["t"])
+            if got > need:
+                # 범프 예산 가드에 잘린 것 — 조용한 구멍 대신 선물 창도 거기서
+                # 자른다(표가 `truncated` 로 말한다).
+                start = max(start, bisect_left(window, got) + 1)
         # 열은 **그 다리가 실제로 흔든 노드**만 — 전 노드를 세우면 스왑 표의
         # 열 목록(TENOR_T 전부)이 통째로 따라와 빈 칸이 스무 개 선다.
         seen: set[str] = set()

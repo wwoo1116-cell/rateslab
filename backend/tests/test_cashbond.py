@@ -833,14 +833,25 @@ class TestReconTiesOutOnLiveData:
         )
         assert ratio < 0.05, ratio
 
-    def test_the_asset_swap_estimate_leaves_the_irs_move_behind(self, live):
-        """자산스왑은 **일부러** 덜 맞는다 — 모듈 주석의 분해 참조:
-        잔차 = (D_스왑 − D_채권) × ΔIRS 이고, 추정 열은 "IRS 가 안 움직였다면"
-        을 센다. 실측 잔차/평가 중앙값 43.7%.
+    def test_the_asset_swap_estimate_explains_the_spread_move(self, live):
+        """자산스왑 합계 줄의 추정은 **스프레드 축**이라 그날 손익을 설명한다 —
+        잔차/평가 중앙값이 작아야 한다.
 
-        이 핀은 두 방향을 다 막는다. 0 에 가까워지면 누가 KRD 에 스왑 다리를
-        더해 스프레드 민감도이기를 그만둔 것이고, 1 을 넘으면 추정이 설명하는
-        것보다 어긋나게 하는 쪽이 커진 것이다."""
+        ## 이 핀의 이력 — 세 판
+
+        ① 2026-08-14: 합계 줄이 **채권 축**(KRD_채권 × Δ민평)이라 잔차 =
+           (D_스왑 − D_채권) × ΔIRS 였고 「일부러 덜 맞는」 표였다. 그때의 핀은
+           잔차/평가 중앙값 43.7% 를 (0.1, 1.0) 안에 가뒀다.
+        ② 2026-09-22: 축이 **스프레드**(IRS − 민평)로 바뀌었다(`asw_axis`). 그러면
+           잔차는 작아져야 하는데 핀은 그대로 통과했다 — 2.5Y 노드에 IRS 가 없어
+           그 칸의 Δ 가 비고, 3Y 채권의 KRD 가 석 달 뒤부터 거기 앉아 추정이 ≈0
+           으로 무너져 있었기 때문이다(잔차 비율 0.54). 핀이 옛 이유로 살아 있어
+           새 결함을 못 봤다.
+        ③ 2026-09-28: 2.5Y 를 이웃 IRS 보간으로 세우자 중앙값 0.046. 이제 핀은
+           **위만** 막는다 — 다시 0.2 를 넘으면 축에 구멍이 났거나 축이 바뀐 것이다.
+           아래 `test_the_3y_asset_swap_total_row_explains_the_day` 가 같은 사실을
+           Σ 비율과 2.5Y 칸으로 잰다.
+        """
         import statistics as st
 
         m, ds = live
@@ -853,7 +864,7 @@ class TestReconTiesOutOnLiveData:
         ratio = st.median([abs(r["residual"]) for r in rows]) / st.median(
             [abs(r["valuation"]) for r in rows]
         )
-        assert 0.1 < ratio < 1.0, ratio
+        assert ratio < 0.2, ratio
 
     def test_the_asset_swap_recon_is_not_just_the_bond(self, live):
         """스왑 다리를 빼먹으면 자산스왑 대사가 현금채권 대사와 **같아진다**.
@@ -869,6 +880,31 @@ class TestReconTiesOutOnLiveData:
         a = sum(r["actual"] for r in cash["rows"] if r["actual"] is not None)
         b = sum(r["actual"] for r in asw["rows"] if r["actual"] is not None)
         assert a != b, "자산스왑 대사가 채권 다리만 세고 있다"
+
+    @pytest.mark.parametrize("bond_type", ["KTB", "BD"])
+    def test_the_3y_asset_swap_total_row_explains_the_day(self, live, bond_type):
+        """★3Y 자산스왑의 합계 줄이 그날 손익을 **설명**한다 [2026-09-28 — "국고채
+        3Y 자산스왑 이상하다"].
+
+        3Y 채권은 석 달만 늙어도 KRD 가 **2.5Y 노드**에 앉는데, 그 노드는 IRS 에
+        없어 스프레드 축 Δ 가 비어 있었다. 그러면 `est ≈ 0` 이고 **잔차 = 그날
+        손익 전부**다 — 실측 잔차 비율 Σ|잔차|/Σ|손익| 이 3Y 국고·은행채 0.54
+        (다른 만기 0.05~0.13). 다리 블록은 맞고 합계 줄만 설명을 못 한 것이라
+        헤드라인 대조로는 안 잡힌다. 이웃 IRS 노드(2Y·3Y) 보간으로 축을 세우면
+        0.05 로 내려온다 — 그 문턱을 0.2 에 둔다(다른 만기의 갑절이면 다시 구멍이다).
+        """
+        m, ds = live
+        entry = m.dates[-self.ENTRY_ROWS_BACK]
+        rec = cb.book_recon(
+            m, ds, [cb.BondPosition("ASW", bond_type, "3Y", 1, N, entry)], self.SPEC
+        )
+        rows = [r for r in rec["rows"] if not r.get("carryover")]
+        assert "2.5Y" in rec["tenors"], "2.5Y 노드가 표에서 빠졌다"
+        filled = sum(1 for r in rows if r["dbp"].get("2.5Y") is not None)
+        assert filled >= 0.9 * len(rows), f"2.5Y 스프레드 Δ 가 비어 있다 ({filled}/{len(rows)})"
+        share = (sum(abs(r["residual"] or 0) for r in rows)
+                 / max(1.0, sum(abs(r["actual"] or 0) for r in rows)))
+        assert share < 0.2, f"3Y 자산스왑 합계 줄의 잔차 비율 {share:.3f} — 축에 구멍이 있다"
 
 
 class TestLegParts:

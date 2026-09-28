@@ -385,6 +385,43 @@ MR 대사표의 IRS 블록(`main._mr_recon_rows` 가 `fsw_swap_leg` 로 세우�
 ④세로합 보존 ⑤쉰 날의 IRS 행이 다음 선물 행에 담김. `test_cashbond.py::TestLegParts`
 15건 · MR 셋(`test_mr`·`test_mr_convention`·`test_mr_legrecon`) 84건 초록.
 
+### 오후 — 백테스트 전 계기 검증에서 둘 더 (2026-09-28 오후) [OWNER "다른 것들도 틀렸을 가능성"]
+
+[OWNER "백테스트에서 국고채 3Y 자산스왑 이상하다는데 … 다른 것들도 틀렸을 가능성이
+높으므로 검증"] 헤드라인·다리 합·항등식(자산스왑 국고 다리 = 현금채권 단독,
+1원까지 같음)은 전 계기에서 맞았다. 어긋난 자리는 **대사표** 둘이었고 둘 다
+「합계 줄」의 문제였다. 잔차 비율 Σ|잔차|/Σ|손익| 로 전 계기를 훑어 찾았다.
+
+    계기            전       후      비고
+    ASW:KTB:3Y     0.542   0.050    ★2.5Y 노드 구멍 — "이상하다"의 정체
+    ASW:BD:3Y      0.540   0.051    〃
+    ASW 1Y·2Y·5Y·10Y  0.05~0.13  (그대로)  IRS 에 같은 노드가 있다
+    FSW:3Y   Σ행−헤드라인  −3,700만 → −9원   ★IRS 다리 250일 캡
+    FSW:10Y  〃          −1.15억 → −5원    〃
+    3Y·3Y-10Y (순수 스왑)  truncated=True   서빙 캡 250행 — 설계대로 표가 말한다
+    FUT 롤일 잔차 7천만          설계대로(조정가 차분 vs 벤더 Δ, 모듈 doc)
+
+**③ 3Y 자산스왑 합계 줄의 2.5Y 구멍.** 합계 줄은 스프레드 축(IRS − 민평)을
+민평 노드마다 세우는데 2.5Y 는 IRS 에 없어 비웠다(공란 정책). 그런데 3Y 채권은
+석 달만 늙어도 `_krd_bond` 가 KRD 를 2.5Y 에 앉히므로 추정이 ≈0 으로 무너지고
+**잔차 = 그날 손익 전부**였다(03-24 한 줄 −1,078만, 다리 블록 잔차는 −2만·−5만).
+`cashbond.asw_series_between` — 이웃 IRS 노드(2Y·3Y) 연수 보간. 근사가 아니라
+스왑 다리가 이미 쓰는 보간을 설명 축에 옮긴 것이다. 포지션은 여전히 2.5Y 에
+못 선다(`ASW_TENORS`). 옛 핀 `…leaves_the_irs_move_behind`(잔차/평가 중앙값
+(0.1, 1.0))는 채권 축 시대의 것이라 09-22 축 전환 뒤 이미 뜻을 잃었는데 이
+구멍 덕에 계속 통과하고 있었다 → `…explains_the_spread_move`(< 0.2)로 바꿨다.
+
+**④ 선물 표 안 IRS 다리의 앞머리 절단.** `swap_book_recon` 의 서빙 캡
+(`RECON_MAX_DAYS`=250)은 자기 달력에서 센다. IRS 달력 252일 > 선물 245일이라
+선물 창은 안 잘리고 IRS 다리만 첫 닷새가 잘려 어느 버킷에도 안 들어갔고 표는
+`truncated: False` 였다. `backtest.book_recon(since=…)` 을 두고 선물 창이 IRS
+다리의 창을 정하게 했다(버킷 규칙상 `window[start−1]` 부터). 예산 가드에 잘리면
+선물 창도 거기서 자르고 `truncated` 로 말한다.
+
+게이트: `test_cashbond.py::TestReconTiesOutOnLiveData::test_the_3y_asset_swap_total_row_explains_the_day`(KTB·BD, 잔차 비율 < 0.2 · 2.5Y 칸 채움) ·
+`test_futures.py::…::test_the_swap_leg_is_not_capped_before_the_futures_window`
+(IRS 252 · 선물 245 픽스처, Σ행 = 헤드라인 ± 행당 1원).
+
 ### 같은 날 옆에서 잡힌 것 — 발행 캘린더 시험은 수집기 탓이 아니었다
 
 `test_issuance.py::test_the_server_does_not_pre_sum_the_sectors` 가 빨갰던 것은

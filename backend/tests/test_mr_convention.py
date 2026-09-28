@@ -245,8 +245,9 @@ class TestAswAxis:
             )
         assert checked >= 20, f"겹치는 날이 {checked}일뿐이에요"
 
-    def test_스왑_없는_만기_칸은_비어_있다(self, client):
-        """★2026-09-22 규약 뒤집기가 **드러낸 옛 결함**이다.
+    def test_스왑_없는_만기_칸은_스프레드_축이거나_비어_있다(self, client):
+        """★2026-09-22 규약 뒤집기가 **드러낸 옛 결함**이다 — 그리고 2026-09-28 에
+        그 자리의 규칙이 한 번 더 바뀌었다.
 
         민평에는 있고 IRS 에는 없는 만기가 셋이다(2.5Y·20Y·30Y). 자산스왑 북의
         대사표는 그 칸에 **민평 커브(%)를** 넣고 있었는데, 이 표의 Δ 배율은
@@ -254,11 +255,20 @@ class TestAswAxis:
         축도 채권 축이었다(합계 줄은 스프레드 축).
 
         찾은 방법이 기록할 값이다 — **다른 칸이 전부 부호를 뒤집는데 이 칸만 Δ 가
-        그대로였다.** 규약을 뒤집는 일이 그 자리를 비춘 것이고, 돈(평가·손익)은
-        한 자도 안 건드리는 칸이라 종전에는 아무도 안 밟았다(BSS-3Y 한 거래에서
-        36행 합쳐 19,754원 · 같은 거래의 평가는 −1,071,219원).
+        그대로였다.** 09-22 의 처방은 공란 정책(못 재면 «—»)이었다.
 
-        고친 방향은 이 리포의 공란 정책이다 — 못 재면 «—», 0 이나 근사로 안 채운다.
+        ## 09-28 — 비우면 3Y 자산스왑의 합계 줄이 무너진다
+
+        3Y 채권은 석 달만 늙어도 KRD 가 2.5Y 노드에 앉는데 그 칸의 Δ 가 비어 있으니
+        추정이 ≈0 으로 무너지고 잔차가 그날 손익 전부가 됐다(잔차 비율 0.54 —
+        "국고채 3Y 자산스왑 이상하다"). 그래서 **양쪽에 IRS 노드가 있는 민평 노드**
+        (2.5Y ↔ 2Y·3Y)는 이웃 IRS 를 연수로 보간해 스프레드 축을 세운다
+        (`cashbond.asw_series_between` — 스왑 다리가 이미 쓰는 보간이다). 이웃이
+        한쪽뿐인 노드(20Y·30Y)는 그대로 비운다.
+
+        그래서 이 시험이 재는 것은 둘이다: ① 2.5Y 는 **스프레드 축 위에** 선다 —
+        옛 결함(민평 % 를 bp 로 읽음)이면 이웃 IRS 노드의 Δ 와 크기가 100배 갈리고
+        같이 안 움직인다 ② 이웃 없는 노드는 비어 있고 추정이 0 이다.
         """
         d = client.get("/api/mr/strategy?id=BSS-3Y&lookback=60&entryZ=2.0"
                        "&exitZ=0.5&stopZ=2.5").json()
@@ -272,14 +282,46 @@ class TestAswAxis:
 
         gap = [lb for lb in rec["tenors"] if lb not in cb.ASW_TENORS]
         assert gap, "스왑 없는 만기가 열에 없으면 이 시험은 아무것도 안 잽니다"
-        for row in rec["rows"]:
-            if row.get("carryover"):
+        # 양쪽에 IRS 노드가 있는 것(2.5Y)과 없는 것(20Y·30Y)을 가른다.
+        from app import creditmatrix as cm
+        from app.curves import TENOR_T as IRS_T
+
+        def _between(lb: str) -> tuple[str, str] | None:
+            y = cm.TENOR_YEARS[lb]
+            have = sorted((yy, k) for k, yy in IRS_T.items())
+            lo = [k for yy, k in have if yy < y]
+            hi = [k for yy, k in have if yy > y]
+            return (lo[-1], hi[0]) if lo and hi else None
+
+        body = [r for r in rec["rows"] if not r.get("carryover")]
+        for lb in gap:
+            nb = _between(lb)
+            if nb is None:
+                # ② 이웃이 한쪽뿐 — 공란 정책 그대로.
+                for row in body:
+                    assert row["dbp"].get(lb) is None, (
+                        f'{row["t"]} {lb}: 이웃 IRS 가 없는 만기에 Δ 가 섰어요 — {row["dbp"][lb]}')
+                    assert row["est"].get(lb) == 0
                 continue
-            for lb in gap:
-                assert row["dbp"].get(lb) is None, (
-                    f'{row["t"]} {lb}: 스왑이 없는 만기에 Δ 가 섰어요 — '
-                    f'{row["dbp"][lb]} (민평 %를 bp 로 읽는 그 자리)'
-                )
-                assert row["est"].get(lb) == 0, (
-                    f'{row["t"]} {lb}: 못 재는 칸에 추정이 섰어요 — {row["est"][lb]}'
-                )
+            # ① 이웃이 둘 — 스프레드 축 위에 선다. 옛 결함(민평 % 를 bp 로 읽음)이면
+            #    크기가 이웃의 1/100 이고 같이 안 움직인다.
+            lo, hi = nb
+            pairs = [(row["dbp"].get(lb), row["dbp"].get(lo), row["dbp"].get(hi)) for row in body]
+            filled = [p for p in pairs if p[0] is not None]
+            assert len(filled) >= 0.9 * len(pairs), (
+                f'{lb}: 이웃 {lo}·{hi} 가 있는데 Δ 가 비어 있어요 ({len(filled)}/{len(pairs)})')
+            both = [(a, (b + c) / 2) for a, b, c in filled if b is not None and c is not None]
+            assert len(both) >= 10, f"{lb}: 비교할 행이 {len(both)}개뿐이에요"
+            big = [abs(a) for a, _m in both]
+            nbr = [abs(m) for _a, m in both]
+            # 크기: 이웃 평균 |Δ| 의 1/10 ~ 10배 안 — 100배 어긋난 옛 결함을 가른다.
+            ratio = (sum(big) / len(big)) / max(sum(nbr) / len(nbr), 1e-9)
+            assert 0.1 < ratio < 10.0, f"{lb}: |Δ| 크기가 이웃과 {ratio:.2f}배 — 축이 다르다"
+            # 방향: 같이 움직인다(상관 > 0.5). 민평 2.5Y 의 자기 몫이 있어 1 은 아니다.
+            n = len(both)
+            ma, mb = sum(a for a, _ in both) / n, sum(m for _, m in both) / n
+            cov = sum((a - ma) * (m - mb) for a, m in both)
+            va = sum((a - ma) ** 2 for a, _ in both)
+            vb = sum((m - mb) ** 2 for _, m in both)
+            corr = cov / max((va * vb) ** 0.5, 1e-9)
+            assert corr > 0.5, f"{lb}: 이웃 IRS 노드 Δ 와의 상관 {corr:.2f} — 스프레드 축이 아니다"
