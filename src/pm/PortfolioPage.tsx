@@ -222,6 +222,13 @@ function LevelCell({ track, open }: { track: PaperLegTrack | null; open: boolean
       <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
         {`손절 ${m.stopLevel.toFixed(LEVEL_DP)} · ${fmtKrw(m.stopPnl)}`}
       </Text>
+      {/* ★계열 값도 **병기** [OWNER 2026-09-28 — "계열 값도 병기해줘야지"]. 내 다리
+          레벨은 「나머지 다리 고정」이라는 가정 위의 번역이고, 계열의 선은 가정 없는
+          원래 문이다 — 둘을 같이 보여야 읽는 사람이 번역을 되짚을 수 있다. 차례는
+          위 두 줄과 같다(청산 · 손절). */}
+      <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+        {`계열 ${f(track.exitLevel)} · ${f(track.stopLevel)}${u}`}
+      </Text>
     </VStack>
   );
 }
@@ -410,7 +417,7 @@ function PositionTable({
             {/* ★레벨 [OWNER 2026-09-28] — 밴드 칸의 z 를 계열 값으로 푼 두 선. */}
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
               <ThHelp label="청산·손절"
-                help="얼린 조건의 밴드를 오늘 값으로 푼 뒤, 이 다리의 금리로 옮긴 레벨이에요 — 나머지 다리는 지금 값에 둔 채 이 다리만 움직여 계열이 그 선에 닿는 자리이고, 옆의 돈은 거기서 걷을 때의 이 다리 손익(왕복 비용)이에요. 중심선과 σ 가 매일 움직이니 매일 바뀌어요. ⚠ 는 계열 진입 방향과 반대로 잡은 다리예요 — 그 「청산」 레벨에서 이 다리는 손해예요. 계열의 다리가 아닌 계기면 계열 값으로 적어요." />
+                help="얼린 조건의 밴드를 오늘 값으로 푼 뒤, 이 다리의 금리로 옮긴 레벨이에요 — 나머지 다리는 지금 값에 둔 채 이 다리만 움직여 계열이 그 선에 닿는 자리이고, 옆의 돈은 거기서 걷을 때의 이 다리 손익(왕복 비용)이에요. 셋째 줄은 그 원래 문인 계열의 청산 · 손절 값이에요(계열 단위). 중심선과 σ 가 매일 움직이니 매일 바뀌어요. ⚠ 는 계열 진입 방향과 반대로 잡은 다리예요 — 그 「청산」 레벨에서 이 다리는 손해예요. 계열의 다리가 아닌 계기면 계열 값만 적어요." />
             </TableCell>
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
               <ThHelp label="내 레벨"
