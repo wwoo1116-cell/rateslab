@@ -55,6 +55,7 @@ from . import creditmatrix as cm
 from . import funding as fd
 from .universe import CURVE_LABEL
 from .creditmatrix import CreditMatrix, CreditMatrixError
+from .engine_port import next_kr_business_day
 
 log = logging.getLogger("app.cashbond")
 
@@ -593,12 +594,30 @@ def _swap_leg(
         exit=m.dates[leg.exit_i],
     )
     isample = sorted({imap[i] for i in sample if i in imap})
+    # ★전영업일은 **민평 달력의** 하룻밤이다 [적대 검증 2026-09-28].
+    #
+    # 종전에는 IRS 달력의 하루 전(`prev`)을 썼고, 그 옆에 「그 어긋남은 스왑이
+    # 실제로 그날 값이 매겨졌다는 사실 그대로다」라고 적혀 있었다. **그 변명이
+    # 틀렸다**: 그 IRS-만-있는 날들은 `mkt_irs_close` 가 폐장일에 전일 종가를
+    # 그대로 **복사해 둔 줄**이다(2026-09-24·25 가 09-23 의 복사본인 것과 같은
+    # 병 — 같은 날 상단 바에서 이미 잡았다). 스왑은 그날 값이 매겨진 것이 아니라
+    # 벤더가 줄을 반복한 것이고, 그래서 채권 다리와 다른 밤을 재고 있었다.
+    #
+    # 실측(ASW:KTB:3Y 100억, 2025-09-22~): 244봉 중 **9봉**에서 `d` 가 두 점의
+    # 차와 안 맞았고(최악 2026-07-20 −764,335 대 −1,848,525), Σd 가 그 해 손익을
+    # **4,111,825원(손익의 20%)** 만큼 부풀렸다. 누적 손익은 맞았고 `d` 만 틀렸다.
+    #
+    # 대사표 쪽은 이 밤을 이미 옳게 잡고 있었다(`_leg_delta` 의 그 주석 —
+    # 「`imap[i]` 와 `imap[i-1]` 로 읽어야 그 밤과 같은 밤이 된다 … 그 실수를 한
+    # 번 했다」). 손익선만 안 고쳐져 있었다.
+    prev_of = {i: imap[i - 1] for i in sample if i in imap and (i - 1) in imap}
+    isample = sorted({*isample, *prev_of.values()})
     rec, own, prev = _run_one(dataset, spos, isample, cache)
     back = {i: own.get(imap[i], 0.0) for i in sample if i in imap}
-    # 전영업일도 **IRS 달력의** 하루 전이다. 민평 달력에 없는 날(연말 폐장일
-    # 등 15일)이 그 사이에 끼면 채권 다리와 하루가 어긋나는데, 그 어긋남은
-    # 스왑이 실제로 그날 값이 매겨졌다는 사실 그대로다.
-    back_prev = {i: prev.get(imap[i], 0.0) for i in sample if i in imap}
+    # 민평 전영업일이 IRS 달력에 없을 때만(창 첫 점 등) 엔진의 `prev` 로 물러난다.
+    back_prev = {i: (own[prev_of[i]] if i in prev_of and prev_of[i] in own
+                     else prev.get(imap[i], 0.0))
+                 for i in sample if i in imap}
     rec["entryRate"] = rec["legs"][0]["entryRate"] if rec["legs"] else 0.0
     return rec, back, back_prev
 
@@ -1117,6 +1136,12 @@ def book_recon(
     # 자산스왑 북이면 Δ 는 스프레드(이미 bp), 현금채권이면 민평(% → ×100)
     asw = all(p.kind == KIND_ASW for p in positions)
     node_series: dict[str, list[float | None]] = {}
+    # ★**축이 누구의 커브인가** [적대 검증 2026-09-28]. 종목군이 섞인 북에서는
+    # 합계 줄의 축이 **한 다리의 민평 커브**이고, 정렬로 결정적이 되긴 했지만
+    # 그 사실이 어디에도 안 적혀 있었다 — 읽는 사람은 그 Δbp 를 북 전체의
+    # 것으로 읽는다. 노드마다 어느 종목군을 썼는지 싣는다(2.5Y 구멍과 같은 부류:
+    # 그럴듯한 수에 「한 다리의 것」이라는 표시가 없었다).
+    axis_of: dict[str, str] = {}
     for lb in labels:
         # ── 자산스왑 북인데 그 만기에 **스왑이 없는 노드** ────────────────────
         # 민평에는 있고 IRS 에는 없는 만기가 셋이다(2.5Y·20Y·30Y). 종전에는 그런
@@ -1156,8 +1181,10 @@ def book_recon(
                 between = asw_series_between(m, dataset, t, lb)
                 if between is not None:
                     node_series[lb] = between
+                    axis_of[lb] = t
             else:
                 node_series[lb] = asw_series(m, dataset, t, lb) if asw else m.series(t, lb)
+                axis_of[lb] = t
             break
     delta_scale = 1.0 if asw else 100.0
     # ── `asw_axis` — 합계 줄의 KRD 는 **그 줄이 쓰는 축의 것**이다 ────────────
@@ -1564,9 +1591,21 @@ def book_recon(
         prev_krd_s = krd_s
 
     # 이월 앵커 — 종가 KRD 만 싣고 손익 필드는 전부 None (IRS 쪽 공란 정책)
+    #
+    # ⚠날짜는 **다음 영업일**이다 — 루프의 `nxt` 를 쓰면 안 된다 [적대 검증
+    # 2026-09-28]. 마지막 바퀴에서 `nxt = m.dates[min(i+1, len-1)]` 이 마지막 날로
+    # 주그러들어, **청산일을 안 준 책**(데스크의 기본)에서 앵커가 마지막 행과 같은
+    # 날짜로 섰다. 실측: 245일 창에 246행 · 2026-09-23 이 두 번(한 번은 실제,
+    # 한 번은 전부 None). 화면은 그 줄에 「다음 영업일로 들고 가는 이월 리스크」를
+    # 적고(`src/backtest/recon.ts`), 표는 날짜로 키를 만든다 — 같은 키 둘.
+    # 형제 모듈 다섯이 전부 `next_kr_business_day` 로 적고 있었고
+    # (`backtest.py:834` · `futures.py:1037` · recon 셋) 이 파일만 아니었다.
+    # ★`nxt` 자체는 안 건드린다 — 그 값은 마지막 행의 조달비와 경과일도 물어서,
+    # 고치면 돈 칸이 움직인다(앵커의 하중은 날짜뿐이다).
     if rows:
+        carry_on = m.dates[last]
         anchor = {
-            "t": nxt.isoformat(),
+            "t": (nxt if nxt > carry_on else next_kr_business_day(carry_on)).isoformat(),
             "krd": {lb: round(axis * prev_krd[lb]) for lb in labels},
             "dbp": {},
             "est": {},
@@ -1592,7 +1631,10 @@ def book_recon(
             ]
         rows.append(anchor)
 
-    out = {"tenors": labels, "rows": rows, "truncated": start > first}
+    out = {"tenors": labels, "rows": rows, "truncated": start > first,
+           # 노드 → 그 축을 준 종목군. 섞인 북이면 값이 둘 이상 나온다.
+           "axisOf": dict(sorted(axis_of.items())),
+           "axisTypes": sorted(set(axis_of.values()))}
     if want_legs:
         # 표의 열은 두 다리의 **합집합**이다 — 화면이 이것으로 칸을 세운다.
         # 이름은 행의 다리 이름과 **같아야 한다** — 머리가 「국고」인데 행이

@@ -565,7 +565,7 @@ class TestFsw:
         헤드라인과 안 닫혔다 [2026-09-28].
 
         `swap_book_recon` 의 서빙용 캡(`RECON_MAX_DAYS`)은 IRS 달력에서 센다. IRS
-        달력(252일)이 선물 달력(245일)보다 길면 선물 창은 안 잘리는데 IRS 다리만
+        달력(255일)이 선물 달력(245일)보다 길면 선물 창은 안 잘리는데 IRS 다리만
         잘려, 첫 닷새의 IRS 행이 어느 버킷에도 안 들어가고 `truncated` 는 False
         였다 — 실측 FSW 3Y 100억: Σ행 −4,869만 vs 헤드라인 −1,169만(차 −3,700만),
         FSW 10Y 차 −1.15억. 이제 선물 창이 IRS 다리의 창을 정한다(`since`).
@@ -603,9 +603,11 @@ class TestFsw:
         assert out["truncated"] is False, "선물 창은 245행이라 안 잘려야 한다"
         body = [r for r in out["rows"] if not r.get("carryover")]
         assert len(body) == n_fut
-        # 앞머리의 IRS 행이 살아 있다 — 종전엔 창이 잘려 전부 0 이었다.
+        # 앞머리의 IRS 행이 **전부** 살아 있다 — 종전엔 창이 잘려 전부 0 이었다.
+        # ⚠`any` 였다가 `all` 로 조인다 [적대 검증 2026-09-28]: `any` 는 잘린 행이
+        # 하나만 남아도 초록이라, 캡이 반만 풀려도 안 잡힌다.
         head = [r["legs"][1]["actual"] or 0 for r in body[1:8]]
-        assert any(abs(v) > 0 for v in head), f"IRS 다리 앞머리가 비었다: {head}"
+        assert all(abs(v) > 0 for v in head), f"IRS 다리 앞머리가 비었다: {head}"
         # 표의 합 = 헤드라인 — 마지막 밤의 포워드 세타와 행마다 1원 반올림만큼만
         # 다를 수 있다(모듈 규약). 종전 결함은 이 자리가 수천만원이었다.
         total = sum(r["actual"] or 0 for r in body)

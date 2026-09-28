@@ -191,6 +191,13 @@ export interface PaperPositionGroup {
   /** 조건 없는 **열린** 다리 수 — 그 묶음에 청산선이 안 서는 다리가 몇인가.
    *  화면이 다리를 세지 않게 서버가 센다(§16). */
   unconditioned?: number;
+  /** ★이 **돈 칸**이 어느 시계의 수인가 [적대 검증 2026-09-28]. 계열 시선의
+   *  `live` 는 계열이 **전부** 덮였을 때만 참이라(반쪽 스프레드는 계열 값이 아니다)
+   *  돈 칸을 대변할 수 없었다 — 장중이 다리를 반만 덮으면 돈은 섞이는데 화면은
+   *  `live=false` 를 읽어 「종가」라고 적었다. `mixed` 가 그 자리를 메운다. */
+  clock?: 'close' | 'live' | 'mixed';
+  /** `clock === 'mixed'` 일 때 아직 종가인 **열린** 다리 번호들. */
+  staleLegs?: number[] | null;
   /** ── 묶음의 **계열 시선** [OWNER 2026-09-28 — "묶음으로 지금 얼마나 벌어져있는지
    *  왜 안알려줘?"]. 다리 줄이 다리의 금리를 말하면 묶음 줄은 계열 값을 말한다.
    *  전체 줄(화면이 `position` 에서 옮겨 적는 것)에는 없다 — 계열이 하나가 아니다. */
@@ -599,6 +606,18 @@ export interface PaperTrace {
   /** 열마다의 합 — 한 줄이라도 못 센 열은 `null`. */
   total: Record<'exec' | 'engine' | 'valuation' | 'carry' | 'rolldown' | 'startup'
     | 'funding' | 'cost' | 'paper' | 'residual', number | null>;
+  /** ★**어느 시계인가** [적대 검증 2026-09-28]. 대사 표는 늘 종가 기준이다 —
+   *  엔진이 종가로 돌기 때문이다. 머리띠(계열 값·경로)는 `marks` 를 받으면 장중이다.
+   *  종전에는 둘이 한 창에 나란히 서면서 아무 말도 안 해서, 같은 트레이드가 표에서는
+   *  −4,500만원이고 머리띠에서는 +1,750만원이었다. `paperLive` 가 「장중으로 매기면
+   *  장부가 얼마인가」라 두 수를 나란히 읽을 수 있다. */
+  basis?: {
+    table: 'close';
+    head: 'close' | 'live';
+    marks: { kind: string; tenor: string; level: number }[] | null;
+    why: string | null;
+    paperLive: number | null;
+  };
   /** `/api/backtest` 응답 그대로 — Backtest 창의 부품이 그대로 읽는다. */
   book: BacktestResult;
   /** 묶음의 계열 시선(`group_series`) — 창 머리띠의 내 레벨·지금·Δ·z. */

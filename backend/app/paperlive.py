@@ -78,6 +78,86 @@ def _age_min(day: dt.date, hhmmss: str, now: dt.datetime) -> float | None:
     return (now - at).total_seconds() / 60.0
 
 
+# ── 줄 → 레벨 (SQL 을 모르는 조각) ──────────────────────────────────────────
+#
+# ⚠ 이 둘을 `live_marks` 에서 **떼어 낸 이유**는 시험이다 [적대 검증 2026-09-28 —
+# 「paperlive.live_marks() 는 시험이 하나도 없다」]. 종전에는 30분 문·오늘 문·
+# 가격→금리 환산이 전부 `with engine().connect()` 안에 있어서, SQL 없이는 한 줄도
+# 잴 수 없었다. 규율은 `paper.py` 의 그것과 같다 — **산술은 DB 를 모른다**.
+
+
+def irs_levels(row: Any, now: dt.datetime,
+               max_age_min: int = MAX_AGE_MIN,
+               ) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
+    """IRS 한 줄 → `(레벨들, 사유, 출처 메타)`. 문이 닫히면 레벨은 빈 목록이다."""
+    if row is None:
+        return [], "표가 비어 있어요", {}
+    day, at = row["irs_date"], _hhmmss(row["irs_time"])
+    day = day if isinstance(day, dt.date) else dt.date.fromisoformat(str(day))
+    age = _age_min(day, at, now)
+    meta = {"asof": f"{day} {at}", "ageMin": None if age is None else round(age, 1)}
+    if day != now.date():
+        return [], f"오늘 자료가 아니에요 — 마지막이 {day} {at} 예요", meta
+    if age is not None and age > max_age_min:
+        return [], f"{round(age)}분 전 값이에요 — 지금이라고 부르지 않아요", meta
+    out = []
+    for tenor, col in IRS_COL.items():
+        v = row[col] if col in row else None
+        if v is None:
+            continue
+        out.append({"kind": "irs", "tenor": tenor, "level": float(v),
+                    "at": at, "source": "IRS"})
+    return out, None, meta
+
+
+def fut_levels(rows: Any, now: dt.datetime,
+               max_age_min: int = MAX_AGE_MIN,
+               ) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
+    """선물 줄들 → `(레벨들, 사유, 출처 메타)`.
+
+    ★가격으로 오므로 금리는 **우리가 푼다** — 화면·백테스트의 그 함수다.
+
+    ★그리고 두 만기는 **따로** 늙는다 [적대 검증 2026-09-28 — 「한쪽 선물이 낡으면
+    사유 없이 사라진다」]. 종전에는 낡은 code 를 `continue` 로 버리면서 `why` 는
+    `max(stamps)` 한 줄로만 적어서, 3년은 지금이고 10년이 40분 전이면 **10년이
+    말없이 사라졌다** — 「19칸 들어가는 중」이 18칸이 되는데 화면에 사유가 없었다.
+    사유는 만기마다 적는다(rv exclusions 문법).
+    """
+    if not rows:
+        return [], "연결 선물 줄이 없어요", {}
+    out: list[dict[str, Any]] = []
+    stamps: list[tuple[dt.date, str, float | None]] = []
+    said: dict[str, str] = {}
+    for code, price, day, at in rows:
+        if code not in FUT_CODE or price is None:
+            continue
+        tenor, years = FUT_CODE[code]
+        day = day if isinstance(day, dt.date) else dt.date.fromisoformat(str(day))
+        at = _hhmmss(at)
+        age = _age_min(day, at, now)
+        stamps.append((day, at, age))
+        if day != now.date():
+            said[tenor] = f"{tenor} 는 오늘 자료가 아니에요({day} {at})"
+            continue
+        if age is not None and age > max_age_min:
+            said[tenor] = f"{tenor} 는 {round(age)}분 전 값이에요"
+            continue
+        out.append({"kind": "fut", "tenor": tenor,
+                    "level": round(implied_yield(float(price), years), 4),
+                    "at": at, "source": "국채선물"})
+    stood = {l["tenor"] for l in out}
+    for tenor, _years in FUT_CODE.values():
+        if tenor not in stood and tenor not in said:
+            said[tenor] = f"{tenor} 줄이 없어요"
+    meta: dict[str, Any] = {}
+    if stamps:
+        day, at, age = max(stamps)
+        meta = {"asof": f"{day} {at}", "ageMin": None if age is None else round(age, 1)}
+    order = [t for t, _y in FUT_CODE.values()]
+    why = " · ".join(said[t] for t in order if t in said) or None
+    return out, why, meta
+
+
 def live_marks(*, now: dt.datetime | None = None,
                max_age_min: int = MAX_AGE_MIN) -> dict[str, Any]:
     """지금 시세 — `{"levels": [...], "asof": …, "sources": [...], "why": …}`.
@@ -98,23 +178,11 @@ def live_marks(*, now: dt.datetime | None = None,
                 "SELECT * FROM `infomax_API`.`irs_infomax` "
                 "ORDER BY irs_date DESC, irs_time DESC LIMIT 1"
             )).mappings().first()
-            if row is None:
-                src["why"] = "표가 비어 있어요"
-            else:
-                day, at = row["irs_date"], _hhmmss(row["irs_time"])
-                age = _age_min(day, at, now)
-                src.update({"asof": f"{day} {at}", "ageMin": None if age is None else round(age, 1)})
-                if day != now.date():
-                    src["why"] = f"오늘 자료가 아니에요 — 마지막이 {day} {at} 예요"
-                elif age is not None and age > max_age_min:
-                    src["why"] = f"{round(age)}분 전 값이에요 — 지금이라고 부르지 않아요"
-                else:
-                    for tenor, col in IRS_COL.items():
-                        v = row.get(col)
-                        if v is None:
-                            continue
-                        out.append({"kind": "irs", "tenor": tenor, "level": float(v),
-                                    "at": at, "source": "IRS"})
+            lv, why, meta = irs_levels(row, now, max_age_min)
+            out.extend(lv)
+            src.update(meta)
+            if why:
+                src["why"] = why
         except Exception as exc:                       # noqa: BLE001 — 사유를 싣고 산다
             src["why"] = f"못 읽었어요: {exc}"
         sources.append(src)
@@ -128,34 +196,11 @@ def live_marks(*, now: dt.datetime | None = None,
                 "      FROM `infomax_API`.`ktbf_live` WHERE code IN ('C65','C67') GROUP BY code) m "
                 "  ON m.code = t.code AND CONCAT(t.deal_date,' ',t.deal_time) = m.mx"
             )).fetchall()
-            if not got:
-                src["why"] = "연결 선물 줄이 없어요"
-            else:
-                stamps = []
-                for code, price, day, at in got:
-                    if code not in FUT_CODE or price is None:
-                        continue
-                    tenor, years = FUT_CODE[code]
-                    day = day if isinstance(day, dt.date) else dt.date.fromisoformat(str(day))
-                    at = _hhmmss(at)
-                    age = _age_min(day, at, now)
-                    stamps.append((day, at, age))
-                    if day != now.date():
-                        continue
-                    if age is not None and age > max_age_min:
-                        continue
-                    # ★가격으로 오므로 금리는 **우리가 푼다** — 화면·백테스트의 그 함수다.
-                    out.append({"kind": "fut", "tenor": tenor,
-                                "level": round(implied_yield(float(price), years), 4),
-                                "at": at, "source": "국채선물"})
-                if stamps:
-                    day, at, age = max(stamps)
-                    src.update({"asof": f"{day} {at}",
-                                "ageMin": None if age is None else round(age, 1)})
-                    if day != now.date():
-                        src["why"] = f"오늘 자료가 아니에요 — 마지막이 {day} {at} 예요"
-                    elif age is not None and age > max_age_min:
-                        src["why"] = f"{round(age)}분 전 값이에요 — 지금이라고 부르지 않아요"
+            lv, why, meta = fut_levels(got, now, max_age_min)
+            out.extend(lv)
+            src.update(meta)
+            if why:
+                src["why"] = why
         except Exception as exc:                       # noqa: BLE001
             src["why"] = f"못 읽었어요: {exc}"
         sources.append(src)
@@ -163,7 +208,8 @@ def live_marks(*, now: dt.datetime | None = None,
     # 국고 현물은 아직 이 창구에 없다 — 없는 것을 있는 척하지 않는다.
     sources.append({
         "name": "국고 현물", "table": None,
-        "why": "지표물 장중은 종목 단위로 와서 만기로 부르려면 지표물 표를 같이 읽어야 해요 — 아직 안 이었어요.",
+        "why": "지표물 장중은 종목 단위로 와서 만기로 부르려면 지표물 표를 같이 "
+               "읽어야 해요 — 아직 그 배선을 안 했습니다.",
     })
 
     asof = max((l["at"] for l in out), default=None)

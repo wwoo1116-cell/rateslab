@@ -1836,6 +1836,174 @@ class Test묶음_소계:
         assert pl._age_min(_d.date(2026, 9, 28), "13:30:00", now) == pytest.approx(10.0)
         assert pl._age_min(_d.date(2026, 9, 28), "엉망", now) is None
 
+    def test_만기_오타가_장중을_사칭하지_못한다(self):
+        """★[적대 검증 2026-09-28]. `irs:5YY=4.27` 이 **200 으로 통과**했다 —
+        아무 다리에도 안 물리는데 응답의 `live` 목록에는 그 낱말이 실려서, 화면이
+        종가를 보면서 「장중」을 적었다. `parse_marks` 의 독스트링이 「모르는 낱말은
+        조용히 버리지 않고 사유를 들고 죽는다」고 이미 약속한 자리였고, 코드는 계기만
+        보고 있었다.
+        """
+        for bad, why in (("irs:5YY=4.27", "없는 만기"), ("bond:99Y=3.0", "없는 만기"),
+                         ("fut:2Y=4.0", "없는 만기")):
+            with pytest.raises(paper.LegRejected, match=why):
+                paper.parse_marks(bad)
+        # 사유가 고를 수 있는 목록을 들고 있다 — 막고 이유를 안 적으면 다음 사람이 헤맨다.
+        with pytest.raises(paper.LegRejected, match="3Y · 10Y"):
+            paper.parse_marks("fut:2Y=4.0")
+        # 진짜 만기는 그대로 산다(좁게 잡아 기능을 없애지 않았는가).
+        assert paper.parse_marks("irs:1.5Y=3.9")[("irs", "1.5Y")] == 3.9
+        assert paper.parse_marks("irs:4Y=3.9")[("irs", "4Y")] == 3.9      # LEG_TENORS 쪽
+        assert paper.parse_marks("bond:3M=3.9")[("bond", "3M")] == 3.9    # ASW_TENORS 쪽
+
+    def test_만기_어휘가_화면의_그것을_덮는다(self):
+        """어휘가 **한 진실**인가 — 화면이 고를 수 있는 것을 마크가 다 받아야 한다.
+
+        화면의 목록은 `/api/paper/instruments` 가 내리고 그것은 `cashbond.ASW_TENORS`
+        (+ 선물은 `paper.FUT_TENORS`)다. 이 시험이 없으면 한쪽만 늘어나 「화면에서는
+        고를 수 있는데 장중 레벨은 못 받는 만기」가 생긴다.
+        """
+        from app import cashbond, instruments
+
+        vocab = paper._mark_tenors()
+        for t in cashbond.ASW_TENORS:
+            assert t in vocab["irs"] and t in vocab["bond"], t
+        for t in instruments.LEG_TENORS:
+            assert t in vocab["irs"], t
+        assert vocab["fut"] == paper.FUT_TENORS
+
+    def test_두_선물이_따로_늙는다(self):
+        """★[적대 검증 2026-09-28]. 3년은 지금이고 10년이 40분 전이면, 종전에는
+        10년이 **말없이 사라졌다** — `continue` 로 버리면서 `why` 는 `max(stamps)`
+        한 줄로만 적었기 때문이다. 「19칸 들어가는 중」이 18칸이 되는데 화면에 사유가
+        없으면, 다음 사람은 그 칸이 원래 없는 줄로 읽는다.
+        """
+        import datetime as _d
+
+        from app import paperlive as pl
+        from irs_pricer.services.simulation.futures_pricing import implied_yield
+
+        now = _d.datetime(2026, 9, 28, 13, 40, 0)
+        rows = [("C65", 102.03, _d.date(2026, 9, 28), _d.timedelta(hours=13, minutes=39)),
+                ("C67", 103.26, _d.date(2026, 9, 28), _d.timedelta(hours=13, minutes=0))]
+        lv, why, meta = pl.fut_levels(rows, now)
+        assert [x["tenor"] for x in lv] == ["3Y"], "낡은 10Y 가 섰다"
+        assert why and "10Y" in why and "40분" in why, f"사유가 없다: {why}"
+        # 산 쪽은 **가격에서 푼 금리**다 — 벤더의 `implied_yield` 는 0.0 으로 온다.
+        assert lv[0]["level"] == pytest.approx(implied_yield(102.03, 3), abs=1e-4)
+        assert meta["asof"] == "2026-09-28 13:39:00"
+        # 아예 한 줄만 오면 없는 쪽도 사유를 얻는다.
+        lv1, why1, _m = pl.fut_levels([rows[0]], now)
+        assert [x["tenor"] for x in lv1] == ["3Y"] and "10Y" in (why1 or "")
+        # 둘 다 어제면 둘 다 사유를 얻고 레벨은 빈다.
+        old = [(c, p, _d.date(2026, 9, 25), t) for c, p, _d_, t in rows]
+        lv0, why0, _m0 = pl.fut_levels(old, now)
+        assert lv0 == [] and "3Y" in why0 and "10Y" in why0
+
+    def test_IRS_줄의_문을_SQL_없이_잰다(self):
+        """30분 문·오늘 문·빈 표 — 종전에는 이 셋이 `with engine().connect()` 안에
+        있어서 SQL 없이는 한 줄도 잴 수 없었다(적대 검증 2026-09-28 — 「시험이 하나도
+        없다」).
+        """
+        import datetime as _d
+
+        from app import paperlive as pl
+
+        now = _d.datetime(2026, 9, 28, 13, 40, 0)
+        fresh = {"irs_date": _d.date(2026, 9, 28),
+                 "irs_time": _d.timedelta(hours=13, minutes=38),
+                 "irs_5y": 4.2675, "irs_10y": 4.335}
+        lv, why, meta = pl.irs_levels(fresh, now)
+        assert why is None and meta["ageMin"] == pytest.approx(2.0)
+        assert {(x["tenor"], x["level"]) for x in lv} == {("5Y", 4.2675), ("10Y", 4.335)}
+        assert all(x["at"] == "13:38:00" and x["kind"] == "irs" for x in lv)
+        # ★30분 문 — 넘으면 레벨이 **하나도** 안 선다(반쪽 시계를 안 만든다).
+        stale = {**fresh, "irs_time": _d.timedelta(hours=12, minutes=0)}
+        lv, why, _m = pl.irs_levels(stale, now)
+        assert lv == [] and "분 전" in why
+        # 오늘이 아니면 마찬가지다 — 어제 종가를 「지금」이라 안 부른다.
+        old = {**fresh, "irs_date": _d.date(2026, 9, 25)}
+        lv, why, _m = pl.irs_levels(old, now)
+        assert lv == [] and "오늘 자료가 아니" in why
+        # 빈 표.
+        assert pl.irs_levels(None, now) == ([], "표가 비어 있어요", {})
+        # 안 적힌 칸은 건너뛴다 — 「안 적었다」는 0 이 아니다.
+        assert pl.irs_levels({**fresh, "irs_5y": None}, now)[0] == [
+            {"kind": "irs", "tenor": "10Y", "level": 4.335, "at": "13:38:00", "source": "IRS"}]
+
+    def test_반쪽_장중은_반쪽이라고_말한다(self):
+        """★[적대 검증 2026-09-28]. 장중이 다리를 **반만** 덮으면 돈 칸은 두 시계를
+        섞은 수인데, 화면은 계열 시선의 `live`(계열이 전부 덮였을 때만 참)를 읽어
+        **「종가」라고 적었다**. 실측으로 5Y 한 칸만 쳐도 포지션 합계가
+        −55,000,000 → −215,000,000 으로 움직이는데 그걸 종가라 부르고 있었다.
+
+        고른 길은 「반쪽이면 묶음째 종가로 되돌리기」가 아니다 — BSS 는 IRS + 국고
+        현물이고 국고 장중은 이 창구에 아직 없어서, 그러면 이 데스크가 제일 많이 하는
+        거래가 장중을 켜도 영원히 안 움직인다. 거짓은 수가 아니라 **이름표**였다.
+        """
+        leg_of, _d, _v = _leg_of(120)
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="5Y", side="pay", entry="2020-03-02",
+                      level=3.0, notional=1e10, dv01=1_900_000.0, tag="BSS")
+        paper.add_leg(st, kind="bond", tenor="5Y", side="buy", entry="2020-03-02",
+                      level=3.1, notional=1e10, dv01=1_900_000.0, tag="BSS")
+
+        def sheet(marks):
+            return paper.build_sheet(leg_of=leg_of, store=st,
+                                     mark_of=lambda k, t: ("2020-03-03", 3.05),
+                                     marks=marks)["position"]["groups"][0]
+
+        close = sheet(None)
+        assert close["clock"] == "close" and close["staleLegs"] == [1, 2]
+        # 한 다리만 덮으면 **mixed** 이고, 아직 종가인 다리가 누구인지 말한다.
+        half = sheet({("irs", "5Y"): 3.40})
+        assert half["clock"] == "mixed", "반쪽인데 mixed 가 아니다"
+        assert half["staleLegs"] == [2], half["staleLegs"]
+        assert half["pnl"] != close["pnl"], "돈이 안 움직였다 — 픽스처가 약하다"
+        # 계열 시선은 그대로 all-or-nothing 이다(반쪽 스프레드는 계열 값이 아니다).
+        assert half["live"] is False
+        # 둘 다 덮이면 live — 그때는 계열 시선과 돈이 같은 말을 한다.
+        full = sheet({("irs", "5Y"): 3.40, ("bond", "5Y"): 3.20})
+        assert full["clock"] == "live" and full["staleLegs"] is None
+        # 닫힌 다리는 시계를 안 흐린다 — 열린 다리만 센다(마크가 없는 다리다).
+        paper.close_leg(st, 1, exit_t="2020-03-04", exit_level=3.2)
+        only_open = sheet({("bond", "5Y"): 3.20})
+        assert only_open["clock"] == "live", only_open
+
+    def test_추적_창이_두_시계를_나란히_말한다(self, monkeypatch, tmp_path):
+        """★[적대 검증 2026-09-28]. 대사 표는 **늘 종가**다(엔진이 종가로 돈다).
+        머리띠의 계열 값·경로는 `marks` 를 받으면 장중이다. 종전에는 둘이 한 창에
+        나란히 서면서 아무 말도 안 해서, 같은 트레이드가 표에서는 −4,500만원이고
+        머리띠에서는 +1,750만원이었다.
+
+        「표도 장중으로」는 답이 아니다 — 장중으로 매긴 장부 손익을 종가까지 돈
+        엔진과 빼면 「차이」 열이 선형 대 재평가의 몫이 아니라 두 시계의 차가 된다.
+        그래서 둘을 다 싣고 **이름을 붙인다**.
+        """
+        from fastapi.testclient import TestClient
+
+        from app import main as M, paperlive
+
+        monkeypatch.setattr(paperlive, "live_marks", lambda: {"levels": [
+            {"kind": "irs", "tenor": "5Y", "level": 4.27, "at": "13:30", "source": "IRS"},
+        ], "asof": "13:30", "sources": [], "why": None})
+        c = TestClient(M.app)
+        st = paper.load()
+        ns = [int(lg["n"]) for lg in st.get("legs", [])][:2]
+        if not ns:
+            pytest.skip("장부에 다리가 없어요 — 이 시험은 실장부를 읽습니다")
+        arg = ",".join(str(n) for n in ns)
+        for marks, head in (("", "close"), ("live", "live")):
+            r = c.get("/api/paper/trace", params={"legs": arg, "marks": marks})
+            assert r.status_code == 200, r.text
+            b = r.json()["basis"]
+            assert b["table"] == "close", "대사 표가 종가가 아니라고 적혔다"
+            assert b["head"] == head, (marks, b)
+            if head == "live":
+                assert b["why"] and "종가 기준" in b["why"]
+                assert b["marks"], "무엇을 깔았는지 안 싣는다"
+            else:
+                assert b["why"] is None and b["marks"] is None
+
     def test_라우트가_장중_레벨을_받는다(self, monkeypatch, tmp_path):
         from fastapi.testclient import TestClient
 

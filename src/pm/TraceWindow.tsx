@@ -299,6 +299,18 @@ export function TraceWindow({ ns, title, onClose }: {
                 체결 차이는 내가 체결한 레벨과 엔진이 친 진입일 종가의 거리예요. 차이는 장부의
                 선형(진입일 DV01 고정)과 엔진의 재평가가 갈리는 몫이고, 지우지 않고 적어요.
               </Text>
+              {/* ★**이 표는 종가다** [적대 검증 2026-09-28]. 위의 머리띠·그림은 장중일 수
+                  있어서, 아무 말도 안 하면 같은 트레이드가 창 안에서 두 수로 적힌다.
+                  두 수를 다 서버가 낸다(§16) — 여기서 빼지 않는다. */}
+              {data.basis?.head === 'live' ? (
+                <Text font="legal" as="span" color="fgMuted" maxWidth={1000}>
+                  {data.basis.why}
+                  {data.basis.paperLive != null
+                    ? ` 장중으로 매기면 이 트레이드의 장부 손익은 ${fmtKrw(data.basis.paperLive)}이고,`
+                      + ` 위 표의 종가 기준은 ${data.total.paper != null ? fmtKrw(data.total.paper) : MINUS}예요.`
+                    : ''}
+                </Text>
+              ) : null}
             </VStack>
 
             {/* ── 누적 손익 — 진입일부터, 엔진의 하루 단위 ── */}

@@ -3676,12 +3676,42 @@ def paper_trace(legs: str, marks: str = "") -> dict:
             else {"series": gview.get("series"), "why": gview.get("seriesWhy")
                   or "조건이 있는 다리가 없어요 — 밴드를 못 그려요"})
 
+    # ★**대사표는 종가 기준이다** — 머리띠만 장중이다 [적대 검증 2026-09-28].
+    #
+    # 위에서 엔진을 마크 날에 끊는 이유(바로 그 ⚠ 문단)가 이 표를 종가에 묶는다:
+    # 대조는 「장부 손익 = 체결 차이 + 엔진 손익 − 비용 + 차이」이고 엔진은 종가로
+    # 돈다. 그런데 `group_series` 와 `series_path` 는 `marks` 를 받아 **장중**을
+    # 말한다. 종전에는 그 둘이 한 창에 나란히 서면서 아무 말도 안 했고, 그래서 같은
+    # 트레이드가 창에서는 −4,500만원(표)이고 표에서는 +1,750만원(머리띠)이었다.
+    #
+    # 고치는 길은 「표도 장중으로」가 **아니다**: 장중으로 매긴 장부 손익을 종가까지
+    # 돈 엔진과 빼면 「차이」 열이 선형 대 재평가의 몫이 아니라 두 시계의 차가 된다.
+    # 그래서 둘을 **둘 다 싣고 이름을 붙인다** — 화면이 어느 쪽을 적는지 말할 수
+    # 있도록(§16 — 두 수를 다 서버가 낸다).
+    live_rows = ({int(r["n"]): r for r in _paper_sheet(mk)["position"]["legs"]}
+                 if mk else sheet_rows)
+    paper_live = [live_rows.get(int(lg["n"]), {}).get("pnl") for lg in picked]
+    basis = {
+        # 표(대사)의 시계 — 늘 종가다. 엔진이 종가로 돌기 때문이다.
+        "table": "close",
+        # 머리띠(계열 시선·경로)의 시계.
+        "head": "live" if mk else "close",
+        "marks": ([{"kind": k, "tenor": t, "level": v} for (k, t), v in sorted(mk.items())]
+                  if mk else None),
+        "why": ("대사표는 종가 기준이에요 — 엔진이 종가로 돌아서예요. 머리띠의 계열 "
+                "값과 그림은 장중이에요." if mk else None),
+        # 장중으로 매기면 장부 손익이 얼마인가 — 같은 트레이드의 두 수를 나란히.
+        "paperLive": (None if any(v is None for v in paper_live)
+                      else round(sum(paper_live), 2)),
+    }
+
     return {
         "legs": ns,
         "rows": recon,
         "total": {k: _sum(k) for k in ("exec", "engine", "valuation", "carry",
                                        "rolldown", "startup", "funding", "cost",
                                        "paper", "residual")},
+        "basis": basis,
         "book": book,
         "group": gview,
         "path": path,

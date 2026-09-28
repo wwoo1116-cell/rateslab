@@ -265,3 +265,29 @@ describe('부품은 캐논이다 — 새 탭이라고 새 문법을 쓰지 않�
     expect(p).toMatch(/표본밖/);
   });
 });
+
+describe('한 줄은 한 시계만 말한다 [적대 검증 2026-09-28]', () => {
+  it('돈 칸의 시계는 `clock` 이 정한다 — 계열 시선의 `live` 가 아니다', () => {
+    /* 장중이 묶음의 다리를 **반만** 덮으면 돈은 두 시계를 섞은 수다. 종전에는 그걸
+       계열 시선의 `live`(계열이 전부 덮였을 때만 참)로 읽어 **「종가」라고 적었다** —
+       5Y 한 칸만 쳐도 2.4억이 움직이는 수를 종가라 부른 셈이다. 세는 것은 서버다
+       (§16): `sum_legs` 가 `clock`·`staleLegs` 를 낸다. */
+    expect(py()).toMatch(/"clock":/);
+    expect(py()).toMatch(/"staleLegs":/);
+    expect(api()).toMatch(/clock\?: 'close' \| 'live' \| 'mixed'/);
+    const p = page();
+    expect(p).toMatch(/g\.clock === 'mixed'/);
+    expect(p).toMatch(/반쪽 장중/);
+    /* 화면이 다리를 세지 않는다 — 셈은 서버 몫이다. */
+    expect(p).not.toMatch(/legs\.filter\([^)]*live/);
+  });
+
+  it('추적 창이 표와 머리띠의 시계를 **둘 다** 말한다', () => {
+    /* 대사 표는 늘 종가(엔진이 종가로 돈다)이고 머리띠는 장중일 수 있다. 아무 말도
+       안 하면 같은 트레이드가 창 안에서 두 수로 적힌다. */
+    const w = src('src/pm/TraceWindow.tsx');
+    expect(w).toMatch(/data\.basis\?\.head === 'live'/);
+    expect(w).toMatch(/basis\.paperLive/);
+    expect(api()).toMatch(/table: 'close'/);
+  });
+});

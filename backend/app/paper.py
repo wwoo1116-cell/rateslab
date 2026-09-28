@@ -116,6 +116,21 @@ KIND_WORD = {"irs": "IRS", "bond": "국고 현물", "fut": "국채선물"}
 #: 이 리포에도. 오너 예시의 「국채선물 2년」이 그 자리였다.
 FUT_TENORS = ("3Y", "10Y")
 
+#: 장중 레벨이 쓸 수 있는 만기 — 계기마다 다르다. **한 진실**이라 여기서만 적고,
+#: `/api/paper/instruments` 가 화면에 내리는 목록(`cashbond.ASW_TENORS`)과
+#: 다리로 세울 수 있는 노드(`instruments.LEG_TENORS`)를 합집합으로 덮는다. 둘이
+#: 갈리는 자리가 있어서다 — ASW 는 3M 을 갖고 LEG 는 4Y·6Y·8Y·9Y 를 갖는다.
+#: 합집합인 이유: 이 검사는 **오타를 잡는 문**이고, 실제로 물릴 다리가 있는지는
+#: `marked_table` 이 다리 표와 맞춰 본다. 목록을 좁게 잡아 진짜 만기를 막으면
+#: 그건 오타가 아니라 기능을 없애는 것이다.
+#: 가드: `test_paper.py::Test장중레벨::test_만기_어휘가_화면의_그것을_덮는다`.
+def _mark_tenors() -> dict[str, tuple[str, ...]]:
+    from .cashbond import ASW_TENORS
+    from .instruments import LEG_TENORS
+
+    swap = tuple(dict.fromkeys([*ASW_TENORS, *LEG_TENORS]))
+    return {"irs": swap, "bond": swap, "fut": FUT_TENORS}
+
 
 class LegRejected(ValueError):
     """다리를 안 받는다. **사유가 곧 메시지**다 — 화면이 그대로 적는다."""
@@ -303,6 +318,14 @@ def parse_marks(spec: str | None) -> dict[tuple[str, str], float]:
         kind, tenor = kind.strip().lower(), tenor.strip()
         if kind not in LEG_KINDS:
             raise LegRejected(f"모르는 계기예요: {kind} ({' | '.join(LEG_KINDS)})")
+        # ⚠ 만기도 검사한다 [적대 검증 2026-09-28]. 종전엔 계기만 봐서 `irs:5YY=4.27`
+        # 이 **200 으로 통과**했다 — 아무 다리에도 안 물리는데 응답의 `live` 목록에는
+        # 그 낱말이 실려, 화면이 종가를 보면서 「장중」을 적었다. 위 독스트링이
+        # 약속한 것이 이것이고, 코드가 안 지키고 있었다.
+        okay = _mark_tenors()[kind]
+        if tenor not in okay:
+            raise LegRejected(
+                f"{KIND_WORD[kind]} 에 없는 만기예요: {tenor} ({' · '.join(okay)})")
         try:
             lv = float(val)
         except ValueError:
@@ -904,6 +927,23 @@ def sum_legs(rows: list[dict], *, key: str, label: str, total: bool = False) -> 
         # 조건 없는 **열린** 다리 수 — 화면이 다리를 세지 않게(§16). 이 수가 0 이
         # 아니면 그 묶음엔 청산선이 안 서는 다리가 있다.
         "unconditioned": sum(1 for l in open_ if not l.get("knobs")),
+        # ★**이 합계가 어느 시계의 수인가** [적대 검증 2026-09-28].
+        #
+        # 장중 레벨이 묶음의 다리를 **반만** 덮으면(BSS = IRS + 국고 현물인데 국고
+        # 장중이 이 창구에 아직 없다) 종전에는 돈 칸이 「지금 IRS + 사흘 전 국고」로
+        # 섞인 수를 내면서, 계열 시선의 `live` 는 all-or-nothing 규율대로 `False`
+        # 였고 화면은 그걸 읽어 **「종가」라고 적었다**. 실측: 5Y 한 칸만 치면
+        # 포지션 합계가 −215,000,000 인데 전부 종가면 −55,000,000, 전부 장중이면
+        # +25,000,000 — 2.4억 스윙을 종가라고 부르고 있었다.
+        #
+        # 고르는 길은 둘이었다. ① 반쪽이면 묶음째 종가로 되돌린다 — 그러면 국고
+        # 다리가 든 묶음은 장중이 켜져도 영원히 안 움직인다(이 데스크가 제일 많이
+        # 하는 거래다). ② **섞인 것을 섞였다고 말한다.** ②를 고른다: 재매김 자체는
+        # 지금 있는 것 중 제일 나은 추정이고, 거짓은 수가 아니라 **이름표**였다.
+        "clock": ("live" if open_ and all(l.get("live") for l in open_)
+                  else "mixed" if any(l.get("live") for l in open_)
+                  else "close"),
+        "staleLegs": [int(l["n"]) for l in open_ if not l.get("live")] or None,
     }
 
 

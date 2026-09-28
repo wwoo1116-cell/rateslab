@@ -457,8 +457,17 @@ function SubtotalRow({ group: g, busy, collapsed, onToggle, onTrace }: {
             className={shown == null ? undefined : directionClass(shown)}>
             {shown == null ? MINUS : fmtKrw(shown)}
           </Text>
+          {/* ★**어느 시계의 수인가** [적대 검증 2026-09-28]. 장중 레벨이 다리를
+              반만 덮으면(BSS = IRS + 국고 현물인데 국고 장중은 아직 이 창구에 없다)
+              이 수는 「지금 IRS + 사흘 전 국고」로 섞인 값이다. 종전에는 그걸
+              계열 시선의 `live`(전부 덮였을 때만 참)로 읽어 **「종가」라고 적었다**
+              — 5Y 한 칸만 쳐도 2.4억이 움직이는 수를 종가라고 부른 셈이다.
+              말은 서버가 센 `clock` 이 한다(§16 — 화면은 다리를 세지 않는다). */}
           <Text font="legal" as="span" color="fgMuted" noWrap>
-            {g.pending === 0 ? '트레이드 손익' : `${g.scored}/${g.legs.length} 매김`}
+            {g.clock === 'mixed'
+              ? `반쪽 장중 · ${g.staleLegs?.length ?? 0}개 다리는 종가`
+              : g.clock === 'live' ? '트레이드 손익 · 장중'
+                : g.pending === 0 ? '트레이드 손익' : `${g.scored}/${g.legs.length} 매김`}
           </Text>
         </VStack>
       </TableCell>

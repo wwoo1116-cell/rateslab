@@ -883,15 +883,18 @@ class TestReconTiesOutOnLiveData:
 
     @pytest.mark.parametrize("bond_type", ["KTB", "BD"])
     def test_the_3y_asset_swap_total_row_explains_the_day(self, live, bond_type):
-        """★3Y 자산스왑의 합계 줄이 그날 손익을 **설명**한다 [2026-09-28 — "국고채
+        """★3Y 자산스왑의 합계 줄이 그날 **평가**를 설명한다 [2026-09-28 — "국고채
         3Y 자산스왑 이상하다"].
 
         3Y 채권은 석 달만 늙어도 KRD 가 **2.5Y 노드**에 앉는데, 그 노드는 IRS 에
         없어 스프레드 축 Δ 가 비어 있었다. 그러면 `est ≈ 0` 이고 **잔차 = 그날
-        손익 전부**다 — 실측 잔차 비율 Σ|잔차|/Σ|손익| 이 3Y 국고·은행채 0.54
-        (다른 만기 0.05~0.13). 다리 블록은 맞고 합계 줄만 설명을 못 한 것이라
-        헤드라인 대조로는 안 잡힌다. 이웃 IRS 노드(2Y·3Y) 보간으로 축을 세우면
-        0.05 로 내려온다 — 그 문턱을 0.2 에 둔다(다른 만기의 갑절이면 다시 구멍이다).
+        평가 전부**다. 이웃 IRS 노드(2Y·3Y) 보간으로 축을 세우면 내려온다.
+
+        ⚠**분모는 `|valuation|` 이다** [적대 검증 2026-09-28]. 이 시험의 첫 판은
+        `Σ|잔차|/Σ|actual|` 을 쟀는데, 코드의 정의는 `residual = valuation −
+        estTotal` 이다(cashbond.py 의 그 줄). `actual` 은 캐리·조달·롤까지 담은
+        그날 손익이라, 축이 설명하려 들지도 않는 성분을 분모에 넣은 셈이었다 —
+        듀레이션이 짧아 평가가 작고 캐리가 큰 짧은 만기에서 비율이 뻥튀김한다.
         """
         m, ds = live
         entry = m.dates[-self.ENTRY_ROWS_BACK]
@@ -903,8 +906,179 @@ class TestReconTiesOutOnLiveData:
         filled = sum(1 for r in rows if r["dbp"].get("2.5Y") is not None)
         assert filled >= 0.9 * len(rows), f"2.5Y 스프레드 Δ 가 비어 있다 ({filled}/{len(rows)})"
         share = (sum(abs(r["residual"] or 0) for r in rows)
-                 / max(1.0, sum(abs(r["actual"] or 0) for r in rows)))
+                 / max(1.0, sum(abs(r["valuation"] or 0) for r in rows)))
         assert share < 0.2, f"3Y 자산스왑 합계 줄의 잔차 비율 {share:.3f} — 축에 구멍이 있다"
+
+    @pytest.mark.parametrize("bond_type", ["KTB", "BD"])
+    def test_every_asset_swap_tenor_gets_measured_not_just_the_3y(self, live, bond_type):
+        """★**전 만기를 잰다** [적대 검증 2026-09-28 — 「전 계기 훑기가 ASW
+        3M·6M·9M 을 빠뜨렸다」].
+
+        3Y 를 고친 날 정본은 「3Y 자산스왑만 0.54 가 튀었다(다른 만기 0.05~0.13)」고
+        적었는데, 그 문장이 **틀렸다**. 화면은 `ASW_TENORS` 열을 다 내리는데
+        (`main.py` 의 그 라우트) 시험은 3Y 한 칸만 봤다. 실측(진입 250행 전,
+        분모 `|valuation|`, 2026-09-28):
+
+            Σ|잔차|/Σ|평가|   3M    6M    9M    1Y  1.5Y   2Y   3Y   5Y   7Y  10Y
+            KTB            0.94 0.41 0.21 0.13 0.065 0.053 .054 .094 .085 .088
+            BD             1.00 0.45 0.24 0.15 0.068 0.051 .056 .102 .103 .122
+
+        ⚠**Σ 비율은 만기끼리 비교할 수 없다.** 진입일만 열 주 옮겨도 3M 이
+        0.94 → 1.53 으로 뛴다(행이 60개뿐이라 몇 행이 전체를 짓는다). 그래서 이
+        시험은 **중앙값 비율**을 잰다 — 그건 두 진입일에서 다 안정적이고
+        (1Y 이상 ≤ 0.14 · 6M~9M 0.14~0.29 · 3M 0.0003), 「그날치가 설명되는가」라는
+        물음에 실제로 답하는 통계다.
+
+        그리고 1Y 아래는 2.5Y 구멍과 **다른 병**이다 — 축의 Δ 는 다 차 있고(빈 칸
+        0), 중앙값은 3M 이 오히려 제일 작다. 범인은 **평가가 얼어 있는 날**이고
+        그것은 `test_the_short_end_valuation_freezes_while_the_axis_moves` 가 따로
+        잰다. 여기서 하는 일은 열 칸 전부를 **숫자로 못 박아** 더 나빠지면 빨갛게
+        되도록 두는 것이다.
+        """
+        m, ds = live
+        entry = m.dates[-self.ENTRY_ROWS_BACK]
+        import statistics as st
+
+        #: 6M·9M 은 문턱이 느슨하고, 그 느슨함이 **이 자리에 적혀 있다** — 눈감아
+        #: 준 것이 아니라 재고 있다(실측 최대 0.29 → 문턱 0.35).
+        ceiling = {"6M": 0.35, "9M": 0.35}
+        got: dict[str, float] = {}
+        for tenor in cb.ASW_TENORS:
+            rec = cb.book_recon(
+                m, ds, [cb.BondPosition("ASW", bond_type, tenor, 1, N, entry)], self.SPEC
+            )
+            rows = [r for r in rec["rows"]
+                    if not r.get("carryover") and r["actual"] is not None][1:]
+            share = (st.median([abs(r["residual"] or 0) for r in rows])
+                     / max(1.0, st.median([abs(r["valuation"] or 0) for r in rows])))
+            got[tenor] = share
+            assert share < ceiling.get(tenor, 0.2), (
+                f"{bond_type} {tenor} 자산스왑 잔차 중앙값 비율 {share:.4f} — "
+                f"문턱 {ceiling.get(tenor, 0.2)}")
+        # 열 칸을 다 쟀는가 — 이 시험이 도는 이유가 그것이다.
+        assert set(got) == set(cb.ASW_TENORS) and len(got) == 10, got
+
+    def test_the_daily_change_spans_one_bond_business_night(self, live):
+        """★`d` 는 **늘 1영업일**이고, 그 하룻밤은 두 다리에 같은 밤이다
+        [적대 검증 2026-09-28].
+
+        종전에는 IRS 다리의 「전영업일」을 **IRS 달력**에서 집었다. 그 옆에는
+        「그 어긋남은 스왑이 실제로 그날 값이 매겨졌다는 사실 그대로다」라고 적혀
+        있었는데 **그 변명이 틀렸다**: 그 IRS-만-있는 날들은 `mkt_irs_close` 가
+        폐장일에 전일 종가를 그대로 복사해 둔 줄이다(2026-09-24·25 가 09-23 의
+        복사본인 것과 같은 병). 그래서 채권 다리는 민평의 하룻밤, 스왑 다리는
+        **다른 밤**을 재고 있었다.
+
+        실측(ASW:KTB:3Y 100억, 2025-09-22~, 245봉): 9봉에서 `d` 가 두 점의 차와
+        안 맞았고(최악 2026-07-20 −764,335 대 −1,848,525), **Σd 가 그 해 손익을
+        4,111,826원 부풀렸다** — 그 북 손익의 20%다. 누적 손익은 맞았고 `d` 만
+        틀렸다. 대사표 쪽은 이 밤을 이미 옳게 잡고 있었다(`_leg_delta` 의 그
+        주석 — 「그 실수를 한 번 했다」). 손익선만 안 고쳐져 있었다.
+
+        이 시험이 잠그는 항등식은 하나다: **Σd = 마지막 손익 − 첫 손익**.
+        """
+        m, ds = live
+        entry = m.dates[-self.ENTRY_ROWS_BACK]
+        for tenor in ("3Y", "10Y"):
+            out = cb.run_backtest(
+                m, ds, [cb.BondPosition("ASW", "KTB", tenor, 1, N, entry)], self.SPEC
+            )
+            pts = out["points"]
+            assert out["complete"], "솎인 창에서는 이 항등식을 못 잰다"
+            assert pts[0]["d"] is None, "첫 점에는 전날이 없다"
+            off = [(pts[k]["t"], pts[k]["d"], round(pts[k]["pnl"] - pts[k - 1]["pnl"]))
+                   for k in range(1, len(pts))
+                   if abs(pts[k]["d"] - round(pts[k]["pnl"] - pts[k - 1]["pnl"])) > 1.0]
+            assert not off, f"{tenor}: d 가 두 점의 차가 아니다 — {off[:3]}"
+            span = pts[-1]["pnl"] - pts[0]["pnl"]
+            assert sum(p["d"] or 0 for p in pts) == pytest.approx(span, abs=len(pts)), tenor
+
+    def test_the_carryover_anchor_is_dated_the_next_business_day(self, live):
+        """★이월 앵커의 날짜는 **다음 영업일**이다 [적대 검증 2026-09-28].
+
+        루프의 `nxt` 는 마지막 바퀴에서 `m.dates[min(i+1, len-1)]` 이라 마지막 날로
+        주그러든다. 그래서 **청산일을 안 준 책**(데스크의 기본)에서 앵커가 마지막
+        행과 **같은 날짜**로 섰다 — 245일 창에 246행, 2026-09-23 이 두 번. 화면은
+        그 줄에 「다음 영업일로 들고 가는 이월 리스크」를 적고 표는 날짜로 키를
+        만든다(같은 키 둘). 형제 모듈 다섯이 전부 `next_kr_business_day` 로 적고
+        있었고 이 파일만 아니었다.
+
+        종전의 앵커 시험(`…carries_risk_but_no_pnl`)은 carryover 플래그·개수·공란·
+        KRD 만 봤고 **날짜를 안 봤다** — 그래서 아무것도 안 잡혔다.
+        """
+        m, ds = live
+        entry = m.dates[-self.ENTRY_ROWS_BACK]
+        for pos in (cb.BondPosition("ASW", "KTB", "3Y", 1, N, entry),
+                    cb.BondPosition("CB", "KTB", "3Y", 1, N, entry)):
+            rec = cb.book_recon(m, ds, [pos], self.SPEC)
+            rows = rec["rows"]
+            anchor, last = rows[-1], rows[-2]
+            assert anchor.get("carryover") is True and not last.get("carryover")
+            assert anchor["t"] > last["t"], (
+                f'{pos.id}: 앵커 {anchor["t"]} 가 마지막 행 {last["t"]} 보다 안 뒤다')
+            dates = [r["t"] for r in rows]
+            assert len(dates) == len(set(dates)), f"{pos.id}: 날짜가 겹치는 행이 있다"
+
+    def test_the_spread_axis_says_whose_curve_it_is(self, live):
+        """★섞인 북의 합계 줄 축은 **한 다리의 민평 커브**다 — 그 사실을 싣는다
+        [적대 검증 2026-09-28].
+
+        노드마다 `types` 를 돌며 처음 맞는 종목군의 커브를 쓰고 `break` 한다. 종전엔
+        `types` 가 **집합**이라 차례가 실행마다 달라져 같은 북이 `PYTHONHASHSEED` 에
+        따라 다른 Δbp 를 냈다(정렬로 고쳤다). 남은 절반이 이것이다: 국고+은행채 북의
+        축이 **은행채 커브 하나**인데 아무 표시가 없어서, 읽는 사람은 그 Δbp 를 북
+        전체의 것으로 읽는다. 2.5Y 구멍과 같은 부류의 결함이다 — 그럴듯한 수에
+        「한 다리의 것」이라는 표시가 없었다.
+        """
+        m, ds = live
+        entry = m.dates[-self.ENTRY_ROWS_BACK]
+        solo = cb.book_recon(
+            m, ds, [cb.BondPosition("ASW", "KTB", "3Y", 1, N, entry)], self.SPEC)
+        assert solo["axisTypes"] == ["KTB"], solo["axisTypes"]
+        assert set(solo["axisOf"].values()) == {"KTB"}
+        # 섞인 북 — 축이 한 종목군이라는 것이 **응답에 적혀 있다**.
+        mixed = cb.book_recon(
+            m, ds, [cb.BondPosition("ASW", "KTB", "3Y", 1, N, entry),
+                    cb.BondPosition("ASW", "BD", "5Y", 1, N, entry)], self.SPEC)
+        assert len(set(mixed["axisOf"].values())) == 1, (
+            "축이 여러 커브에서 오면 이 시험의 전제가 바뀐 것이다")
+        assert mixed["axisTypes"] and mixed["axisTypes"][0] in ("KTB", "BD")
+        # 그리고 **결정적**이다 — 같은 북을 두 번 돌리면 같은 축이다.
+        again = cb.book_recon(
+            m, ds, [cb.BondPosition("ASW", "KTB", "3Y", 1, N, entry),
+                    cb.BondPosition("ASW", "BD", "5Y", 1, N, entry)], self.SPEC)
+        assert again["axisOf"] == mixed["axisOf"]
+        # 표의 모든 노드가 축을 얻었는가(빈 노드는 `m.has` 가 없는 것뿐).
+        assert set(mixed["axisOf"]) <= set(mixed["tenors"])
+
+    def test_the_short_end_valuation_freezes_while_the_axis_moves(self, live):
+        """★짧은 끝의 열린 결함을 **고정**한다 [적대 검증 2026-09-28].
+
+        3M 자산스왑에서 `valuation == 0` 인데 스프레드 축은 그날 정수 bp 를 적는
+        행이 있다 — 2.5Y 구멍의 거울상이다(그때는 축이 0, 지금은 평가가 0). 고친
+        것이 아니라 **크기를 재 둔 것**이고, 이 시험이 빨개지면 둘 중 하나다:
+        누가 짧은 끝 마크를 고쳤거나(그러면 이 시험을 지워라), 더 번졌거나.
+        """
+        m, ds = live
+        entry = m.dates[-self.ENTRY_ROWS_BACK]
+        rec = cb.book_recon(
+            m, ds, [cb.BondPosition("ASW", "KTB", "3M", 1, N, entry)], self.SPEC
+        )
+        rows = [r for r in rec["rows"] if not r.get("carryover") and r["actual"] is not None][1:]
+        frozen = [r for r in rows if r["valuation"] == 0 and abs(r["residual"] or 0) > 1000]
+        assert frozen, "평가가 얼어 있는 행이 사라졌다 — 고쳐졌다면 이 시험을 지워라"
+        loss = sum(abs(r["residual"]) for r in frozen)
+        assert loss < 3_000_000, f"설명 없는 평가가 {loss:,.0f}원으로 커졌다"
+        # 그 행들은 축이 **움직인** 날이다(축이 빈 2.5Y 병과 다르다는 증거).
+        assert all(any(v for v in r["dbp"].values() if v) for r in frozen)
+        # 그리고 1Y 이상에는 그런 행이 없다 — 짧은 끝만의 병이다.
+        for tenor in ("1Y", "3Y", "10Y"):
+            rc = cb.book_recon(
+                m, ds, [cb.BondPosition("ASW", "KTB", tenor, 1, N, entry)], self.SPEC
+            )
+            rs = [r for r in rc["rows"] if not r.get("carryover") and r["actual"] is not None][1:]
+            assert not [r for r in rs if r["valuation"] == 0 and abs(r["residual"] or 0) > 1000], \
+                f"{tenor} 에도 얼어 있는 평가가 생겼다"
 
 
 class TestLegParts:
