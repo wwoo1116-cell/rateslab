@@ -1744,6 +1744,61 @@ class Test묶음_소계:
         f = paper.series_legs("fut", "FUT-KTB3", {"t": "2026-09-23", "v": 4.134, "legs": [4.134]})
         assert paper.my_series_level(f, [{"kind": "fut", "tenor": "3Y", "level": 4.13}]) == pytest.approx(4.13)
 
+    def test_장중_레벨로_다시_매긴다(self):
+        """★[OWNER 2026-09-28 — "지금 2년은 4.06, 5년은 4.27, 10년은 4.3375"].
+
+        마크는 종가인데 데스크는 장중에 산다 — 연휴 뒤 첫날엔 장부가 사흘 전 수에
+        묶인다. 친 값으로 **다시 매기되** 장부엔 안 적고, 종가가 아니라는 사실을
+        수와 같이 싣는다(`live`). 계열 값·밴드도 그 값 위에 서야 한다 — 마크만
+        바꾸고 밴드를 종가로 두면 한 줄이 두 시계를 말한다.
+        """
+        dates = _dates(26)
+        curve = [5.0] * 19 + [-4.0] + [1.0] * 6
+        pts = [{"t": d, "v": v, "legs": [4.16, 4.16 - v / 100.0]} for d, v in zip(dates, curve)]
+        KN = {"lookback": 20, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.0, "entryMode": "level"}
+        base = {"pnl": 0.0, "open": True, "dv01": 1e7, "notional": 1e10, "kind": "irs",
+                "entry": dates[19], "series": "IRC-5Y-10Y", "knobs": KN, "tag": "T"}
+        rows = [{**base, "n": 1, "tenor": "5Y", "rateSign": -1, "level": 4.145},
+                {**base, "n": 2, "tenor": "10Y", "rateSign": 1, "level": 4.195}]
+        mk = paper.parse_marks("irs:5Y=4.27;irs:10Y=4.3375")
+        assert mk == {("irs", "5Y"): 4.27, ("irs", "10Y"): 4.3375}
+
+        g = paper.group_legs(rows, points_of=lambda _s: pts, marks=mk)[0]
+        # 계열 값 = 100 × (10Y − 5Y) = 6.75bp · 내 레벨 5.00 → Δ +1.75
+        assert g["now"] == pytest.approx(6.75) and g["live"] is True
+        assert g["myLevel"] == pytest.approx(5.0) and g["delta"] == pytest.approx(1.75)
+        assert g["asof"] == dt.date.today().isoformat(), "장중이면 날은 오늘이다"
+        assert g["track"]["live"] is True and g["track"]["z"] is not None
+
+        # 종가로 보면 같은 장부가 다른 수다 — 그 차이가 이 기능의 값어치다.
+        g0 = paper.group_legs(rows, points_of=lambda _s: pts)[0]
+        assert g0["live"] is False and g0["now"] == pytest.approx(1.0)
+        assert g0["track"]["z"] != g["track"]["z"]
+
+        # 반쪽(한 다리만)은 계열 값을 안 만든다 — 두 시계를 섞지 않는다.
+        half = paper.group_series(rows, points_of=lambda _s: pts,
+                                  marks=paper.parse_marks("irs:5Y=4.27"))
+        assert half["live"] is False and half["now"] == pytest.approx(1.0)
+
+    def test_장중_레벨의_문(self):
+        assert paper.parse_marks(None) == {} and paper.parse_marks("  ") == {}
+        for bad, why in (("irs5Y=4", "꼴이 이상"), ("xxx:5Y=4", "모르는 계기"),
+                         ("irs:5Y=사", "숫자가 아니"), ("irs:5Y=99", "범위")):
+            with pytest.raises(paper.LegRejected, match=why):
+                paper.parse_marks(bad)
+
+    def test_라우트가_장중_레벨을_받는다(self, monkeypatch, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from app import main as M
+
+        monkeypatch.setattr(paper, "STORE", tmp_path / "book.json")
+        c = TestClient(M.app)
+        r = c.get("/api/paper", params={"marks": "irs:5Y=xx"})
+        assert r.status_code == 422 and "숫자가 아니" in r.json()["detail"]
+        ok = c.get("/api/paper", params={"marks": ""})
+        assert ok.status_code == 200 and ok.json()["live"] is None
+
     def test_시트가_묶음과_전체_명목을_싣는다(self):
         leg_of, _d, _v = _leg_of(120)
         st = dict(paper.EMPTY, legs=[])

@@ -415,7 +415,7 @@ function SubtotalRow({ group: g, busy, collapsed, onToggle, onTrace }: {
               {seriesWord(g.now, g.unit)}
             </Text>
             <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
-              {g.asof ? `${g.asof} 종가` : ''}
+              {g.asof ? `${g.asof} ${g.live ? '장중' : '종가'}` : ''}
             </Text>
           </VStack>
         ) : blank}
@@ -667,7 +667,11 @@ function PositionTable({
                       : (l.exitLevel == null ? MINUS : l.exitLevel.toFixed(3))}
                   </Text>
                   <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
-                    {l.open && l.markT && l.markT !== l.entry ? `${l.markT} 종가` : ''}
+                    {/* 장중 레벨로 덮인 마크는 **종가가 아니다** — 낱말이 그걸 말해야
+                        다음 사람이 이 수를 종가로 읽지 않는다 [OWNER 2026-09-28]. */}
+                    {!l.open || !l.markT ? ''
+                      : l.live ? `${l.markT} 장중`
+                        : l.markT !== l.entry ? `${l.markT} 종가` : ''}
                   </Text>
                 </VStack>
               </TableCell>
@@ -831,6 +835,12 @@ export function PortfolioPage() {
   const [resetArm, setResetArm] = useState(false);
   /** 열린 추적 창 — 묶음(트레이드) 하나의 다리 번호들 [OWNER 2026-09-28]. */
   const [trace, setTrace] = useState<{ ns: number[]; title: string }>();
+  /** ★**장중 레벨** [OWNER 2026-09-28 — "지금 2년은 4.06, 5년은 4.27, 10년은 4.3375"].
+   *  이 장부의 마크는 종가인데 데스크는 장중에 산다 — 연휴 뒤 첫날처럼 종가가 아직
+   *  없는 날 장부는 사흘 전 수에 묶인다. 지금 보는 금리를 치면 **서버가** 그 값으로
+   *  다시 매겨 보낸다(§16 — 화면은 글자를 보내고 수를 받는다). 장부엔 안 적힌다.
+   *  열쇠는 `계기:만기` 이고 값은 친 글자 그대로다(빈 칸은 안 보낸다). */
+  const [liveLv, setLiveLv] = useState<Record<string, string>>({});
 
   /* ── 칸 폭은 **옵션 집합의 합집합**에서 [OWNER 2026-09-23] ─────────────────
      진단에서 이 줄의 **열두 칸이 전부** T1(죽은 폭 ≤16px)을 실패했다(21~130px).
@@ -855,6 +865,8 @@ export function PortfolioPage() {
     ctlFont,
     150,
   );
+  /** 장중 레벨 칸의 폭 — 금리는 네 자리까지 친다(4.3375). */
+  const liveW = fitWidth('input', ['9.9999'], ctlFont, 96);
   /* 표 **안**의 청산 칸 둘 — 오늘 넣은 칸이고 손 상수였다. 날짜는 열 글자라
      104 로는 글자 자리가 모자랐다(70 < 73.2). 같은 규칙으로 유도한다. */
   const exitDateW = fitWidth('input', ['2026-09-23'], ctlFont, 104);
@@ -896,20 +908,31 @@ export function PortfolioPage() {
     fetchInstruments().then(setInst).catch(() => setInst(undefined));
   }, []);
 
+  /** 보낼 장중 레벨 — `irs:5Y=4.27;irs:10Y=4.3375`. 빈 칸과 숫자가 아닌 글자는
+   *  안 보낸다(서버가 422 로 거절하는 대신 화면이 그 칸만 조용히 종가로 둔다 —
+   *  치는 중인 글자마다 붉은 줄이 서면 못 친다). */
+  const marksSpec = Object.entries(liveLv)
+    .filter(([, v]) => v.trim() !== '' && Number.isFinite(Number(v)))
+    .map(([k, v]) => `${k}=${Number(v)}`)
+    .sort()
+    .join(';');
+
   const load = useCallback(() => {
     setError(undefined);
     setUnavailable(false);
-    fetchPaper()
+    fetchPaper(marksSpec || undefined)
       .then(setSheet)
       .catch((e: unknown) => {
         if (e instanceof BacktestUnavailable) setUnavailable(true);
         else setError(e instanceof Error ? e.message : String(e));
       });
-  }, []);
+  }, [marksSpec]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    /* 자판이 멈춘 뒤에 묻는다 — 한 글자마다 한 번씩 물으면 서버가 계열을 그만큼 읽는다. */
+    const t = setTimeout(load, marksSpec ? 350 : 0);
+    return () => clearTimeout(t);
+  }, [load, marksSpec]);
 
 
   /* 쓰기 한 벌 — 응답이 곧 새 장부라 다시 묻지 않는다. */
@@ -920,10 +943,13 @@ export function PortfolioPage() {
       .then((s) => {
         setSheet(s);
         setNote(ok);
+        /* 쓰기 응답은 **종가로** 매겨져 온다(쓰기 라우트는 장중 레벨을 안 받는다 —
+           장부는 체결과 종가만 안다). 장중으로 보고 있었으면 다시 물어 덮는다. */
+        if (marksSpec) load();
       })
       .catch((e: unknown) => setNote(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
-  }, []);
+  }, [marksSpec, load]);
 
   /* ── 그날의 1등 [OWNER 2026-09-23 — "들어간 시점에서의 최적 파라미터로"] ──
      선택지에서 **「손으로 치되 1등을 제안」**을 고르셨다. 그래서 이 줄은 고르지
@@ -990,6 +1016,20 @@ export function PortfolioPage() {
     return <ErrorState what="페이퍼 북" detail={sheet.why ?? '못 세웠어요'} onRetry={load} />;
   }
 
+  /** 장중 레벨을 물을 계기들 — **들고 있는 다리**에서 나온다(차례는 표의 차례).
+   *  마크는 그 칸의 플레이스홀더가 되어 「종가는 이거였다」를 같이 말한다. */
+  const liveKinds = (() => {
+    const seen = new Map<string, { key: string; label: string; mark: number | null }>();
+    for (const l of sheet.position.legs) {
+      if (!l.open) continue;
+      const key = `${l.kind}:${l.tenor}`;
+      if (!seen.has(key)) {
+        seen.set(key, { key, label: `${KIND_WORD[l.kind] ?? l.kind} ${l.tenor}`, mark: l.mark });
+      }
+    }
+    return [...seen.values()];
+  })();
+
   return (
     <VStack gap={1.5} width="100%" flexGrow={1} minHeight={0}>
       {/* ── 조건 바 ─────────────────────────────────────────────────────── */}
@@ -1018,6 +1058,19 @@ export function PortfolioPage() {
               하나로 사라지면 그건 사고가 아니라 설계다.
               ⚠ 지우는 것이 아니라 **치우는 것**이다 — 옛 장부는 서버가
               `data/paper_archive/` 에 시각 도장을 찍어 남긴다. */}
+          {/* ★장중으로 보고 있으면 **그 사실이 먼저** 선다 [OWNER 2026-09-28] —
+              이 수는 종가가 아니고 장부에도 없다. 되돌리는 손잡이가 같이 있어야
+              한 번 친 값에 갇히지 않는다. */}
+          {sheet.live?.length ? (
+            <>
+              <Cond k="장중 레벨" v={sheet.live.map((m) => `${m.tenor} ${m.level.toFixed(4)}`).join(' · ')} strong />
+              <button type="button" className="sr-pillbtn" data-outline=""
+                disabled={busy}
+                onClick={() => setLiveLv({})}>
+                종가로 되돌리기
+              </button>
+            </>
+          ) : null}
           <button
             type="button"
             className="sr-pillbtn"
@@ -1107,6 +1160,34 @@ export function PortfolioPage() {
           <Box paddingX={2} paddingBottom={1}>
             <PortfolioStrip p={sheet.position} />
           </Box>
+          {/* ★장중 레벨 줄 [OWNER 2026-09-28 — "지금 2년은 4.06, 5년은 4.27,
+              10년은 4.3375"]. 칸은 **이 북이 실제로 들고 있는 계기**에서 나온다 —
+              화면이 만기 목록을 손으로 적으면 안 쥔 만기 칸이 생긴다. 친 값은
+              서버로 가고(§16) 장부엔 안 적힌다. */}
+          {liveKinds.length > 0 ? (
+            <HStack paddingX={2} paddingBottom={1} gap={GAP.field}
+              alignItems="flex-end" flexWrap="wrap">
+              <Text font="caption" as="span" color="fgMuted" noWrap
+                style={{ alignSelf: 'center' }}>
+                장중 레벨 (%)
+              </Text>
+              {liveKinds.map((k) => (
+                <Box key={k.key} width={liveW}>
+                  <Field label={k.label}
+                    help="지금 보는 금리를 치면 그 값으로 다시 매겨요 — 종가가 아니고 장부에도 안 적혀요. 비우면 종가로 돌아가요.">
+                    <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                      accessibilityLabel={`${k.label} 장중 레벨 (%)`}
+                      value={liveLv[k.key] ?? ''}
+                      placeholder={k.mark == null ? '레벨' : k.mark.toFixed(4)}
+                      disabled={busy}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                        setLiveLv((m) => ({ ...m, [k.key]: e.target.value }))}
+                    />
+                  </Field>
+                </Box>
+              ))}
+            </HStack>
+          ) : null}
           <PositionTable
             legs={sheet.position.legs}
             groups={sheet.position.groups ?? []}

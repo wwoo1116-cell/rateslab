@@ -101,6 +101,11 @@ export interface PaperSheet {
   today: string;
   costBp: number;
   notional: number;
+  /** ★**장중 레벨로 보고 있는가** [OWNER 2026-09-28 — "지금 2년은 4.06, 5년은 4.27,
+   *  10년은 4.3375"]. 이 장부의 마크는 종가인데 데스크는 장중에 산다 — 지금 보는
+   *  금리를 치면 서버가 그 값으로 다시 매겨 보내고, 이 칸이 무엇을 덮었는지 적는다.
+   *  **장부엔 안 적힌다**(저장 경로가 없다). `null` 이면 종가로 보고 있는 것이다. */
+  live?: { kind: string; tenor: string; level: number }[] | null;
   rule: {
     enrolled: number;
     retired: number;
@@ -203,6 +208,8 @@ export interface PaperPositionGroup {
   myBasis?: 'fill' | 'close' | null;
   /** 지금 − 내 레벨 (계열 단위) — 「얼마나 벌어졌나」. */
   delta?: number | null;
+  /** 계열 값이 **장중 레벨** 위에 섰는가 — 다리가 전부 덮였을 때만 참이다. */
+  live?: boolean;
   /** 묶음의 조건(조건 있는 첫 다리) · 다리마다 다르면 `knobsMixed`. */
   knobs?: PaperLegKnobs | null;
   knobsMixed?: boolean;
@@ -341,6 +348,8 @@ export interface PaperPositionLeg {
    *  `backend/app/paper.py::score_leg` 머리). 그때 `pnl` 은 `null` 이고 사유가
    *  `why` 에 선다. */
   markT: string | null;
+  /** 이 마크가 **장중 레벨**인가(내가 친 값) — 종가가 아니라는 사실은 수와 같이 간다. */
+  live?: boolean;
   bp: number | null;
   gross: number | null;
   cost: number | null;
@@ -367,8 +376,8 @@ export interface PaperInstruments {
   }[];
 }
 
-export async function fetchPaper(): Promise<PaperSheet> {
-  const r = await fetch(paperUrl());
+export async function fetchPaper(marks?: string): Promise<PaperSheet> {
+  const r = await fetch(paperUrl(marks));
   if (r.status === 404) throw new BacktestUnavailable();
   if (!r.ok) {
     const detail = (await r.json().catch(() => null)) as { detail?: string } | null;
@@ -613,8 +622,9 @@ export interface PaperTrace {
   };
 }
 
-export async function fetchTrace(ns: readonly number[], signal?: AbortSignal): Promise<PaperTrace> {
-  const r = await fetch(paperTraceUrl(ns), { signal });
+export async function fetchTrace(ns: readonly number[], signal?: AbortSignal,
+                                 marks?: string): Promise<PaperTrace> {
+  const r = await fetch(paperTraceUrl(ns, marks), { signal });
   if (r.status === 404) throw new BacktestUnavailable();
   if (!r.ok) {
     const detail = (await r.json().catch(() => null)) as { detail?: string } | null;

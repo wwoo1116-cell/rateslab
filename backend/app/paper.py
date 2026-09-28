@@ -266,6 +266,75 @@ def series_legs(kind: str, sid: str, last: dict,
     return {"scale": scale, "legs": legs}
 
 
+# ── 장중 레벨 [OWNER 2026-09-28 — "지금 2년은 4.06, 5년은 4.27, 10년은 4.3375"] ──
+#
+# 이 장부의 마크는 **종가**다(`score_leg` 머리). 그런데 데스크는 장중에 산다 —
+# 연휴 뒤 첫날처럼 종가가 아직 없고 시장은 17bp 움직인 날, 장부는 연휴 전 종가에
+# 묶여 「−5,500만원」이라고 적고 있다. 그건 틀린 수가 아니라 **오래된 수**다.
+#
+# 그래서 「장중 레벨로 보기」를 둔다: 트레이더가 지금 보는 금리를 치면 그 값으로
+# 북을 **다시 매겨** 보여 준다. 규율 셋이 이 기능을 안전하게 만든다.
+#
+#   ① **장부에 안 적는다.** 오는 길은 질의 문자열이고 저장 경로가 없다 — 체결이
+#      아니라 「지금 이러면 얼마인가」이고, 장부는 체결과 종가만 안다.
+#   ② **산술은 서버가 한다**(§16). 화면은 친 글자를 보내고 받은 수를 적는다.
+#   ③ **종가가 아니라고 화면이 말한다.** 마크의 날 대신 `live` 가 서고, 화면이
+#      「장중 · 내가 친 값」을 적는다. 이 구분이 없으면 다음 사람이 이 수를 종가로
+#      읽고, 그게 이 리포가 반복해서 밟은 「그럴듯하게 틀린 수」다.
+
+def parse_marks(spec: str | None) -> dict[tuple[str, str], float]:
+    """`irs:5Y=4.27;irs:10Y=4.3375` → `{("irs","5Y"): 4.27, …}`.
+
+    계기와 만기는 다리의 그것과 **같은 낱말**이어야 한다(`check_leg` 의 그 목록) —
+    모르는 낱말은 조용히 버리지 않고 사유를 들고 죽는다(오타 하나가 「안 먹힌 장중
+    레벨」을 만들고, 화면은 종가를 장중이라 적게 된다).
+    """
+    out: dict[tuple[str, str], float] = {}
+    if not spec or not spec.strip():
+        return out
+    for part in spec.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        head, sep, val = part.partition("=")
+        kind, sep2, tenor = head.strip().partition(":")
+        if not sep or not sep2:
+            raise LegRejected(f"장중 레벨의 꼴이 이상해요: {part!r} (irs:5Y=4.27)")
+        kind, tenor = kind.strip().lower(), tenor.strip()
+        if kind not in LEG_KINDS:
+            raise LegRejected(f"모르는 계기예요: {kind} ({' | '.join(LEG_KINDS)})")
+        try:
+            lv = float(val)
+        except ValueError:
+            raise LegRejected(f"장중 레벨이 숫자가 아니에요: {val!r}") from None
+        if not -10.0 <= lv <= 30.0:
+            raise LegRejected(f"장중 레벨이 범위를 벗어나요: {lv} (−10~30%)")
+        out[(kind, tenor)] = lv
+    return out
+
+
+def marked_table(table: dict, marks: dict[tuple[str, str], float]) -> dict:
+    """다리 표에 장중 레벨을 얹은 사본 — 안 친 다리는 그대로 종가다."""
+    legs = [{**l, "v": marks.get((l["kind"], l["tenor"]), l["v"]),
+             "live": (l["kind"], l["tenor"]) in marks}
+            for l in table["legs"]]
+    return {**table, "legs": legs}
+
+
+def live_series_value(table: dict) -> float | None:
+    """장중 계열 값 — 계열의 다리가 **전부** 장중 레벨로 덮였을 때만 선다.
+
+    반쪽이면 `None` 이다: 한 다리는 지금 값, 한 다리는 사흘 전 종가로 만든 스프레드는
+    그 계열의 값이 아니라 두 시계를 섞은 수다(이 리포가 페이퍼 북에서 이미 밟은
+    「체결은 장중·마크는 종가」의 그 병).
+    """
+    if not any(l.get("live") for l in table["legs"]):
+        return None
+    if not all(l.get("live") for l in table["legs"]):
+        return None
+    return round(sum(l["w"] * float(l["v"]) for l in table["legs"]) * table["scale"], 4)
+
+
 def _bundle_irs(tenor: str, day: str) -> float | None:
     """플라이 다리의 IRS 레벨 — `mrseries.bundle()` 에서(지연 import, 순환 회피).
     없는 만기·없는 날은 `None` — 지어내지 않는다."""
@@ -291,7 +360,9 @@ def leg_level_for(table: dict, my_kind: str, my_tenor: str, target: float
 
 def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
               *, irs_of: Callable[[str, str], float | None] | None = None,
-              cost_bp: float = COST_BP) -> dict[str, Any] | None:
+              cost_bp: float = COST_BP,
+              marks: dict[tuple[str, str], float] | None = None,
+              unit: str | None = None) -> dict[str, Any] | None:
     """얼린 조건으로 **지금** 청산·손절에 닿았는가 [OWNER 2026-09-23].
 
     ## 엔진과 **같은 규칙**을 쓴다 — 두 벌이면 장부가 거짓말을 한다
@@ -328,20 +399,35 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
                 "exitLevel": None, "stopLevel": None,
                 "exitGap": None, "stopGap": None,
                 "mine": None, "mineWhy": None,
-                "entryV": None, "legsNow": None, "nearest": None}
+                "entryV": None, "legsNow": None, "nearest": None, "live": False}
 
-    unit: str | None = None
     try:
         if points_of is not None:
             pts = points_of(sid)
         else:
             body = mr_mod.series_points(sid)
             pts = body["points"]
-            unit = body.get("unit")
+            unit = unit or body.get("unit")
     except Exception as exc:                      # noqa: BLE001 — 사유를 싣고 산다
         return blank(f"계열을 못 읽었어요: {exc}")
     dates = [p["t"] for p in pts]
     vals = [float(p["v"]) for p in pts]
+    # ── 장중 레벨 [OWNER 2026-09-28] — **봉 하나를 더 얹는다** ──────────────
+    # 계열의 다리가 전부 장중 레벨로 덮이면 그 값으로 오늘 봉을 만들어 뒤에 붙인다.
+    # 그러면 z·밴드·청산선·손절선이 전부 「지금」의 것이 된다 — 마크만 바꾸고 밴드는
+    # 종가로 두면 화면이 한 줄 안에서 두 시계를 말하게 된다.
+    kind = {s: k for s, _l, k in mr_mod.SERIES}.get(sid)
+    if irs_of is None and points_of is None and kind == "irf":
+        irs_of = _bundle_irs
+    table = series_legs(kind or "", sid, pts[-1], irs_of) if kind else None
+    live_v: float | None = None
+    if marks and table is not None:
+        table = marked_table(table, marks)
+        live_v = live_series_value(table)
+        if live_v is not None:
+            today = date.today().isoformat()
+            dates = [*dates, today if today > dates[-1] else dates[-1]]
+            vals = [*vals, live_v]
     z = mrbt.rolling_series(vals, lb)["z"]
     entry = str(leg.get("entry") or "")
     at = [i for i, t in enumerate(dates) if t <= entry]
@@ -384,10 +470,6 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
     # ── 내 다리의 레벨로 [OWNER 2026-09-28] — 위 절의 그 식 ──────────────────
     mine: dict[str, Any] | None = None
     mine_why: str | None = None
-    kind = {s: k for s, _l, k in mr_mod.SERIES}.get(sid)
-    if irs_of is None and points_of is None and kind == "irf":
-        irs_of = _bundle_irs
-    table = series_legs(kind or "", sid, pts[-1], irs_of) if kind else None
     if table is None:
         mine_why = "계열의 다리 레벨을 못 읽었어요 — 계열 값으로 적어요"
     else:
@@ -447,6 +529,8 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
         # 계열 값으로 말할 때 쓴다(`group_series`).
         "entryV": round(vals[i0], 4),
         "legsNow": None if table is None else table["legs"],
+        # 이 판정이 **장중 레벨** 위에 섰는가 — 종가가 아니라는 사실은 수와 같이 간다.
+        "live": live_v is not None,
         # 두 문 중 **가까운 쪽** — 화면이 두 수를 견줘 고르지 않게(§16). 거리는 계열
         # 단위이고 살아 있으면 양수다. 같으면 손절이 이름을 갖는다(엔진의 우선순위).
         "nearest": (
@@ -825,7 +909,8 @@ def sum_legs(rows: list[dict], *, key: str, label: str, total: bool = False) -> 
 
 def series_snapshot(sid: str, entry: str, *,
                     points_of: Callable[[str], list[dict]] | None = None,
-                    irs_of: Callable[[str, str], float | None] | None = None
+                    irs_of: Callable[[str, str], float | None] | None = None,
+                    marks: dict[tuple[str, str], float] | None = None
                     ) -> dict[str, Any]:
     """계열의 **지금과 진입일** — 조건이 없어도 선다.
 
@@ -835,6 +920,7 @@ def series_snapshot(sid: str, entry: str, *,
     """
     kind = {s: k for s, _l, k in mr_mod.SERIES}.get(sid)
     empty: dict[str, Any] = {"series": sid, "unit": None, "asof": None, "now": None,
+                             "live": False,
                              "entryT": None, "entryV": None, "table": None, "why": None}
     if kind is None:
         return {**empty, "why": f"모르는 계열이에요: {sid}"}
@@ -853,14 +939,21 @@ def series_snapshot(sid: str, entry: str, *,
     if irs_of is None and points_of is None and kind == "irf":
         irs_of = _bundle_irs
     at = [p for p in pts if p["t"] <= entry]
+    table = series_legs(kind, sid, pts[-1], irs_of)
+    # 장중 레벨이 계열의 다리를 **전부** 덮으면 「지금」이 그 값이고 날은 오늘이다.
+    live_v = None
+    if marks and table is not None:
+        table = marked_table(table, marks)
+        live_v = live_series_value(table)
     return {
         "series": sid,
         "unit": unit or ("%" if kind == "fut" else "bp"),
-        "asof": pts[-1]["t"],
-        "now": round(float(pts[-1]["v"]), 4),
+        "asof": date.today().isoformat() if live_v is not None else pts[-1]["t"],
+        "now": live_v if live_v is not None else round(float(pts[-1]["v"]), 4),
+        "live": live_v is not None,
         "entryT": at[-1]["t"] if at else None,
         "entryV": round(float(at[-1]["v"]), 4) if at else None,
-        "table": series_legs(kind, sid, pts[-1], irs_of),
+        "table": table,
         "why": None,
     }
 
@@ -887,7 +980,8 @@ def my_series_level(table: dict, rows: list[dict]) -> float | None:
 def group_series(rows: list[dict], *,
                  points_of: Callable[[str], list[dict]] | None = None,
                  irs_of: Callable[[str, str], float | None] | None = None,
-                 cost_bp: float = COST_BP) -> dict[str, Any]:
+                 cost_bp: float = COST_BP,
+                 marks: dict[tuple[str, str], float] | None = None) -> dict[str, Any]:
     """묶음의 **계열 시선** [OWNER 2026-09-28 — "묶음으로 지금 얼마나 벌어져있는지 왜
     안알려줘?"].
 
@@ -903,6 +997,7 @@ def group_series(rows: list[dict], *,
     """
     out: dict[str, Any] = {
         "series": None, "seriesWhy": None, "unit": None, "asof": None, "now": None,
+        "live": False,
         "entryT": None, "entryV": None, "myLevel": None, "myBasis": None, "delta": None,
         "knobs": None, "knobsMixed": False, "track": None,
     }
@@ -920,11 +1015,11 @@ def group_series(rows: list[dict], *,
     if kn:
         out["knobs"] = kn[0]
         out["knobsMixed"] = any(k != kn[0] for k in kn[1:])
-    snap = series_snapshot(sid, entry, points_of=points_of, irs_of=irs_of)
+    snap = series_snapshot(sid, entry, points_of=points_of, irs_of=irs_of, marks=marks)
     if snap["why"]:
         out["seriesWhy"] = snap["why"]
         return out
-    out.update({k: snap[k] for k in ("unit", "asof", "now", "entryT", "entryV")})
+    out.update({k: snap[k] for k in ("unit", "asof", "now", "live", "entryT", "entryV")})
     my = my_series_level(snap["table"], rows) if snap["table"] else None
     if my is not None:
         out["myLevel"], out["myBasis"] = my, "fill"
@@ -935,7 +1030,7 @@ def group_series(rows: list[dict], *,
     if out["knobs"]:
         out["track"] = track_leg({"entry": entry, "knobs": out["knobs"], "series": sid,
                                   "kind": "", "tenor": ""},
-                                 points_of, irs_of=irs_of, cost_bp=cost_bp)
+                                 points_of, irs_of=irs_of, cost_bp=cost_bp, marks=marks)
     return out
 
 
@@ -946,7 +1041,8 @@ PATH_LEAD = 20
 
 def series_path(sid: str, entry: str, knobs: dict, *,
                 points_of: Callable[[str], list[dict]] | None = None,
-                lead: int = PATH_LEAD) -> dict[str, Any]:
+                lead: int = PATH_LEAD,
+                marks: dict[tuple[str, str], float] | None = None) -> dict[str, Any]:
     """계열의 **경로** — 진입일 앞 `lead` 봉부터 오늘까지의 값과, 그날그날의 중심선·
     청산선·손절선 [OWNER 2026-09-28 — "추적 … 정교화"].
 
@@ -978,6 +1074,15 @@ def series_path(sid: str, entry: str, knobs: dict, *,
         return {**empty, "why": f"계열을 못 읽었어요: {exc}"}
     dates = [p["t"] for p in pts]
     vals = [float(p["v"]) for p in pts]
+    # 장중 레벨이 계열을 전부 덮으면 **오늘 봉**을 얹는다 — 경로의 끝이 지금이다.
+    if marks:
+        tbl = series_legs(kind, sid, pts[-1],
+                          _bundle_irs if (points_of is None and kind == "irf") else None)
+        lv = live_series_value(marked_table(tbl, marks)) if tbl is not None else None
+        if lv is not None:
+            today = date.today().isoformat()
+            dates = [*dates, today if today > dates[-1] else dates[-1]]
+            vals = [*vals, lv]
     at = [i for i, t in enumerate(dates) if t <= entry]
     if not at:
         return {**empty, "why": "진입일이 계열 표본보다 앞서요"}
@@ -1466,7 +1571,8 @@ def build_sheet(*, leg_of: Callable[..., dict],
                 account_of: Callable[..., bool] | None = None,
                 mark_of: Callable[[str, str], tuple[str | None, float | None]] | None = None,
                 store: dict[str, Any] | None = None,
-                cost_bp: float = COST_BP) -> dict[str, Any]:
+                cost_bp: float = COST_BP,
+                marks: dict[tuple[str, str], float] | None = None) -> dict[str, Any]:
     """페이퍼 북 한 장 — 규칙 북 · 수동 북 · 둘의 차이.
 
     한 다리가 죽어도 나머지는 선다(`why` 에 사유가 남는다). 25계열을 도는 물건이
@@ -1520,11 +1626,17 @@ def build_sheet(*, leg_of: Callable[..., dict],
                 failed.append({"id": f"leg{lg['n']}", "why": str(exc)})
         if mark_t:
             mark_days.append(mark_t)
+        # 장중 레벨이 이 계기를 덮으면 **그 값으로** 매긴다 — 날은 오늘이고,
+        # 종가가 아니라는 사실은 `live` 가 진다(장부엔 안 적힌다).
+        live_lv = (marks or {}).get((lg["kind"], lg["tenor"]))
+        if live_lv is not None:
+            mark, mark_t = live_lv, _dt.date.today().isoformat()
         row = score_leg(lg, mark, cost_bp=cost_bp, mark_t=mark_t)
+        row["live"] = live_lv is not None
         # ── 추적 — **들고 있는 다리만** [OWNER 2026-09-23] ─────────────────
         # 닫힌 다리에 「청산 닿음」을 적는 것은 지난 일을 오늘 일처럼 적는 것이다.
         # 계열이나 조건이 없으면 `None` 이고, 화면이 그 사실을 그대로 적는다.
-        row["track"] = track_leg(lg) if row["open"] else None
+        row["track"] = track_leg(lg, marks=marks) if row["open"] else None
         pos_legs.append(row)
 
     rule_daily = merge_daily(rule_legs)
@@ -1550,6 +1662,10 @@ def build_sheet(*, leg_of: Callable[..., dict],
         "today": _dt.date.today().isoformat(),
         "costBp": cost_bp,
         "notional": NOTIONAL,
+        # ★장중 레벨로 보고 있는가 [OWNER 2026-09-28] — 화면이 「종가가 아니에요」를
+        # 적는 자리. 친 값도 같이 싣는다(무엇을 덮었는지 읽는 사람이 봐야 한다).
+        "live": ([{"kind": k, "tenor": t, "level": v}
+                  for (k, t), v in sorted((marks or {}).items())] or None),
         "rule": {
             "enrolled": len(live),
             "retired": len(st["enrolled"]) - len(live),
@@ -1596,7 +1712,7 @@ def build_sheet(*, leg_of: Callable[..., dict],
                                       if l["open"]), 2),
             # ★묶음(트레이드) 소계 [OWNER 2026-09-28] — 서버가 센다(§16). 화면은
             # 이 차례로 줄을 세우고 수를 읽기만 한다.
-            "groups": (groups := group_legs(pos_legs)),
+            "groups": (groups := group_legs(pos_legs, marks=marks)),
             "trades": len(groups),
             "tradesOpen": sum(1 for g in groups if g["open"] > 0),
             # ★**가장 가까운 문** — 열린 묶음들 중 청산·손절선에 제일 가까운 하나.

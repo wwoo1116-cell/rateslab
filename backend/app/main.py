@@ -3411,7 +3411,7 @@ def _mr_cache_key() -> str:
     return f"{_dataset.data_key}|{mrs.watermark()}"
 
 
-def _paper_sheet() -> dict:
+def _paper_sheet(marks: dict | None = None) -> dict:
     """한 장 굽기 — 등록한 것만 도는 물건이라 **동기**로 끝난다.
 
     ★`available` 을 **여기서** 단다 [수리 2026-09-22]. 종전에는 GET 라우트만
@@ -3425,18 +3425,32 @@ def _paper_sheet() -> dict:
     memo: dict = {}
     return {"available": True,
             **paper.build_sheet(leg_of=_paper_leg, account_of=_paper_account,
-                                mark_of=lambda k, t: _paper_mark(k, t, memo))}
+                                mark_of=lambda k, t: _paper_mark(k, t, memo),
+                                marks=marks)}
+
+
+def _paper_marks(spec: str | None) -> dict:
+    """질의의 장중 레벨 — 사유는 422 다(`paper.parse_marks` 의 그 문)."""
+    try:
+        return paper.parse_marks(spec)
+    except paper.LegRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/api/paper")
-def paper_book() -> dict:
+def paper_book(marks: str = "") -> dict:
     """페이퍼 북 한 장 — 규칙 북 · 수동 북 · 둘의 차이.
 
     계획면(`/api/mr/plan`)이 **표본내**를 말한다면 이 화면은 **표본밖**을 말한다:
     등록하는 순간 조건이 얼고, 그 뒤로는 시장만 움직인다.
+
+    `marks` 는 **장중 레벨**이다 [OWNER 2026-09-28] — `irs:5Y=4.27;irs:10Y=4.3375`.
+    주면 그 계기의 마크·계열 값·밴드·청산/손절이 전부 그 값 위에 서고, 응답의
+    `live` 가 「종가가 아니다」를 진다. **장부에는 안 적힌다**(저장 경로가 없다).
     """
+    got = _paper_marks(marks)
     try:
-        return _paper_sheet()                          # `available` 은 그 안에서 단다
+        return _paper_sheet(got)                       # `available` 은 그 안에서 단다
     except BaseException as exc:                       # noqa: BLE001
         logging.getLogger("sauron.paper").warning("[paper] 못 세웠어요: %s", exc)
         return {"available": False, "why": f"페이퍼 북을 못 세웠어요 — {exc}"}
@@ -3566,7 +3580,7 @@ def paper_add_leg(body: dict) -> dict:
 
 
 @router.get("/api/paper/trace")
-def paper_trace(legs: str) -> dict:
+def paper_trace(legs: str, marks: str = "") -> dict:
     """트레이드 추적 — 다리들을 **백테스트 엔진에 실어** 진입일부터 분해한다
     [OWNER 2026-09-28 — "그 트레이드를 클릭했을 때 진입일 시점부터 PnL 을 분해시켜서
     트레이스가 가능하게"].
@@ -3628,9 +3642,10 @@ def paper_trace(legs: str) -> dict:
     # ★묶음의 계열 시선과 **계열 경로** [OWNER 2026-09-28 — "추적 … 정교화"]. 창의
     # 머리띠(내 레벨·지금·Δ·z)와 「계열이 어디서 들어와 어디까지 왔나」 그림의 재료.
     # 계열이나 조건이 없으면 각자 `why` 를 들고 비어 온다 — 창이 그 사실을 적는다.
-    gview = paper.group_series(picked)
+    mk = _paper_marks(marks)
+    gview = paper.group_series(picked, marks=mk)
     path = (paper.series_path(gview["series"], min(str(lg["entry"]) for lg in picked),
-                              gview["knobs"])
+                              gview["knobs"], marks=mk)
             if gview.get("series") and gview.get("knobs")
             else {"series": gview.get("series"), "why": gview.get("seriesWhy")
                   or "조건이 있는 다리가 없어요 — 밴드를 못 그려요"})
