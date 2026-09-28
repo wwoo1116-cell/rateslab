@@ -207,6 +207,10 @@ export const paperCloseUrl = () => liveUrl("/api/paper/close");
  * 없어야** 하기 때문이다(선물 2Y·현물 매도를 화면이 만들어 내던 자리). */
 export const paperLegUrl = () => liveUrl("/api/paper/leg");
 export const paperLegCloseUrl = () => liveUrl("/api/paper/leg/close");
+export const paperLegKnobsUrl = () => liveUrl("/api/paper/leg/knobs");
+/** 트레이드 추적 — 다리들을 백테스트 엔진에 실어 진입일부터 분해 [OWNER 2026-09-28]. */
+export const paperTraceUrl = (ns: readonly number[]) =>
+  liveUrl("/api/paper/trace", `legs=${ns.join(",")}`);
 export const paperInstrumentsUrl = () => liveUrl("/api/paper/instruments");
 /** 그날의 1등 — 계열을 진입일까지의 자료로 격자에 돌린 순위 [OWNER 2026-09-23]. */
 export const paperSuggestUrl = (series: string, entry: string) =>

@@ -56,12 +56,14 @@ import { DROPDOWN_STYLES } from '@/ui/window/popup';
  * `retireSeries` 는 계약(`api.ts`)과 라우트에 그대로 살아 있고 여기서만 안 부른다
  * [OWNER 2026-09-22 — "지금은 일단"]. 되살릴 때 임포트만 되돌리면 된다. */
 import {
-  addLeg, closeLeg, fetchInstruments, fetchPaper, fetchSuggest, resetBook,
+  addLeg, attachKnobs, closeLeg, fetchInstruments, fetchPaper, fetchSuggest,
+  knobsComplete, resetBook,
   type PaperInstruments, type PaperLegTrack,
-  type PaperPositionLeg,
+  type PaperPositionGroup, type PaperPositionLeg,
   type PaperSheet, type PaperSuggest,
 } from './api';
 import { suggestLine } from './suggestLine';
+import { TraceWindow } from './TraceWindow';
 import { knobWord } from './words';
 
 const MINUS = '−';
@@ -155,8 +157,192 @@ function TrackCell({ track, open }: { track: PaperLegTrack | null; open: boolean
   );
 }
 
-function PositionTable({ legs, busy, today, exitDateW, exitLevelW, onClose }: {
-  legs: PaperPositionLeg[]; busy: boolean;
+/**
+ * 청산·손절 **레벨** [OWNER 2026-09-28 — "언제 손절, 익절인지 레벨로 표시해주기로
+ * 했었는데 어디간거임?"].
+ *
+ * 09-23 판은 z 만 적었다(옆 「밴드」 칸). 이 칸은 그 두 문을 **오늘 밴드의 값**으로
+ * 푼 것이다 — 서버가 `중심선 ± 배수·σ` 로 번역해 보낸다(`track_leg`). 계열의 자기
+ * 단위라(BSS·커브 bp · 선물 %) 단위를 수 옆에 적고, 진입한 쪽의 선 하나씩만
+ * 적는다(중심선을 지나 반대편 손절선까지 가려면 청산선을 먼저 지난다).
+ * 중심선과 σ 가 매일 움직이니 두 수도 매일 바뀐다 — 「데일리로」의 뜻이다.
+ *
+ * 못 재면(조건·계열 없음, 창 미달) «—» 다. 사유는 옆 「밴드」 칸이 이미 적는다 —
+ * 같은 말을 두 칸에 적지 않는다.
+ */
+/** 내 다리 레벨의 자릿수 — 서버 `paper.track_leg` 의 `round(r, 4)` 와 **같은 수**여야
+ *  한다(적힌 레벨 × DV01 = 적힌 돈). `guards/portfolio-canon.test.ts` 가 둘을 대사한다. */
+const LEVEL_DP = 4;
+
+function LevelCell({ track, open }: { track: PaperLegTrack | null; open: boolean }) {
+  if (!open || !track || track.exitLevel == null || track.stopLevel == null) {
+    return <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>{MINUS}</Text>;
+  }
+  const f = (v: number) => (track.unit === '%' ? v.toFixed(3) : v.toFixed(2));
+  const u = track.unit ?? '';
+  const series = `계열 ${track.series} 청산 ${f(track.exitLevel)}${u} · 손절 ${f(track.stopLevel)}${u}`;
+  /* ★내 다리의 레벨 [OWNER 2026-09-28 — "2년이면 3.xx 에서 얼마, 10년이면 4.xx 에서
+     얼마"]. 계열 값이 아니라 **이 계기의 금리**로 적고, 그 레벨에서 걷을 때의
+     손익을 옆에 적는다. 가정(나머지 다리는 지금 값에)은 title 이 든다. 내 계기가
+     계열의 다리가 아니면 계열 값으로 떨어지고 그 사유를 title 에 적는다. */
+  const m = track.mine;
+  if (!m) {
+    /* 사유는 title 과 **aria-label 둘 다**에 — hover 만이면 키보드·리더에겐 없는
+       문장이다(CLAUDE.md 「키보드와 접근성」 5). */
+    return (
+      <VStack as="span" className="sr-name-stack" alignItems="flex-end"
+        title={track.mineWhy ?? undefined} aria-label={track.mineWhy ?? undefined}>
+        <Text font="label2" as="span" tabularNumbers noWrap>
+          {`청산 ${f(track.exitLevel)}${u}`}
+        </Text>
+        <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+          {`손절 ${f(track.stopLevel)}${u}`}
+        </Text>
+      </VStack>
+    );
+  }
+  /* 가정을 문장으로 — 조사는 이름에 붙인다(숫자 뒤 조사는 `josa` 가 못 읽는다). */
+  const held = m.others.length
+    ? ` — ${m.others.map((o) => `${o.name}${eul(o.name)} ${o.v.toFixed(LEVEL_DP)}에`).join(' · ')} 둔 채 푼 값`
+    : '';
+  /* 계열의 진입 방향과 반대로 잡은 다리 — 「청산」 레벨이 이 다리엔 손해다.
+     사실이라 지우지 않고 ⚠ 로 적는다(색이 아니라 글자 — WCAG 1.4.1). */
+  const against = m.aligned === false ? '⚠ 계열 진입 방향과 반대로 잡은 다리예요 — ' : '';
+  const said = `${against}${series}${held}`;
+  return (
+    <VStack as="span" className="sr-name-stack" alignItems="flex-end"
+      title={said} aria-label={said}>
+      {/* ★자릿수는 서버와 **한 값**(`LEVEL_DP` = `paper.py` 의 round 자리). 적힌 레벨로
+          다시 곱해 적힌 돈이 나와야 한다 — 3자리로 접으면 ±50만원이 어긋난다
+          (0.0005% × 100 × 1,000만원/bp). IRS 틱이 0.25bp 라 4자리가 맞는 눈금이다.
+          `guards/portfolio-canon.test.ts` 가 두 자리를 대사한다. */}
+      <Text font="label2" as="span" tabularNumbers noWrap>
+        {`${m.aligned === false ? '⚠ ' : ''}청산 ${m.exitLevel.toFixed(LEVEL_DP)} · ${fmtKrw(m.exitPnl)}`}
+      </Text>
+      <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+        {`손절 ${m.stopLevel.toFixed(LEVEL_DP)} · ${fmtKrw(m.stopPnl)}`}
+      </Text>
+    </VStack>
+  );
+}
+
+/**
+ * 표의 줄 — 다리와 **소계** [OWNER 2026-09-28 — "각 트레이드 별과 포트폴리오 전체에서의
+ * PnL 이 나와주고"].
+ *
+ * 「트레이드」는 이 데스크의 말로 **묶음**(태그)이다 — BSS 하나가 IRS 페이 + 선물
+ * 매수 두 다리다. 다리 줄들 뒤에 묶음 소계 줄이 서고, 맨 아래 포트폴리오 전체가
+ * 선다. 묶음이 없는 다리는 제 혼자 트레이드다(소계 줄이 곧 그 다리 — 추적 버튼이
+ * 거기 서야 하므로 줄을 생략하지 않는다). 순서는 묶음의 첫 등장 차례다.
+ *
+ * 합은 서버의 규율 그대로 센다: 한 다리라도 못 매겼으면 합계는 «—»이고, 매겨진
+ * 다리만의 소계를 「n/N 매김」으로 따로 적는다(`position.pnl`·`scoredPnl` 의 그 규칙).
+ */
+type RowItem =
+  | { kind: 'leg'; leg: PaperPositionLeg }
+  | { kind: 'sum'; group: PaperPositionGroup };
+
+/** 줄 차례 — **서버의 묶음 차례**를 따른다. 여기서 더하는 수는 없다(§16). 묶음이
+ *  모르는 다리(있을 수 없지만)는 끝에 세워 표에서 사라지지 않게 한다. */
+function groupRows(legs: PaperPositionLeg[], groups: PaperPositionGroup[],
+                   total: PaperPositionGroup | null): RowItem[] {
+  const byN = new Map(legs.map((l) => [l.n, l]));
+  const seen = new Set<number>();
+  const out: RowItem[] = [];
+  for (const g of groups) {
+    for (const n of g.legs) {
+      const l = byN.get(n);
+      if (!l) continue;
+      seen.add(n);
+      out.push({ kind: 'leg', leg: l });
+    }
+    out.push({ kind: 'sum', group: g });
+  }
+  for (const l of legs) if (!seen.has(l.n)) out.push({ kind: 'leg', leg: l });
+  if (total && legs.length > 0) out.push({ kind: 'sum', group: total });
+  return out;
+}
+
+function SubtotalRow({ group: g, busy, onTrace }: {
+  group: PaperPositionGroup;
+  busy: boolean;
+  onTrace: (ns: number[], title: string) => void;
+}) {
+  const shown = g.pnl ?? g.scoredPnl;
+  const blank = (
+    <Text font="legal" as="span" color="fgMuted" noWrap>{MINUS}</Text>
+  );
+  return (
+    <TableRow style={{ height: ROW_H }}>
+      <TableCell>
+        <VStack as="span" className="sr-name-stack">
+          <Text font="label1" as="span" noWrap>
+            {g.total ? g.label : `묶음 · ${g.label}`}
+          </Text>
+          <Text font="legal" as="span" color="fgMuted" noWrap>
+            {`${g.legs.length}다리 · 보유 ${g.open}`}
+          </Text>
+        </VStack>
+      </TableCell>
+      <TableCell>{blank}</TableCell>
+      <TableCell>{blank}</TableCell>
+      <TableCell>{blank}</TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">{blank}</TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">{blank}</TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">{blank}</TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">{blank}</TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        <VStack as="span" className="sr-name-stack" alignItems="flex-end">
+          <Text font="label2" as="span" tabularNumbers noWrap>
+            {g.open ? `순 ${fmtKrw(g.netDv01)}/bp` : MINUS}
+          </Text>
+          <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+            {g.open ? `총 ${fmtKrw(g.grossDv01)}/bp` : ''}
+          </Text>
+        </VStack>
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        <Text font="label2" as="span" tabularNumbers noWrap color="fgMuted">
+          {g.open
+            ? `${(g.openNotional / 1e8).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}억`
+            : MINUS}
+        </Text>
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        {/* 합은 서버가 냈다 — 한 다리라도 아직이면 `pnl` 이 null 이고 매겨진
+            것만의 소계(`scoredPnl`)를 「n/N 매김」으로 적는다(카드와 같은 규율). */}
+        <VStack as="span" className="sr-name-stack" alignItems="flex-end">
+          <Text font="label2" as="span" tabularNumbers noWrap
+            className={shown == null ? undefined : directionClass(shown)}>
+            {shown == null ? MINUS : fmtKrw(shown)}
+          </Text>
+          <Text font="legal" as="span" color="fgMuted" noWrap>
+            {g.pending === 0 ? (g.total ? '합계' : '소계') : `${g.scored}/${g.legs.length} 매김`}
+          </Text>
+        </VStack>
+      </TableCell>
+      <TableCell className="sr-num" justifyContent="flex-end">
+        {/* ★추적 [OWNER 2026-09-28 — "클릭했을 때 진입일 시점부터 PnL 을 분해"].
+            묶음의 다리들을 백테스트 엔진에 실어 분해하는 창을 연다(`TraceWindow`). */}
+        <button type="button" className="sr-pillbtn" data-outline=""
+          disabled={busy}
+          title="이 트레이드의 다리들을 백테스트 엔진에 실어 진입일부터 하루씩 분해해요"
+          onClick={() => onTrace(g.legs, g.label)}>
+          추적
+        </button>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function PositionTable({
+  legs, groups, total, busy, today, exitDateW, exitLevelW, onClose, canAttach, onAttach, onTrace,
+}: {
+  legs: PaperPositionLeg[];
+  /** 묶음 소계와 전체 — **서버가 센 수**(§16). */
+  groups: PaperPositionGroup[];
+  total: PaperPositionGroup | null;
+  busy: boolean;
   /** 오늘(서울) — 청산일의 기본값이다. **`asof`(자료의 날)가 아니다.** */
   today: string;
   /** 청산 칸 둘의 폭 — **부모가 유도해서 내려준다**. 훅은 행 루프 안에서 못
@@ -164,6 +350,13 @@ function PositionTable({ legs, busy, today, exitDateW, exitLevelW, onClose }: {
   exitDateW: number;
   exitLevelW: number;
   onClose: (n: number, exit: string, level: number) => void;
+  /** 조건 없는 다리에 **아래 담는 줄에 친 조건**을 붙일 수 있는가(다섯이 다
+   *  찼는가). 새 컨트롤을 표 안에 만들지 않고 이미 있는 다섯 칸을 쓴다 —
+   *  같은 것은 한 번만 만든다(CLAUDE.md 얼라인 8). */
+  canAttach: boolean;
+  onAttach: (n: number) => void;
+  /** 소계 줄의 「추적」 — 그 묶음의 다리 번호들과 제목. */
+  onTrace: (ns: number[], title: string) => void;
 }) {
   /* 줄마다의 청산 레벨 입력 — 다리 번호로 잡는다(행 순서는 정렬이 바꾼다).
      비워 두면 마지막 종가로 떨어진다(그 사실은 머리의 뜻풀이와 플레이스홀더가
@@ -214,6 +407,11 @@ function PositionTable({ legs, busy, today, exitDateW, exitLevelW, onClose }: {
               <ThHelp label="밴드"
                 help="얼린 조건으로 지금 청산·손절에 닿았는지예요. 계열을 고른 다리에만 서요 — z 는 그 계열의 것이니까요. 판정 규칙은 백테스트 엔진과 같아요." />
             </TableCell>
+            {/* ★레벨 [OWNER 2026-09-28] — 밴드 칸의 z 를 계열 값으로 푼 두 선. */}
+            <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
+              <ThHelp label="청산·손절"
+                help="얼린 조건의 밴드를 오늘 값으로 푼 뒤, 이 다리의 금리로 옮긴 레벨이에요 — 나머지 다리는 지금 값에 둔 채 이 다리만 움직여 계열이 그 선에 닿는 자리이고, 옆의 돈은 거기서 걷을 때의 이 다리 손익(왕복 비용)이에요. 중심선과 σ 가 매일 움직이니 매일 바뀌어요. ⚠ 는 계열 진입 방향과 반대로 잡은 다리예요 — 그 「청산」 레벨에서 이 다리는 손해예요. 계열의 다리가 아닌 계기면 계열 값으로 적어요." />
+            </TableCell>
             <TableCell as="th" scope="col" className="sr-num" justifyContent="flex-end">
               <ThHelp label="내 레벨"
                 help="내가 실제로 체결한 금리예요. 그날 종가가 아니에요 — 그게 이 표가 생긴 이유예요." />
@@ -241,7 +439,12 @@ function PositionTable({ legs, busy, today, exitDateW, exitLevelW, onClose }: {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {legs.map((l) => (
+          {groupRows(legs, groups, total).map((item) => {
+            if (item.kind === 'sum') {
+              return <SubtotalRow key={`sum-${item.group.key}`} group={item.group} busy={busy} onTrace={onTrace} />;
+            }
+            const l = item.leg;
+            return (
             <TableRow key={l.n} style={{ height: ROW_H }}>
               <TableCell>
                 <VStack as="span" className="sr-name-stack">
@@ -259,19 +462,45 @@ function PositionTable({ legs, busy, today, exitDateW, exitLevelW, onClose }: {
               <TableCell>
                 {/* 조건 없는 다리는 «—» 다 — 「전부 0 으로 들어갔다」가 아니라
                     「안 적었다」이고, 둘은 다른 말이다(서버의 공란 정책). */}
-                <VStack as="span" className="sr-name-stack">
-                  <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
-                    {l.knobs ? knobWord(l.knobs) : MINUS}
-                  </Text>
-                  {/* 계열은 조건 **밑에** 적는다 — 그 조건이 무엇 위에서 도는지가
-                      한 칸 안에서 읽혀야 한다. 안 고른 다리는 이 줄이 없다. */}
-                  <Text font="legal" as="span" color="fgMuted" noWrap>
-                    {l.series ?? ''}
-                  </Text>
-                </VStack>
+                {l.open && !l.knobs ? (
+                  /* ★조건 없는 다리 [OWNER 2026-09-28 — "어디간거임?"]. 09-23 전에
+                     담은 다리들은 조건 칸이 없던 때의 것이라 청산선·손절선이 영영
+                     못 선다. 「다시 고르기」가 아니라 **빈 칸 적기**라 허용하되,
+                     새 입력을 표 안에 만들지 않고 아래 담는 줄의 다섯 칸(과 계열)을
+                     그대로 붙인다. 붙인 날은 서버가 적는다(`knobsAt`). */
+                  <VStack as="span" className="sr-name-stack">
+                    <button type="button" className="sr-pillbtn" data-outline=""
+                      disabled={busy || !canAttach}
+                      title={canAttach
+                        ? '아래 담는 줄에 친 조건 다섯(과 계열)을 이 다리에 붙여요'
+                        : '아래 담는 줄의 조건 다섯을 먼저 채워요'}
+                      onClick={() => onAttach(l.n)}>
+                      조건 붙이기
+                    </button>
+                    <Text font="legal" as="span" color="fgMuted" noWrap>
+                      {l.series ?? ''}
+                    </Text>
+                  </VStack>
+                ) : (
+                  <VStack as="span" className="sr-name-stack">
+                    <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
+                      {l.knobs ? knobWord(l.knobs) : MINUS}
+                    </Text>
+                    {/* 계열은 조건 **밑에** 적는다 — 그 조건이 무엇 위에서 도는지가
+                        한 칸 안에서 읽혀야 한다. 뒤에 붙인 조건이면 그 날도 같이 —
+                        「그날의 조건」이 아니라는 사실을 읽는 사람이 알아야 한다. */}
+                    <Text font="legal" as="span" color="fgMuted" noWrap>
+                      {[l.series ?? '', l.knobsAt ? `${l.knobsAt} 붙임` : '']
+                        .filter(Boolean).join(' · ')}
+                    </Text>
+                  </VStack>
+                )}
               </TableCell>
               <TableCell>
                 <TrackCell track={l.track} open={l.open} />
+              </TableCell>
+              <TableCell className="sr-num" justifyContent="flex-end">
+                <LevelCell track={l.track} open={l.open} />
               </TableCell>
               <TableCell className="sr-num" justifyContent="flex-end">
                 <Text font="label2" as="span" tabularNumbers noWrap>{l.level.toFixed(3)}</Text>
@@ -399,7 +628,8 @@ function PositionTable({ legs, busy, today, exitDateW, exitLevelW, onClose }: {
                 )}
               </TableCell>
             </TableRow>
-          ))}
+            );
+          })}
         </TableBody>
       </Table>
     </div>
@@ -449,6 +679,8 @@ export function PortfolioPage() {
   const [knobMode, setKnobMode] = useState<'level' | 'touch'>('level');
   /** 초기화 한 번 더 묻기 — 화면의 문이고, 서버가 확인 낱말로 둘째 문을 진다. */
   const [resetArm, setResetArm] = useState(false);
+  /** 열린 추적 창 — 묶음(트레이드) 하나의 다리 번호들 [OWNER 2026-09-28]. */
+  const [trace, setTrace] = useState<{ ns: number[]; title: string }>();
 
   /* ── 칸 폭은 **옵션 집합의 합집합**에서 [OWNER 2026-09-23] ─────────────────
      진단에서 이 줄의 **열두 칸이 전부** T1(죽은 폭 ≤16px)을 실패했다(21~130px).
@@ -733,10 +965,27 @@ export function PortfolioPage() {
           </HStack>
           <PositionTable
             legs={sheet.position.legs}
+            groups={sheet.position.groups ?? []}
+            /* 전체 줄도 서버의 그 수다 — `position` 의 합계 칸들을 묶음 모양으로 옮겨
+               적을 뿐이다(더하는 것이 없다). */
+            total={{
+              key: 'all', label: '포트폴리오 전체', total: true,
+              legs: sheet.position.legs.map((l) => l.n),
+              open: sheet.position.open, closed: sheet.position.closed,
+              pnl: sheet.position.pnl, scoredPnl: sheet.position.scoredPnl,
+              scored: sheet.position.scored, pending: sheet.position.pending,
+              netDv01: sheet.position.netDv01, grossDv01: sheet.position.grossDv01,
+              openNotional: sheet.position.openNotional ?? 0,
+            }}
             busy={busy}
             today={sheet.today}
             exitDateW={exitDateW}
             exitLevelW={exitLevelW}
+            canAttach={knobsComplete(knobs)}
+            onAttach={(n) =>
+              write(() => attachKnobs(n, knobs ?? {}, legSeries || undefined),
+                    `${n}번 다리에 조건을 붙였어요 — 붙인 날이 장부에 남아요.`)}
+            onTrace={(ns, title) => setTrace({ ns, title })}
             onClose={(n, exit, level) =>
               /* 날도 레벨도 **내가 적은 것**이 그대로 간다 — 둘 다 비면 표가
                  오늘·마지막 종가로 채워서 넘긴다(종전 동작). 말이 되는 날인지는
@@ -1009,6 +1258,10 @@ export function PortfolioPage() {
         </VStack>
 
       </VStack>
+      {/* 트레이드 추적 창 [OWNER 2026-09-28] — 소계 줄의 「추적」이 연다. */}
+      {trace ? (
+        <TraceWindow ns={trace.ns} title={trace.title} onClose={() => setTrace(undefined)} />
+      ) : null}
     </VStack>
   );
 }

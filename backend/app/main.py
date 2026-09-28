@@ -612,10 +612,20 @@ def backtest(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=f"bad position {raw!r}: {exc}")
 
+    return _book_result(parsed, _funding_spec(basis, spreadBp))
+
+
+def _book_result(parsed: list["mixedbook.MixedPosition"],
+                 spec: funding.FundingSpec) -> dict:
+    """북 하나를 값매긴다 — `/api/backtest` 의 몸통 [2026-09-28 에 갈라 냄].
+
+    페이퍼 북의 「트레이드 추적」(`/api/paper/trace`)이 **같은 엔진·같은 규율**로
+    다리들을 값매겨야 해서 라우트에서 떼어 냈다. 두 자리가 각자 엔진을 부르면
+    포트폴리오의 분해와 Backtest 의 분해가 같은 다리에 다른 수를 말할 자리가 생긴다.
+    """
     # 민평은 **채권 줄이 있을 때만** 읽는다 — 스왑만 있는 북이 SQL 에 닿아야 할
     # 이유가 없고, 닿게 만들면 그 테이블이 죽은 날 스왑 백테스트까지 같이 죽는다.
     # 선물 종가도 같은 규율이다 [OWNER, 2026-08-25 — 선물·퓨처스왑 합류].
-    spec = _funding_spec(basis, spreadBp)
     matrix = None
     if mixedbook.has_bond(parsed):
         try:
@@ -3551,6 +3561,93 @@ def paper_add_leg(body: dict) -> dict:
                   level=level, notional=notional, dv01=dv01,
                   tag=str(body.get("tag") or ""), note=str(body.get("note") or ""),
                   knobs=body.get("knobs"), series=body.get("series"))
+    paper.save(st)
+    return {"ok": True, **_paper_sheet()}
+
+
+@router.get("/api/paper/trace")
+def paper_trace(legs: str) -> dict:
+    """트레이드 추적 — 다리들을 **백테스트 엔진에 실어** 진입일부터 분해한다
+    [OWNER 2026-09-28 — "그 트레이드를 클릭했을 때 진입일 시점부터 PnL 을 분해시켜서
+    트레이스가 가능하게"].
+
+    `legs` 는 다리 번호들(`1,2`). 산술은 둘뿐이고 둘 다 남의 것이다: 값매김은
+    `/api/backtest` 의 그 몸통(`_book_result` — 같은 엔진·같은 조달·같은 대사표)이고,
+    대조는 `paper.reconcile_leg`(장부 손익 = 체결 차이 + 엔진 손익 − 비용 + 차이).
+    응답의 `book` 은 `/api/backtest` 응답 그대로라 화면이 Backtest 의 부품(차트·
+    대사 스택)을 그대로 쓴다.
+    """
+    try:
+        ns = sorted({int(x) for x in legs.split(",") if x.strip()})
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"다리 번호가 숫자가 아니에요: {legs!r}")
+    if not ns:
+        raise HTTPException(status_code=422, detail="추적할 다리 번호가 있어야 해요")
+    st = paper.load()
+    by_n = {int(lg["n"]): lg for lg in st.get("legs", [])}
+    missing = [n for n in ns if n not in by_n]
+    if missing:
+        raise HTTPException(status_code=422,
+                            detail=f"없는 다리예요: {', '.join(str(n) for n in missing)}")
+    picked = [by_n[n] for n in ns]
+    try:
+        specs = paper.trace_positions(picked)
+    except paper.LegRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # 화면의 그 줄(`score_leg`)을 그대로 대조한다 — 여기서 다시 안 센다.
+    sheet_rows = {int(r["n"]): r for r in _paper_sheet()["position"]["legs"]}
+    # ★엔진은 **장부의 시계**까지만 돈다. 장부의 마크는 그 계기의 마지막 종가
+    # (`markT`, 국고·선물이 쉰 연휴엔 09-23)인데 스왑 엔진의 달력은 IRS 라 역외
+    # 프린트(09-24·25)까지 간다 — 그대로 두면 「차이」 열에 이틀치 시장이 섞여
+    # 선형 대 재평가의 몫이라 말할 수 없다. 들고 있는 다리는 마크 날에 끊는다.
+    parsed = []
+    for s in specs:
+        exit_s = s.get("exit")
+        if not exit_s:
+            mt = sheet_rows.get(int(s["n"]), {}).get("markT")
+            if mt and mt >= s["entry"]:
+                exit_s = mt
+        parsed.append(mixedbook.MixedPosition(
+            series_id=s["id"], direction=int(s["direction"]), notional=float(s["notional"]),
+            entry=dt.date.fromisoformat(s["entry"]),
+            exit=dt.date.fromisoformat(exit_s) if exit_s else None,
+        ))
+    book = _book_result(parsed, _funding_spec(funding.DEFAULT_BASIS, funding.DEFAULT_SPREAD_BP))
+    rows = book.get("positions") or []
+    if len(rows) != len(picked):
+        raise HTTPException(status_code=500, detail="엔진이 낸 줄 수가 다리 수와 달라요")
+    recon = [paper.reconcile_leg(lg, row,
+                                 paper_pnl=sheet_rows.get(int(lg["n"]), {}).get("pnl"),
+                                 cost=sheet_rows.get(int(lg["n"]), {}).get("cost"))
+             for lg, row in zip(picked, rows)]
+
+    def _sum(key: str) -> float | None:
+        vals = [r[key] for r in recon]
+        return None if any(v is None for v in vals) else round(sum(vals), 2)
+
+    return {
+        "legs": ns,
+        "rows": recon,
+        "total": {k: _sum(k) for k in ("exec", "engine", "valuation", "carry",
+                                       "rolldown", "startup", "funding", "cost",
+                                       "paper", "residual")},
+        "book": book,
+    }
+
+
+@router.post("/api/paper/leg/knobs")
+def paper_attach_knobs(body: dict) -> dict:
+    """조건이 없던 다리에 조건을 붙인다 [OWNER 2026-09-28 — "언제 손절, 익절인지
+    레벨로 … 어디간거임?"]. 규율과 거절 사유는 `paper.attach_knobs` 에 — 이미 언
+    다리·닫힌 다리·반쪽 조건은 422 다. 붙인 날(`knobsAt`)이 장부에 남는다."""
+    n = body.get("n")
+    if n is None:
+        raise HTTPException(status_code=400, detail="다리 번호(n)가 있어야 해요")
+    st = paper.load()
+    try:
+        paper.attach_knobs(st, int(n), body.get("knobs"), body.get("series"))
+    except paper.LegRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     paper.save(st)
     return {"ok": True, **_paper_sheet()}
 

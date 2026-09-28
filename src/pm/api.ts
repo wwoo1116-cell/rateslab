@@ -18,11 +18,12 @@
  * 정의가 생기고, 반올림이 갈리는 날 화면이 스스로를 반박한다.
  */
 
-import { BacktestUnavailable } from '@/lib/api';
+import { BacktestUnavailable, type BacktestResult } from '@/lib/api';
 import type { MrSplit } from '@/mr/api';
 import {
   paperCloseUrl, paperEnrollUrl, paperInstrumentsUrl, paperLegCloseUrl,
-  paperLegUrl, paperResetUrl, paperRetireUrl, paperSuggestUrl, paperTradeUrl, paperUrl,
+  paperLegKnobsUrl, paperLegUrl, paperResetUrl, paperRetireUrl, paperSuggestUrl,
+  paperTraceUrl, paperTradeUrl, paperUrl,
 } from '@/lib/staticPaths';
 
 /** 하루 한 점. `cum` 은 **서버가 굴린** 누적이다. */
@@ -140,10 +141,34 @@ export interface PaperSheet {
     /** **부호를 지고** 더한 DV01 — 페이와 리시브가 상쇄되는 것이 이 북의 알맹이다. */
     netDv01: number;
     grossDv01: number;
+    /** 들고 있는 다리의 명목 합(원). */
+    openNotional: number;
+    /** ★묶음(트레이드) 소계 [OWNER 2026-09-28 — "각 트레이드 별과 포트폴리오 전체"].
+     *  **서버가 센다**(§16) — 화면은 이 차례로 줄을 세우고 수를 읽기만 한다. */
+    groups: PaperPositionGroup[];
   };
   /** 이 화면이 실제로 묻는 물음 — 내 판단이 규칙보다 나은가. */
   diff: { today: number; cum: number };
   failed: { id: string; why: string }[];
+}
+
+/** 묶음(트레이드) 하나의 소계 — `backend/app/paper.py::sum_legs`. 규율은 합계와
+ *  같다: 한 다리라도 못 매겼으면 `pnl` 은 `null`, 매겨진 것만의 소계는 `scoredPnl`. */
+export interface PaperPositionGroup {
+  key: string;
+  label: string;
+  total: boolean;
+  /** 이 묶음의 다리 번호들 — 표의 줄 차례가 이것이다. */
+  legs: number[];
+  open: number;
+  closed: number;
+  pnl: number | null;
+  scoredPnl: number | null;
+  scored: number;
+  pending: number;
+  netDv01: number;
+  grossDv01: number;
+  openNotional: number;
 }
 
 /** 손으로 쌓은 다리 하나 — **계기 하나 · 내가 체결한 레벨**.
@@ -200,6 +225,39 @@ export interface PaperLegTrack {
   hit: 'stop' | 'exit' | null;
   /** 못 잰 사유. 「안 닿았다」와 **다른 말**이라 칸이 따로 있다. */
   why: string | null;
+  /** ── 레벨 [OWNER 2026-09-28 — "언제 손절, 익절인지 레벨로 표시"] ──────────
+   *  z 의 두 문을 **오늘 밴드의 값**으로 푼 것(`중심선 ± 배수·σ`, 계열의 자기
+   *  단위). 방향은 진입일 z 의 부호라 진입한 쪽의 선 하나씩이다. 중심선과 σ 가
+   *  매일 움직이므로 두 수도 매일 바뀐다. 못 재면 전부 `null`. */
+  unit: string | null;
+  /** 지금 값 · 중심선 · σ. */
+  v: number | null;
+  ma: number | null;
+  sd: number | null;
+  exitLevel: number | null;
+  stopLevel: number | null;
+  /** 거리(계열 단위). **살아 있으면 양수** — 0 이하는 닿은 것이고 `hit` 와 같은 말. */
+  exitGap: number | null;
+  stopGap: number | null;
+  /** ★**내 다리의 레벨** [OWNER 2026-09-28 — "각각 레벨로 적어줘야지 2년이면 3.xx
+   *  에서 얼마, 10년이면 4.xx 에서 얼마"]. 계열 값 = scale × Σ w·r 이므로 **다른
+   *  다리를 지금 값에 둔 채** 이 다리만 움직여 계열이 그 선에 닿는 레벨(%)과, 그
+   *  레벨에서 걷을 때의 이 다리 손익(왕복 비용). 내 계기가 계열의 다리가 아니면
+   *  `null` 이고 `mineWhy` 가 사유를 진다 — 그때 화면은 계열 값으로 적는다. */
+  mine: {
+    name: string;
+    w: number;
+    exitLevel: number;
+    stopLevel: number;
+    exitPnl: number;
+    stopPnl: number;
+    /** 고정해 둔 나머지 다리와 그 지금 값 — 가정을 수와 같이 싣는다. */
+    others: { name: string; v: number }[];
+    /** 내 다리가 계열의 진입 방향과 **같은 쪽**인가. 어긋나면 「청산」 레벨에서 이
+     *  다리는 손해다 — 사실이라 지우지 않고 화면이 ⚠ 로 적는다. */
+    aligned: boolean | null;
+  } | null;
+  mineWhy: string | null;
 }
 
 export interface PaperPositionLeg {
@@ -221,6 +279,9 @@ export interface PaperPositionLeg {
   /** 이 다리가 속한 **계열**(`BSS-2Y` …). 묶음과 **다른 칸**이다 — 묶음은 부르는
    *  이름이고 산술에 안 쓴다. 추적은 계열의 z 로 하므로 이 칸이 있어야 선다. */
   series: string | null;
+  /** 조건을 **뒤에 붙인 날**(`attachKnobs`). 담을 때 얼린 다리엔 없다 — 있으면
+   *  「그날의 조건」이 아니라 「뒤에 붙인 조건」이라는 뜻이고 화면이 그 날을 적는다. */
+  knobsAt?: string | null;
   /** 얼린 조건으로 **지금** 닿았는가. 들고 있는 다리에만 서고, 못 잴 때도 같은
    *  모양으로 온다(`why` 에 사유). */
   track: PaperLegTrack | null;
@@ -325,6 +386,16 @@ export const addLeg = (l: {
 export const closeLeg = (n: number, exit: string, level: number) =>
   post(paperLegCloseUrl(), { n, exit, level });
 
+/** 조건이 **없던** 다리에 조건을 붙인다 [OWNER 2026-09-28]. 이미 언 다리·닫힌
+ *  다리·반쪽 조건은 서버가 422 로 거절한다(「다시 고르지 않는다」 규율). 붙인
+ *  날이 `knobsAt` 에 남는다 — 그날의 조건이 아니라 뒤에 붙인 조건임을 장부가
+ *  말한다. 숫자는 `addLeg` 와 같은 이유로 **글자 그대로** 보낸다. */
+export const attachKnobs = (
+  n: number,
+  knobs: Partial<Record<keyof PaperLegKnobs, string | number | undefined>>,
+  series?: string,
+) => post(paperLegKnobsUrl(), { n, knobs, ...(series ? { series } : {}) });
+
 /** 장부를 새로 시작한다 — **지우지 않는다**. 옛 장부는 서버가 파일로 남기고
  *  `archivedTo` 로 그 이름을 돌려준다. 확인 낱말은 서버가 검사한다(실수 방지). */
 export const resetBook = (): Promise<PaperSheet & { archivedTo?: string }> =>
@@ -428,4 +499,61 @@ export function knobsComplete(
   if (!knobs) return false;
   return (['lookback', 'entryZ', 'exitZ', 'stopZ'] as const)
     .every((k) => knobs[k] !== undefined && String(knobs[k]).trim() !== '');
+}
+
+/**
+ * 트레이드 추적 [OWNER 2026-09-28 — "그 트레이드를 클릭했을 때 진입일 시점부터
+ * PnL 을 분해시켜서 트레이스가 가능하게"].
+ *
+ * 이 장부의 손익은 한 수(rateSign × Δbp × DV01 − 비용)라 분해가 없다. 분해는
+ * **백테스트 엔진**이 이미 한다 — 다리들을 그 엔진의 포지션으로 옮겨 값매기고
+ * (`book` 은 `/api/backtest` 응답 그대로), 두 자리의 진입가 차이를 「체결 차이」로
+ * 이름 붙여 대조한다(`backend/app/paper.py` 트레이드 추적 절):
+ *
+ *     장부 손익 = 체결 차이 + 엔진 손익(평가+캐리+롤다운+개시+조달) − 비용 + 차이
+ *
+ * 「차이」는 장부의 선형(진입일 DV01 고정)과 엔진의 재평가가 갈리는 몫이다 —
+ * 지우지 않고 열에 세운다. 없는 성분은 `null`(공란 정책).
+ */
+export interface PaperTraceRow {
+  n: number;
+  id: string | null;
+  label: string | null;
+  entry: string | null;
+  exit: string | null;
+  /** 내 체결 레벨(%) · 엔진이 친 진입일 종가(%). */
+  level: number;
+  entryClose: number | null;
+  /** rateSign × (진입일 종가 − 내 레벨) × 100 × DV01. */
+  exec: number | null;
+  engine: number | null;
+  valuation: number | null;
+  carry: number | null;
+  rolldown: number | null;
+  startup: number | null;
+  funding: number | null;
+  cost: number | null;
+  /** 화면 표의 그 줄 손익(`score_leg`). */
+  paper: number | null;
+  residual: number | null;
+}
+
+export interface PaperTrace {
+  legs: number[];
+  rows: PaperTraceRow[];
+  /** 열마다의 합 — 한 줄이라도 못 센 열은 `null`. */
+  total: Record<'exec' | 'engine' | 'valuation' | 'carry' | 'rolldown' | 'startup'
+    | 'funding' | 'cost' | 'paper' | 'residual', number | null>;
+  /** `/api/backtest` 응답 그대로 — Backtest 창의 부품이 그대로 읽는다. */
+  book: BacktestResult;
+}
+
+export async function fetchTrace(ns: readonly number[], signal?: AbortSignal): Promise<PaperTrace> {
+  const r = await fetch(paperTraceUrl(ns), { signal });
+  if (r.status === 404) throw new BacktestUnavailable();
+  if (!r.ok) {
+    const detail = (await r.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(detail?.detail ?? `trace: HTTP ${r.status}`);
+  }
+  return r.json() as Promise<PaperTrace>;
 }

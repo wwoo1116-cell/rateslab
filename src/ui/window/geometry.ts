@@ -68,7 +68,10 @@ export type WindowKey =
   | "mrstrategy"
   /* BSS 테너 통합 장부 [2026-09-01]. 낱개 창(`mrstrategy`)과 **다른 열쇠**다 —
      둘이 같이 열릴 수 있고, 그때 한쪽을 옮기면 다른 쪽이 따라가면 안 된다. */
-  | "mrbook";
+  | "mrbook"
+  /* 페이퍼 북의 트레이드 추적 [OWNER 2026-09-28] — 다리들을 백테스트 엔진에 실어
+     진입일부터 분해한 창. 백테스트 창과 **다른 열쇠**다(둘이 같이 열릴 수 있다). */
+  | "papertrace";
 
 const remembered = new Map<WindowKey, WinPos>();
 

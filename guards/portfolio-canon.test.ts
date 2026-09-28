@@ -165,6 +165,22 @@ describe('자를 두 벌 만들지 않는다', () => {
     expect(p).toMatch(/sheet\.position\.pnl/);
   });
 
+  it('내 다리 레벨의 자릿수는 서버와 **한 값**이다 [2026-09-28]', () => {
+    /* 서버가 레벨을 4자리로 접고 **그 자리에서** 손익을 센다(`paper.track_leg` 의
+       `pnl_at`). 화면이 다른 자릿수로 찍으면 적힌 레벨 × DV01 ≠ 적힌 돈 — 3자리로
+       접었을 때 ±50만원이 어긋났다(리뷰 실측 2026-09-28). 두 벌을 둘 수밖에 없으면
+       대사로 묶는다. */
+    const m = py().match(/r_ex, r_st = round\(r_ex, (\d)\), round\(r_st, \d\)/);
+    expect(m, 'paper.py 가 내 다리 레벨을 접는 줄이 안 보인다').not.toBeNull();
+    const dp = page().match(/const LEVEL_DP = (\d);/);
+    expect(dp, 'PortfolioPage 에 LEVEL_DP 가 없다').not.toBeNull();
+    expect(dp![1]).toBe(m![1]);
+    /* 찍는 자리는 전부 그 상수를 쓴다 — 손으로 적은 자릿수가 하나라도 있으면 다시 갈린다. */
+    expect(page()).toMatch(/m\.exitLevel\.toFixed\(LEVEL_DP\)/);
+    expect(page()).toMatch(/m\.stopLevel\.toFixed\(LEVEL_DP\)/);
+    expect(page()).not.toMatch(/m\.(exit|stop)Level\.toFixed\(\d\)/);
+  });
+
   it('실가격과 근사를 **섞어 더하지 않는다**', () => {
     /* 못 잰 항은 `None` 이고 화면이 «—» 를 그린다. 0 으로 적으면 「0 원이었다」는
        딴 사실이 되고, 실가격 셋 + 근사 하나의 합이 실가격처럼 보인다. */

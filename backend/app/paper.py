@@ -196,8 +196,95 @@ def check_series(sid: str | None) -> str | None:
     return sid
 
 
-def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None
-              ) -> dict[str, Any] | None:
+# ── 다리 **자신의** 레벨로 [OWNER 2026-09-28 — "이거 각각 레벨로 적어줘야지 2년이면
+#    3.xx 에서 얼마, 10년이면 4.xx 에서 얼마 이런식으로"] ─────────────────────────
+#
+# 청산·손절 문은 **계열**(스프레드·커브) 위에 있다 — 「IRC-5Y-10Y 가 9.55bp 에 오면
+# 청산」. 그런데 트레이더가 보는 것은 다리다: 5Y 리시브를 몇에서 걷고, 10Y 페이를
+# 몇에서 걷나. 계열 값 = scale × Σ wᵢ·rᵢ 이므로 **다른 다리를 지금 값에 둔 채 이
+# 다리만 움직일 때** 계열이 그 선에 닿는 레벨은
+#
+#     r_k* = (S*/scale − Σ_{i≠k} wᵢ·rᵢ) / w_k
+#
+# 이고, 그 레벨에서의 이 다리 손익은 장부의 그 식(`score_leg`) 그대로다 — 왕복 비용.
+# 가정(다른 다리 고정)은 화면이 같이 적는다. 계열마다 다리 차례·부호가 다르므로
+# 표를 **한 곳**(`series_legs`)에서 만든다 — `mrseries.points`(BSS: [IRS, 국고]) ·
+# `combo_points`(커브: [긴, 짧은]) · 선물 번들(FSW: [IRS, 선물] · FUT: [선물]) 의
+# 규약을 그대로 옮긴 것이고, 플라이는 점에 다리를 안 실으므로 IRS 번들에서 읽는다.
+
+def series_legs(kind: str, sid: str, last: dict,
+                irs_of: Callable[[str, str], float | None] | None = None
+                ) -> dict[str, Any] | None:
+    """계열의 **다리 표** — `{"scale", "legs": [{name, tenor, kind, w, v}]}`.
+
+    값 = scale × Σ w·v 가 닫히는 표다. `last` 는 계열의 마지막 점(`{t, v, legs}`),
+    `irs_of(tenor, date)` 는 플라이처럼 점에 다리가 없는 계열을 위한 조회다.
+    못 세우면 `None`(빈 표가 아니다).
+
+    눈금은 **종류가 정한다** — 스프레드·커브·플라이(bss·fsw·irc·irf)는 bp(×100),
+    선물 아웃라이트(fut)는 %(×1). 점의 `unit` 을 안 읽는 이유: 주입 경로(시험)는
+    단위를 모르고, 그때 1 로 떨어지면 bp 선을 % 로 읽어 **조용히 100배 틀린다**
+    (시험이 먼저 밟았다).
+    """
+    scale = 1.0 if kind == "fut" else 100.0
+    lv = last.get("legs")
+    if kind == "bss":
+        tenor = sid.split("-", 1)[1]
+        if not lv or len(lv) != 2:
+            return None
+        legs = [{"name": "IRS", "tenor": tenor, "kind": "irs", "w": 1.0, "v": float(lv[0])},
+                {"name": "국고", "tenor": tenor, "kind": "bond", "w": -1.0, "v": float(lv[1])}]
+    elif kind == "fsw":
+        tenor = sid.split("-", 1)[1]
+        if not lv or len(lv) != 2:
+            return None
+        legs = [{"name": "IRS", "tenor": tenor, "kind": "irs", "w": 1.0, "v": float(lv[0])},
+                {"name": "선물", "tenor": tenor, "kind": "fut", "w": -1.0, "v": float(lv[1])}]
+    elif kind == "fut":
+        tenor = "3Y" if sid.endswith("KTB3") else "10Y"
+        v = float(lv[0]) if lv else float(last["v"])
+        legs = [{"name": "선물", "tenor": tenor, "kind": "fut", "w": 1.0, "v": v}]
+    elif kind == "irc":
+        short, long_ = sid.split("-")[1:]
+        if not lv or len(lv) != 2:
+            return None
+        # `combo_points` 의 차례는 [긴, 짧은] 이고 값 = 긴 − 짧은.
+        legs = [{"name": f"IRS {long_}", "tenor": long_, "kind": "irs", "w": 1.0, "v": float(lv[0])},
+                {"name": f"IRS {short}", "tenor": short, "kind": "irs", "w": -1.0, "v": float(lv[1])}]
+    elif kind == "irf":
+        a, m, c = sid.split("-")[1:]
+        if irs_of is None:
+            return None
+        vals = [irs_of(t, last["t"]) for t in (a, m, c)]
+        if any(v is None for v in vals):
+            return None
+        legs = [{"name": f"IRS {a}", "tenor": a, "kind": "irs", "w": -1.0, "v": float(vals[0])},
+                {"name": f"IRS {m}", "tenor": m, "kind": "irs", "w": 2.0, "v": float(vals[1])},
+                {"name": f"IRS {c}", "tenor": c, "kind": "irs", "w": -1.0, "v": float(vals[2])}]
+    else:
+        return None
+    return {"scale": scale, "legs": legs}
+
+
+def leg_level_for(table: dict, my_kind: str, my_tenor: str, target: float
+                  ) -> tuple[int, float] | None:
+    """계열이 `target`(계열 단위)에 닿을 때 **내 다리**의 레벨 — (다리 색인, 레벨).
+
+    내 계기(kind·tenor)가 표의 어느 다리인지 찾고, 나머지를 지금 값에 둔 채 푼다.
+    표에 없는 계기면 `None` — 「이 계기는 그 계열의 다리가 아니다」.
+    """
+    legs = table["legs"]
+    idx = next((i for i, l in enumerate(legs)
+                if l["kind"] == my_kind and l["tenor"] == my_tenor), None)
+    if idx is None:
+        return None
+    rest = sum(l["w"] * l["v"] for i, l in enumerate(legs) if i != idx)
+    return idx, (target / table["scale"] - rest) / legs[idx]["w"]
+
+
+def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
+              *, irs_of: Callable[[str, str], float | None] | None = None,
+              cost_bp: float = COST_BP) -> dict[str, Any] | None:
     """얼린 조건으로 **지금** 청산·손절에 닿았는가 [OWNER 2026-09-23].
 
     ## 엔진과 **같은 규칙**을 쓴다 — 두 벌이면 장부가 거짓말을 한다
@@ -229,11 +316,20 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None
         모양이 둘이면 화면이 `hit` 를 물었다가 `undefined` 를 받고, 그건
         「안 닿았다」와 구별이 안 된다."""
         return {"series": sid, "z": None, "entryZ": None, "dir": None,
-                "asof": None, "hit": None, "why": why}
+                "asof": None, "hit": None, "why": why,
+                "unit": None, "v": None, "ma": None, "sd": None,
+                "exitLevel": None, "stopLevel": None,
+                "exitGap": None, "stopGap": None,
+                "mine": None, "mineWhy": None}
 
-    getter = points_of or (lambda s: mr_mod.series_points(s)["points"])
+    unit: str | None = None
     try:
-        pts = getter(sid)
+        if points_of is not None:
+            pts = points_of(sid)
+        else:
+            body = mr_mod.series_points(sid)
+            pts = body["points"]
+            unit = body.get("unit")
     except Exception as exc:                      # noqa: BLE001 — 사유를 싣고 산다
         return blank(f"계열을 못 읽었어요: {exc}")
     dates = [p["t"] for p in pts]
@@ -257,9 +353,70 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None
     if z0 == 0:
         return blank("진입일 z 가 0 이라 방향을 못 정해요")
     pos = 1 if z0 < 0 else -1
-    stop = abs(z1) >= float(knobs["stopZ"])
+    sz = float(knobs["stopZ"])
+    stop = abs(z1) >= sz
     ex = float(knobs["exitZ"])
     exit_hit = (z1 >= -ex) if pos > 0 else (z1 <= ex)
+    # ── 레벨 [OWNER 2026-09-28 — "언제 손절, 익절인지 레벨로 표시해주기로"] ──
+    # z 의 두 문을 **오늘 밴드의 값**으로 푼다 — `mrplan.levels_for` 와 같은 번역
+    # (`중심선 ± 배수·σ`)이고 계산이 아니다. 방향은 진입일 z 의 부호(위 `pos`):
+    #   롱(아래에서 들어감)  청산 = 중심선 − exitZ·σ (거기까지 **오르면**)
+    #                       손절 = 중심선 − stopZ·σ (거기까지 **더 내리면**)
+    #   숏은 전부 반대쪽이다.
+    # 손절은 엔진에선 |z| 라 반대편에도 선(+stopZ)이 있지만, 들고 있는 다리가
+    # 중심선을 지나 반대편 손절선까지 가려면 청산선을 먼저 지난다 — 그래서 진입한
+    # 쪽의 선 하나만 적는다(`mrplan.levels_for` 의 그 문단). 중심선과 σ 는 매일
+    # 움직이므로 두 수도 매일 바뀐다 — 그것이 「데일리로」의 뜻이다.
+    # 거리(`…Gap`)는 **살아 있으면 양수**다: 0 이하면 닿은 것이고 `hit` 와 같은 말.
+    ma_i = mrbt.rolling_series(vals, lb)
+    m1, s1 = ma_i["mean"][-1], ma_i["std"][-1]
+    exit_level = m1 - pos * ex * s1
+    stop_level = m1 - pos * sz * s1
+    v1 = vals[-1]
+    # ── 내 다리의 레벨로 [OWNER 2026-09-28] — 위 절의 그 식 ──────────────────
+    mine: dict[str, Any] | None = None
+    mine_why: str | None = None
+    kind = {s: k for s, _l, k in mr_mod.SERIES}.get(sid)
+    if irs_of is None and points_of is None and kind == "irf":
+        def irs_of(tenor: str, day: str) -> float | None:  # noqa: E306 — 지연 import
+            from . import mrseries as mrs
+            return mrs.bundle()["irs"].get(tenor, {}).get(day)
+    table = series_legs(kind or "", sid, pts[-1], irs_of) if kind else None
+    if table is None:
+        mine_why = "계열의 다리 레벨을 못 읽었어요 — 계열 값으로 적어요"
+    else:
+        hit_ex = leg_level_for(table, leg.get("kind", ""), str(leg.get("tenor", "")), exit_level)
+        hit_st = leg_level_for(table, leg.get("kind", ""), str(leg.get("tenor", "")), stop_level)
+        if hit_ex is None or hit_st is None:
+            mine_why = f"이 계기는 {sid} 의 다리가 아니에요 — 계열 값으로 적어요"
+        else:
+            k, r_ex = hit_ex
+            _k, r_st = hit_st
+            # 화면에 적히는 자리(4자리)에서 손익을 센다 — 읽는 사람이 적힌 레벨로
+            # 다시 곱해 같은 돈이 나와야 한다(레벨과 돈이 다른 정밀도면 안 닫힌다).
+            r_ex, r_st = round(r_ex, 4), round(r_st, 4)
+            dv01 = float(leg.get("dv01") or 0.0)
+            rs = int(leg.get("rateSign") or 0)
+            lvl = float(leg.get("level") or 0.0)
+
+            def pnl_at(r: float) -> float:
+                # 장부의 그 식(`score_leg`) — 걷을 때의 손익이라 **왕복** 비용.
+                return rs * (r - lvl) * 100.0 * dv01 - 2.0 * cost_bp * dv01
+
+            w_k = table["legs"][k]["w"]
+            mine = {
+                "name": table["legs"][k]["name"], "w": w_k,
+                "exitLevel": round(r_ex, 4), "stopLevel": round(r_st, 4),
+                "exitPnl": round(pnl_at(r_ex), 2), "stopPnl": round(pnl_at(r_st), 2),
+                # 나머지 다리는 **지금 값에 둔 채**다 — 그 가정을 수와 같이 싣는다.
+                "others": [{"name": l["name"], "v": round(l["v"], 4)}
+                           for i, l in enumerate(table["legs"]) if i != k],
+                # ★내 다리가 계열의 진입 방향과 **같은 쪽**인가. 계열 롱(값이 오르면
+                # 이익)이면 w>0 인 다리는 금리↑에 벌어야(rateSign +1) 하고 w<0 인
+                # 다리는 금리↓에 벌어야 한다 — 어긋나면 「청산」 레벨에서 이 다리는
+                # 손해다. 사실이라 지우지 않고 화면이 ⚠ 로 적는다.
+                "aligned": (rs == pos * (1 if w_k > 0 else -1)) if rs else None,
+            }
     return {
         "series": sid,
         "z": round(z1, 3),
@@ -270,6 +427,16 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None
         # 사후에 원인을 셀 수 없다(엔진의 그 주석).
         "hit": "stop" if stop else ("exit" if exit_hit else None),
         "why": None,
+        "unit": unit,
+        "v": round(v1, 4),
+        "ma": round(m1, 4),
+        "sd": round(s1, 4),
+        "exitLevel": round(exit_level, 4),
+        "stopLevel": round(stop_level, 4),
+        "exitGap": round(pos * (exit_level - v1), 4),
+        "stopGap": round(pos * (v1 - stop_level), 4),
+        "mine": mine,
+        "mineWhy": mine_why,
     }
 
 
@@ -486,6 +653,175 @@ def add_leg(store: dict[str, Any], *, kind: str, tenor: str, side: str,
     if store.get("opened") is None:
         store["opened"] = entry
     return store
+
+
+def attach_knobs(store: dict[str, Any], n: int, knobs: dict | None,
+                 series: str | None = None, today: str | None = None) -> dict[str, Any]:
+    """조건이 **없던** 다리에 조건을 붙인다 [OWNER 2026-09-28 — "각 트레이드에서
+    언제 손절, 익절인지 레벨로 표시해주기로 했었는데 어디간거임?"].
+
+    ## 「다시 고른다」가 아니라 「비어 있던 칸을 적는다」
+
+    이 장부의 규율은 등록 뒤에 조건을 **다시 고르지 않는** 것이다. 조건이 이미 언
+    다리는 그래서 거절한다(422). 그런데 09-23 전에 담은 다리들은 조건 칸 자체가
+    없었고(그 칸이 그날 생겼다), 조건이 없으면 청산선도 손절선도 못 그린다 —
+    영원히 추적이 안 되는 다리가 남는다. 빈 칸을 채우는 것은 고르는 것이 아니다.
+
+    ## 붙인 날을 적는다
+
+    `knobsAt` 에 **오늘**을 박는다. 「그날의 조건」이 아니라 「뒤에 붙인 조건」이라는
+    사실이 장부에 남아야 읽는 사람이 어제 다리를 오늘 조건으로 읽고 있음을 안다
+    (`check_knobs` 머리의 그 트레이더 불평이 정확히 그것이었다).
+
+    닫힌 다리는 거절한다 — 청산선이 설 자리가 없다. 계열은 없을 때만 받는다.
+    """
+    frozen = check_knobs(knobs)
+    if frozen is None:
+        raise LegRejected("붙일 조건이 없어요 — 다섯을 다 채워 주세요")
+    sid = check_series(series)
+    legs = list(store.get("legs") or [])
+    for i, lg in enumerate(legs):
+        if int(lg.get("n", -1)) != int(n):
+            continue
+        if lg.get("exit"):
+            raise LegRejected(f"{n}번 다리는 닫혔어요 — 청산선이 설 자리가 없어요")
+        if lg.get("knobs"):
+            raise LegRejected(f"{n}번 다리엔 이미 조건이 얼어 있어요 — 다시 고르지 않아요")
+        now = today or date.today().isoformat()
+        legs[i] = {**lg, "knobs": frozen, "knobsAt": now,
+                   "series": lg.get("series") or sid}
+        store["legs"] = legs
+        return store
+    raise LegRejected(f"{n}번 다리가 없어요")
+
+
+# ── 트레이드 추적 [OWNER 2026-09-28 — "그 트레이드를 클릭했을 때 진입일 시점부터
+#    PnL 을 분해시켜서 트레이스가 가능하게"] ───────────────────────────────────
+#
+# 이 장부의 손익은 한 수다: rateSign × (지금 − 내 레벨) × DV01 − 비용. 분해가
+# 없다 — 그래서 「왜 이만큼인가」를 못 묻는다. 분해는 **백테스트 엔진**이 이미 한다
+# (평가·캐리·롤다운·개시·조달, 하루씩 대사표까지). 여기서 산술을 새로 만들지 않고
+# 다리들을 그 엔진의 포지션으로 옮겨 적는다(`trace_positions`) — 분해의 정의가
+# 둘이 되면 Backtest 와 Portfolio 가 같은 다리에 다른 수를 말한다.
+#
+# 두 자리가 다른 것은 **진입가**다. 엔진은 진입일 **종가**로 친다(그것이 백테스트),
+# 이 장부는 **내가 체결한 레벨**이다. 그 차이는 손익의 성분이고 이름이 있어야
+# 한다 — 「체결 차이」: rateSign × (진입일 종가 − 내 레벨) × 100 × DV01. 그러면
+#
+#     장부 손익 ≈ 체결 차이 + 엔진 손익(평가+캐리+롤다운+개시+조달) − 비용
+#
+# 이고, 남는 몫은 장부의 선형(DV01 × Δbp, 진입일 DV01 고정)과 엔진의 재평가
+# (컨벡시티·DV01 이동·커브 모양)의 차이다. 그 몫은 지우지 않고 **「차이」 열에**
+# 세운다 — 잔차 열이 하는 일이다.
+
+#: 계기 → 엔진의 종목 문법. 국고 현물은 KTB 만 담는다(`check_leg`).
+def trace_positions(legs: list[dict]) -> list[dict[str, Any]]:
+    """다리들 → 백테스트 엔진의 포지션 서술(`mixedbook.MixedPosition` 의 재료).
+
+    방향의 뜻이 계기마다 다르다: 스왑 엔진의 +1 은 페이(금리↑에 번다 = rateSign),
+    채권·선물의 +1 은 매수(금리↓에 번다 = −rateSign). 여기서 **한 번만** 옮긴다.
+    """
+    out: list[dict[str, Any]] = []
+    for lg in legs:
+        kind, tenor, rs = lg["kind"], lg["tenor"], int(lg["rateSign"])
+        if kind == "irs":
+            sid, direction = tenor, rs
+        elif kind == "bond":
+            sid, direction = f"CB:KTB:{tenor}", -rs
+        elif kind == "fut":
+            sid, direction = f"FUT:{tenor}", -rs
+        else:
+            raise LegRejected(f"모르는 계기예요: {kind}")
+        out.append({"n": lg["n"], "id": sid, "direction": direction,
+                    "notional": float(lg["notional"]),
+                    "entry": lg["entry"], "exit": lg.get("exit")})
+    return out
+
+
+def entry_close_of(row: dict) -> float | None:
+    """엔진 기록에서 **진입일 종가**(%)를 읽는다 — 계기마다 열쇠가 다르다.
+
+    스왑·선물은 `entryValue`(호가값 = 파 금리 · 내재금리 %), 현금채권은 `entryYield`.
+    없으면 `None` 이고 체결 차이는 못 센다(0 이 아니다)."""
+    for key in ("entryYield", "entryValue"):
+        v = row.get(key)
+        if isinstance(v, (int, float)):
+            return float(v)
+    return None
+
+
+def reconcile_leg(leg: dict, row: dict, *, paper_pnl: float | None,
+                  cost: float | None) -> dict[str, Any]:
+    """다리 하나의 대조 — 장부 손익 = 체결 차이 + 엔진 손익 − 비용 + 차이.
+
+    `paper_pnl`·`cost` 는 화면의 그 줄(`score_leg`)이다 — 여기서 다시 안 센다.
+    엔진 손익의 성분은 기록의 열쇠를 그대로 옮긴다(없는 성분은 `None`, 공란 정책).
+    """
+    close = entry_close_of(row)
+    dv01 = float(leg["dv01"])
+    exec_diff = (None if close is None
+                 else round(int(leg["rateSign"]) * (close - float(leg["level"])) * 100.0 * dv01, 2))
+    parts = {k: row.get(k) for k in ("valuation", "carry", "rolldown", "startup", "funding")}
+    engine = row.get("pnl")
+    explained = (None if exec_diff is None or engine is None or cost is None
+                 else exec_diff + float(engine) - float(cost))
+    residual = (None if explained is None or paper_pnl is None
+                else round(float(paper_pnl) - explained, 2))
+    return {
+        "n": leg["n"], "id": row.get("id"), "label": row.get("label"),
+        "entry": row.get("entry"), "exit": row.get("exit"),
+        "level": float(leg["level"]), "entryClose": close,
+        "exec": exec_diff,
+        "engine": None if engine is None else round(float(engine), 2),
+        **{k: (None if v is None else round(float(v), 2)) for k, v in parts.items()},
+        "cost": None if cost is None else round(float(cost), 2),
+        "paper": None if paper_pnl is None else round(float(paper_pnl), 2),
+        "residual": residual,
+    }
+
+
+def sum_legs(rows: list[dict], *, key: str, label: str, total: bool = False) -> dict[str, Any]:
+    """다리 몇 개의 합 — **서버가 센다**(§16, 브라우저는 계산하지 않는다).
+
+    규율은 `build_sheet` 의 `position` 합계와 같다: 한 다리라도 못 매겼으면 `pnl`
+    은 `None`(0 이 아니다)이고 매겨진 것만의 소계는 `scoredPnl` 로 따로 낸다.
+    DV01 은 **부호를 지고** 더한다(페이와 리시브의 상쇄가 이 북의 알맹이).
+    """
+    open_ = [l for l in rows if l["open"]]
+    scored = [l for l in rows if l["pnl"] is not None]
+    return {
+        "key": key, "label": label, "total": total,
+        "legs": [int(l["n"]) for l in rows],
+        "open": len(open_), "closed": len(rows) - len(open_),
+        "pnl": (None if not rows or len(scored) < len(rows)
+                else round(sum(l["pnl"] for l in rows), 2)),
+        "scoredPnl": None if not scored else round(sum(l["pnl"] for l in scored), 2),
+        "scored": len(scored), "pending": len(rows) - len(scored),
+        "netDv01": round(sum(l["rateSign"] * l["dv01"] for l in open_), 2),
+        "grossDv01": round(sum(abs(l["dv01"]) for l in open_), 2),
+        "openNotional": round(sum(float(l["notional"]) for l in open_), 2),
+    }
+
+
+def group_legs(rows: list[dict]) -> list[dict[str, Any]]:
+    """다리들을 **묶음(태그)** 으로 모아 소계를 낸다 [OWNER 2026-09-28 — "각 트레이드
+    별과 포트폴리오 전체에서의 PnL"].
+
+    「트레이드」는 이 데스크의 말로 묶음이다 — BSS 하나가 IRS 페이 + 선물 매수 두
+    다리다. 묶음이 없는 다리는 제 혼자 트레이드다. 차례는 묶음의 첫 등장 순.
+    산술은 `sum_legs` 하나다 — 화면은 이 수를 **읽기만** 한다(§16).
+    """
+    order: list[str] = []
+    by: dict[str, list[dict]] = {}
+    for l in rows:
+        k = f"tag:{l['tag']}" if l.get("tag") else f"leg:{l['n']}"
+        if k not in by:
+            by[k] = []
+            order.append(k)
+        by[k].append(l)
+    return [sum_legs(by[k], key=k,
+                     label=(by[k][0]["tag"] or f"{by[k][0]['n']}번 다리 (묶음 없음)"))
+            for k in order]
 
 
 def check_exit(leg: dict, exit_t: str, today: str | None = None) -> None:
@@ -1031,6 +1367,11 @@ def build_sheet(*, leg_of: Callable[..., dict],
             "netDv01": round(sum(l["rateSign"] * l["dv01"] for l in pos_legs
                                  if l["open"]), 2),
             "grossDv01": round(sum(abs(l["dv01"]) for l in pos_legs if l["open"]), 2),
+            "openNotional": round(sum(float(l["notional"]) for l in pos_legs
+                                      if l["open"]), 2),
+            # ★묶음(트레이드) 소계 [OWNER 2026-09-28] — 서버가 센다(§16). 화면은
+            # 이 차례로 줄을 세우고 수를 읽기만 한다.
+            "groups": group_legs(pos_legs),
         },
         # 이 화면이 실제로 묻는 물음 — 내 판단이 규칙보다 나은가.
         "diff": {"today": round(_today(man_daily) - _today(rule_daily), 2),

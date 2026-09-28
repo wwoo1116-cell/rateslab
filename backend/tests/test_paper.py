@@ -362,7 +362,13 @@ class TestPlumbing:
                          # 그날의 1등 [OWNER 2026-09-23 「손으로 치되 1등을 제안」] —
                          # **읽기**다. 장부에 쓰지 않고 옆에 설 뿐이라(`Test그날_1등_
                          # 제안`) 위 「쓰기는 덧쓰기뿐」 규율과 무관하다.
-                         "/api/paper/suggest"}
+                         "/api/paper/suggest",
+                         # 조건이 없던 다리에 조건 붙이기 [OWNER 2026-09-28] — 덧쓰기다
+                         # (빈 칸을 적는다 · 언 조건은 거절 · `Test조건_붙이기`).
+                         "/api/paper/leg/knobs",
+                         # 트레이드 추적 [OWNER 2026-09-28] — **읽기**. 다리들을 백테스트
+                         # 엔진에 실어 진입일부터 분해한다(`Test트레이드_추적`).
+                         "/api/paper/trace"}
 
     def test_지우는_라우트는_없다(self):
         """진 기록을 지우는 것이 생존 편향이 장부에 들어오는 가장 흔한 길이다."""
@@ -1085,3 +1091,558 @@ class Test그날_1등_제안:
 
         src = inspect.getsource(paper.add_leg)
         assert "suggest" not in src and "rank_cells" not in src
+
+
+# ── 청산·손절 레벨 · 조건 붙이기 ─────────────────────────────────────────────
+class Test청산_손절_레벨:
+    """★z 의 두 문을 **오늘 밴드의 값**으로 푼다 [OWNER 2026-09-28 — "언제 손절,
+    익절인지 레벨로 표시해주기로 했었는데 어디간거임?"].
+
+    번역이지 계산이 아니다(`mrplan.levels_for` 와 같은 식): 롱은 청산 = 중심선 −
+    exitZ·σ · 손절 = 중심선 − stopZ·σ, 숏은 반대쪽. 거리는 살아 있으면 양수이고
+    0 이하면 `hit` 와 같은 말이어야 한다 — 두 표현이 갈리면 화면이 스스로를
+    반박한다.
+    """
+
+    KN = {"lookback": 20, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.0, "entryMode": "level"}
+
+    @staticmethod
+    def _pts(vals: list[float]) -> list[dict]:
+        return [{"t": t, "v": v} for t, v in zip(_dates(len(vals)), vals)]
+
+    def _leg(self, entry_idx: int, series: str = "BSS-3Y") -> dict:
+        return {"entry": _dates(entry_idx + 1)[-1], "knobs": self.KN, "series": series}
+
+    def test_롱의_레벨은_중심선_아래쪽_두_선이다(self):
+        """진입일 z 가 음수(아래에서 들어감) → 청산선은 중심선 − 0.5σ, 손절선은 − 3σ."""
+        vals = [10.0] * 19 + [4.0] + [8.0] * 5           # 20번째 봉에서 급락 → 진입
+        pts = self._pts(vals)
+        got = paper.track_leg(self._leg(19), points_of=lambda _s: pts)
+        assert got["dir"] == 1 and got["hit"] is None
+        assert got["exitLevel"] == pytest.approx(got["ma"] - 0.5 * got["sd"], abs=1e-3)
+        assert got["stopLevel"] == pytest.approx(got["ma"] - 3.0 * got["sd"], abs=1e-3)
+        assert got["exitLevel"] > got["stopLevel"]
+        assert got["v"] == pytest.approx(vals[-1])
+        # 살아 있으면 두 거리가 양수 — 값은 청산선 아래·손절선 위에 있다.
+        assert got["exitGap"] > 0 and got["stopGap"] > 0
+        assert got["exitGap"] == pytest.approx(got["exitLevel"] - got["v"], abs=1e-3)
+        assert got["stopGap"] == pytest.approx(got["v"] - got["stopLevel"], abs=1e-3)
+
+    def test_숏은_전부_반대쪽이다(self):
+        vals = [10.0] * 19 + [16.0] + [12.0] * 5
+        pts = self._pts(vals)
+        got = paper.track_leg(self._leg(19), points_of=lambda _s: pts)
+        assert got["dir"] == -1
+        assert got["exitLevel"] == pytest.approx(got["ma"] + 0.5 * got["sd"], abs=1e-3)
+        assert got["stopLevel"] == pytest.approx(got["ma"] + 3.0 * got["sd"], abs=1e-3)
+        assert got["exitGap"] == pytest.approx(got["v"] - got["exitLevel"], abs=1e-3)
+        assert got["stopGap"] == pytest.approx(got["stopLevel"] - got["v"], abs=1e-3)
+
+    def test_거리가_0_이하면_hit_와_같은_말이다(self):
+        """청산선을 지나면 exitGap ≤ 0 이고 hit == exit — 손절도 마찬가지."""
+        vals = [10.0] * 19 + [4.0] + [10.5] * 3          # 되돌아와 중심선을 지났다
+        got = paper.track_leg(self._leg(19), points_of=lambda _s: self._pts(vals))
+        assert got["hit"] == "exit" and got["exitGap"] <= 0
+        vals = [10.0] * 19 + [4.0] + [-40.0]              # 더 벌어져 손절
+        got = paper.track_leg(self._leg(19), points_of=lambda _s: self._pts(vals))
+        assert got["hit"] == "stop" and got["stopGap"] <= 0
+
+    def test_못_잴_때도_레벨_칸이_같은_모양으로_온다(self):
+        got = paper.track_leg(self._leg(2), points_of=lambda _s: self._pts([1.0] * 5))
+        assert got["hit"] is None and got["why"]
+        for k in ("unit", "v", "ma", "sd", "exitLevel", "stopLevel", "exitGap", "stopGap"):
+            assert k in got and got[k] is None, k
+
+    def test_단위는_계열의_것이고_주입하면_모른다(self):
+        """주입 경로(시험)는 단위를 모르므로 None — 지어내지 않는다."""
+        vals = [10.0] * 19 + [4.0] + [8.0] * 5
+        got = paper.track_leg(self._leg(19), points_of=lambda _s: self._pts(vals))
+        assert got["unit"] is None
+
+    def test_못_잴_때도_내_다리_칸이_같은_모양으로_온다(self):
+        """빈 모양과 산 모양의 열쇠가 같다 — 한쪽에만 칸을 더하면 여기서 깨진다."""
+        got = paper.track_leg(self._leg(2), points_of=lambda _s: self._pts([1.0] * 5))
+        assert "mine" in got and got["mine"] is None
+        assert "mineWhy" in got and got["mineWhy"] is None
+
+        def boom(_s):
+            raise RuntimeError("DB 꺼짐")
+
+        got = paper.track_leg(self._leg(2), points_of=boom)
+        assert got["hit"] is None and "계열을 못 읽었어요" in got["why"] and "DB 꺼짐" in got["why"]
+        live = paper.track_leg(self._leg(19), points_of=lambda _s: self._pts([10.0] * 19 + [4.0] + [8.0] * 5))
+        assert set(got) == set(live)
+
+
+class Test내_다리의_레벨:
+    """★계열 값이 아니라 **내 다리의 금리**로 [OWNER 2026-09-28 — "이거 각각 레벨로
+    적어줘야지 2년이면 3.xx 에서 얼마, 10년이면 4.xx 에서 얼마"].
+
+    계열 값 = scale × Σ w·r. 나머지 다리를 지금 값에 둔 채 이 다리만 움직일 때
+    계열이 그 선에 닿는 레벨 — 계열마다 다리 차례·부호가 다르므로 표 한 곳
+    (`series_legs`)에서 만들고, 여기서 계열 가족마다 그 표가 **값을 닫는지**와
+    번역이 맞는지를 잰다.
+    """
+
+    KN = {"lookback": 20, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.0, "entryMode": "level"}
+
+    def _pt(self, v, legs=None, t="2020-06-01"):
+        return {"t": t, "v": v, "legs": legs}
+
+    @staticmethod
+    def _closes(table, v):
+        return sum(l["w"] * l["v"] for l in table["legs"]) * table["scale"] == pytest.approx(v, abs=1e-6)
+
+    def test_BSS_는_IRS_와_국고_두_다리다(self):
+        t = paper.series_legs("bss", "BSS-3Y", self._pt(4.25, [4.0375, 3.995]))
+        assert [(l["name"], l["kind"], l["tenor"], l["w"]) for l in t["legs"]] == [
+            ("IRS", "irs", "3Y", 1.0), ("국고", "bond", "3Y", -1.0)]
+        assert self._closes(t, 4.25)
+        # 계열이 10bp 에 닿을 때: IRS 다리는 국고를 둔 채 3.995 + 0.10, 국고 다리는 IRS 를 둔 채 4.0375 − 0.10
+        assert paper.leg_level_for(t, "irs", "3Y", 10.0) == (0, pytest.approx(4.095))
+        assert paper.leg_level_for(t, "bond", "3Y", 10.0) == (1, pytest.approx(3.9375))
+        assert paper.leg_level_for(t, "fut", "3Y", 10.0) is None, "선물은 BSS 의 다리가 아니다"
+        assert paper.leg_level_for(t, "irs", "2Y", 10.0) is None, "만기가 다르면 다리가 아니다"
+
+    def test_커브는_긴_짧은_차례고_짧은_쪽이_음수다(self):
+        t = paper.series_legs("irc", "IRC-5Y-10Y", self._pt(5.0, [4.16, 4.11]))
+        assert [(l["tenor"], l["w"]) for l in t["legs"]] == [("10Y", 1.0), ("5Y", -1.0)]
+        assert self._closes(t, 5.0)
+        # 9.55bp 로 스팁: 5Y 다리는 10Y 를 4.16 에 둔 채 4.0645, 10Y 다리는 5Y 를 둔 채 4.2055
+        assert paper.leg_level_for(t, "irs", "5Y", 9.55)[1] == pytest.approx(4.0645)
+        assert paper.leg_level_for(t, "irs", "10Y", 9.55)[1] == pytest.approx(4.2055)
+
+    def test_퓨처스왑과_선물(self):
+        t = paper.series_legs("fsw", "FSW-3Y", self._pt(-9.65, [4.0375, 4.134]))
+        assert [(l["kind"], l["w"]) for l in t["legs"]] == [("irs", 1.0), ("fut", -1.0)]
+        assert self._closes(t, -9.65)
+        assert paper.leg_level_for(t, "fut", "3Y", 0.0)[1] == pytest.approx(4.0375)
+        f = paper.series_legs("fut", "FUT-KTB10", self._pt(4.2, [4.2]))
+        assert f["scale"] == 1.0 and f["legs"][0]["tenor"] == "10Y"
+        assert paper.leg_level_for(f, "fut", "10Y", 4.31)[1] == pytest.approx(4.31)
+
+    def test_플라이는_번들에서_읽고_벨리가_2다(self):
+        irs = {"2Y": 3.9, "5Y": 4.1, "10Y": 4.2}
+        t = paper.series_legs("irf", "IRF-2Y-5Y-10Y", self._pt(10.0),
+                              irs_of=lambda tenor, _d: irs[tenor])
+        assert [(l["tenor"], l["w"]) for l in t["legs"]] == [("2Y", -1.0), ("5Y", 2.0), ("10Y", -1.0)]
+        assert self._closes(t, (2 * 4.1 - 3.9 - 4.2) * 100)
+        # 벨리 다리: 윙 둘을 둔 채 플라이가 20bp 가 되는 5Y = (0.20 + 3.9 + 4.2) / 2
+        assert paper.leg_level_for(t, "irs", "5Y", 20.0)[1] == pytest.approx((0.20 + 3.9 + 4.2) / 2)
+        assert paper.series_legs("irf", "IRF-2Y-5Y-10Y", self._pt(10.0)) is None, "번들이 없으면 못 세운다"
+
+    def test_눈금은_종류가_정한다(self):
+        """주입 경로는 단위를 모른다 — bp 계열을 % 로 읽으면 조용히 100배 틀린다."""
+        t = paper.series_legs("irc", "IRC-5Y-10Y", self._pt(5.0, [4.16, 4.11]))
+        assert t["scale"] == 100.0
+        assert paper.series_legs("fut", "FUT-KTB3", self._pt(4.13, [4.13]))["scale"] == 1.0
+
+    def test_track_leg_이_내_다리로_옮겨_적고_손익까지_센다(self):
+        """IRC-5Y-10Y 를 계열로 둔 5Y 리시브 — 계열 청산선을 5Y 금리로, 그 레벨에서의 손익은 장부의 식(왕복 비용)."""
+        dates = _dates(26)
+        curve = [5.0] * 19 + [-4.0] + [1.0] * 6                       # bp, 20번째에 급락 → 롱(스팁)
+        pts = [{"t": d, "v": v, "legs": [4.16, 4.16 - v / 100.0]} for d, v in zip(dates, curve)]
+        leg = {"entry": dates[19], "knobs": {"lookback": 20, "entryZ": 2.0, "exitZ": 0.5,
+                                            "stopZ": 3.0, "entryMode": "level"},
+               "series": "IRC-5Y-10Y", "kind": "irs", "tenor": "5Y",
+               "rateSign": -1, "level": 4.145, "dv01": 1e7}
+        got = paper.track_leg(leg, points_of=lambda _s: pts, cost_bp=0.5)
+        assert got["dir"] == 1 and got["mine"] is not None and got["mineWhy"] is None
+        m = got["mine"]
+        # 10Y 를 4.16 에 둔 채: 5Y* = 4.16 − 계열선/100
+        assert m["exitLevel"] == pytest.approx(4.16 - got["exitLevel"] / 100.0, abs=1e-4)
+        assert m["stopLevel"] == pytest.approx(4.16 - got["stopLevel"] / 100.0, abs=1e-4)
+        assert m["others"] == [{"name": "IRS 10Y", "v": 4.16}]
+        # 손익 = rateSign × (레벨 − 내 레벨) × 100 × DV01 − 왕복 비용
+        assert m["exitPnl"] == pytest.approx(-1 * (m["exitLevel"] - 4.145) * 100 * 1e7 - 2 * 0.5 * 1e7, abs=1)
+        # 커브 롱(스팁)에서 짧은 다리(w<0)는 리시브라야 같은 쪽 — 이 다리는 맞다.
+        assert m["aligned"] is True
+        # 같은 다리를 페이로 잡았다면 계열 방향과 반대다 — 사실이라 지우지 않고 적는다.
+        got_rev = paper.track_leg({**leg, "rateSign": 1}, points_of=lambda _s: pts)
+        assert got_rev["mine"]["aligned"] is False
+        # 계열의 다리가 아닌 계기(2Y)면 mine 은 없고 사유가 선다 — 계열 값은 그대로.
+        got2 = paper.track_leg({**leg, "tenor": "2Y"}, points_of=lambda _s: pts)
+        assert got2["mine"] is None and "다리가 아니에요" in got2["mineWhy"]
+        assert got2["exitLevel"] == got["exitLevel"]
+
+    # ── 아래 아홉은 적대 검증(2026-09-28 워크플로)의 시험 비평이 잡은 빈 자리다 ──
+
+    def test_선물_아웃라이트는_scale_1_이고_매도가_롱과_같은_쪽이다(self):
+        """다리가 하나라 계열 선 = 내 레벨(%, 100배 안 한다). 계열 롱(내재금리 반등)에
+        선물 매도(+1)가 같은 쪽. 눈금을 100 으로 바꾸면 여기서 죽는다(변이 확인)."""
+        dates = _dates(26)
+        yld = [4.10] * 19 + [4.00] + [4.05] * 6                       # 20번째 급락 → 롱
+        pts = [{"t": d, "v": v, "legs": [v]} for d, v in zip(dates, yld)]
+        leg = {"entry": dates[19], "knobs": self.KN, "series": "FUT-KTB3",
+               "kind": "fut", "tenor": "3Y", "rateSign": +1, "level": 4.01, "dv01": 2.8e6}
+        got = paper.track_leg(leg, points_of=lambda _s: pts, cost_bp=0.5)
+        m = got["mine"]
+        assert got["dir"] == 1 and got["hit"] is None and m is not None
+        assert m["w"] == 1.0 and m["others"] == []
+        assert m["exitLevel"] == got["exitLevel"] and m["stopLevel"] == got["stopLevel"]
+        assert m["exitPnl"] == pytest.approx((m["exitLevel"] - 4.01) * 100 * 2.8e6 - 2 * 0.5 * 2.8e6, abs=1)
+        assert m["aligned"] is True
+        assert paper.track_leg({**leg, "rateSign": -1}, points_of=lambda _s: pts)["mine"]["aligned"] is False
+        # 점에 legs 가 없어도 값 자체가 다리다
+        bare = [{"t": d, "v": v} for d, v in zip(dates, yld)]
+        assert paper.track_leg(leg, points_of=lambda _s: bare)["mine"]["exitLevel"] == m["exitLevel"]
+        ten = paper.track_leg({**leg, "series": "FUT-KTB10", "tenor": "10Y"}, points_of=lambda _s: pts)
+        assert ten["mine"] is not None and ten["mine"]["name"] == "선물"
+        # 3Y 다리는 KTB10 의 다리가 아니다
+        assert paper.track_leg({**leg, "series": "FUT-KTB10"}, points_of=lambda _s: pts)["mine"] is None
+
+    def test_퓨처스왑의_선물_다리는_IRS_를_둔_채_반대로_움직인다(self):
+        t = paper.series_legs("fsw", "FSW-3Y", self._pt(-9.65, [4.0375, 4.134]))
+        # 계열이 +10bp 로 가려면(IRS 고정) 선물 내재금리는 **내려야** 한다
+        assert paper.leg_level_for(t, "fut", "3Y", 10.0)[1] == pytest.approx(3.9375)
+        assert paper.leg_level_for(t, "irs", "3Y", 10.0)[1] == pytest.approx(4.234)
+        assert paper.leg_level_for(t, "bond", "3Y", 10.0) is None, "국고는 FSW 의 다리가 아니다"
+        dates = _dates(26)
+        fsw = [-5.0] * 19 + [-14.0] + [-10.0] * 6                     # 롱 = IRS 페이 · 선물 매수
+        pts = [{"t": d, "v": v, "legs": [4.0375, 4.0375 - v / 100.0]} for d, v in zip(dates, fsw)]
+        leg = {"entry": dates[19], "knobs": self.KN, "series": "FSW-3Y", "kind": "fut", "tenor": "3Y",
+               "rateSign": -1, "level": 4.134, "dv01": 2.8e6}
+        got = paper.track_leg(leg, points_of=lambda _s: pts)
+        m = got["mine"]
+        assert got["dir"] == 1 and got["hit"] is None
+        assert m["name"] == "선물" and m["w"] == -1.0 and m["aligned"] is True
+        assert m["exitLevel"] == pytest.approx(4.0375 - got["exitLevel"] / 100.0, abs=1e-4)
+        assert m["stopLevel"] == pytest.approx(4.0375 - got["stopLevel"] / 100.0, abs=1e-4)
+        assert m["others"] == [{"name": "IRS", "v": 4.0375}]
+        assert paper.track_leg({**leg, "rateSign": +1}, points_of=lambda _s: pts)["mine"]["aligned"] is False
+        irs = paper.track_leg({**leg, "kind": "irs", "rateSign": +1}, points_of=lambda _s: pts)["mine"]
+        assert irs["w"] == 1.0 and irs["aligned"] is True
+
+    def test_BSS_국고_매수는_롱과_같은_쪽이고_다리가_없는_점이면_사유가_선다(self):
+        dates = _dates(26)
+        bss = [5.0] * 19 + [-4.0] + [1.0] * 6
+        pts = [{"t": d, "v": v, "legs": [4.0 + v / 100.0, 4.0]} for d, v in zip(dates, bss)]   # [IRS, 국고]
+        leg = {"entry": dates[19], "knobs": self.KN, "series": "BSS-3Y", "kind": "bond", "tenor": "3Y",
+               "rateSign": -1, "level": 4.0, "dv01": 2.8e6}
+        got = paper.track_leg(leg, points_of=lambda _s: pts)
+        m = got["mine"]
+        assert got["dir"] == 1 and m["name"] == "국고" and m["w"] == -1.0 and m["aligned"] is True
+        irs_now = pts[-1]["legs"][0]
+        assert m["exitLevel"] == pytest.approx(irs_now - got["exitLevel"] / 100.0, abs=1e-4)
+        assert m["others"] == [{"name": "IRS", "v": round(irs_now, 4)}]
+        irs = paper.track_leg({**leg, "kind": "irs", "rateSign": +1}, points_of=lambda _s: pts)["mine"]
+        assert irs["w"] == 1.0 and irs["aligned"] is True
+        assert irs["exitLevel"] == pytest.approx(4.0 + got["exitLevel"] / 100.0, abs=1e-4)
+        # 다리 레벨이 없는 점이면 mine 은 없고 계열 값·hit 는 그대로다
+        bare = [{"t": d, "v": v} for d, v in zip(dates, bss)]
+        got2 = paper.track_leg(leg, points_of=lambda _s: bare)
+        assert got2["mine"] is None and "다리 레벨을 못 읽었어요" in got2["mineWhy"]
+        assert got2["exitLevel"] == got["exitLevel"] and got2["hit"] == got["hit"]
+
+    def test_플라이는_track_leg_에서_번들로_읽고_없는_날이면_사유가_선다(self):
+        dates = _dates(26)
+        fly = [10.0] * 19 + [1.0] + [6.0] * 6                        # bp = 100·(2·5Y − 2Y − 10Y), 20번째 급락 → 롱
+        pts = [{"t": d, "v": v} for d, v in zip(dates, fly)]          # 플라이 점엔 다리가 없다
+        by_day = dict(zip(dates, fly))
+        wings = {"2Y": 3.9, "10Y": 4.2}
+
+        def irs_of(tenor, day):
+            if tenor in wings:
+                return wings[tenor]
+            return (by_day[day] / 100.0 + 3.9 + 4.2) / 2.0           # 5Y 가 플라이 값을 닫게
+
+        leg = {"entry": dates[19], "knobs": self.KN, "series": "IRF-2Y-5Y-10Y", "kind": "irs",
+               "tenor": "5Y", "rateSign": +1, "level": 4.08, "dv01": 4.5e6}
+        got = paper.track_leg(leg, points_of=lambda _s: pts, irs_of=irs_of)
+        m = got["mine"]
+        assert got["dir"] == 1 and got["hit"] is None and m is not None
+        assert m["name"] == "IRS 5Y" and m["w"] == 2.0 and m["aligned"] is True      # 벨리 페이 = 플라이 롱
+        assert m["exitLevel"] == pytest.approx((got["exitLevel"] / 100.0 + 3.9 + 4.2) / 2.0, abs=1e-4)
+        assert m["stopLevel"] == pytest.approx((got["stopLevel"] / 100.0 + 3.9 + 4.2) / 2.0, abs=1e-4)
+        assert m["others"] == [{"name": "IRS 2Y", "v": 3.9}, {"name": "IRS 10Y", "v": 4.2}]
+        wing = paper.track_leg({**leg, "tenor": "2Y", "rateSign": -1},
+                               points_of=lambda _s: pts, irs_of=irs_of)["mine"]
+        assert wing["w"] == -1.0 and wing["aligned"] is True                          # 윙 리시브 = 플라이 롱
+        belly_now = irs_of("5Y", dates[-1])
+        assert wing["exitLevel"] == pytest.approx(2 * belly_now - 4.2 - got["exitLevel"] / 100.0, abs=1e-4)
+        # 번들에 마지막 날이 없으면(적재 지연) mine 은 없고 계열 값은 남는다
+        got2 = paper.track_leg(leg, points_of=lambda _s: pts,
+                               irs_of=lambda t, d: None if d == dates[-1] else irs_of(t, d))
+        assert got2["mine"] is None and "못 읽었어요" in got2["mineWhy"]
+        assert got2["exitLevel"] == got["exitLevel"]
+        # 점만 주입하고 irs_of 를 안 주면 같은 사유(플라이 점엔 다리가 없다)
+        got3 = paper.track_leg(leg, points_of=lambda _s: pts)
+        assert got3["mine"] is None and got3["mineWhy"]
+
+    def test_주입_없이_부르면_계열은_mr_에서_다리는_번들에서_읽는다(self, monkeypatch):
+        """build_sheet 의 그 호출(`track_leg(lg)`) — 계열은 `mr.series_points`, 플라이 다리는 `mrseries.bundle`."""
+        from app import mrseries as mrs
+        dates = _dates(26)
+        fly = [10.0] * 19 + [1.0] + [6.0] * 6
+        monkeypatch.setattr(mr_mod, "series_points",
+                            lambda sid: {"id": sid, "unit": "bp",
+                                         "points": [{"t": d, "v": v} for d, v in zip(dates, fly)]})
+        irs = {"2Y": {d: 3.9 for d in dates}, "10Y": {d: 4.2 for d in dates},
+               "5Y": {d: (v / 100.0 + 8.1) / 2.0 for d, v in zip(dates, fly)}}
+        monkeypatch.setattr(mrs, "bundle", lambda: {"irs": irs})
+        leg = {"entry": dates[19], "knobs": self.KN, "series": "IRF-2Y-5Y-10Y", "kind": "irs",
+               "tenor": "5Y", "rateSign": +1, "level": 4.08, "dv01": 4.5e6}
+        got = paper.track_leg(leg)
+        assert got["unit"] == "bp" and got["mine"] is not None
+        assert got["mine"]["exitLevel"] == pytest.approx((got["exitLevel"] / 100.0 + 8.1) / 2.0, abs=1e-4)
+        del irs["5Y"][dates[-1]]                                       # 번들이 마지막 날에 아직 안 닿았다
+        got2 = paper.track_leg(leg)
+        assert got2["mine"] is None and got2["mineWhy"] and got2["exitLevel"] == got["exitLevel"]
+        del irs["2Y"]                                                  # 만기 자체가 없어도 죽지 않는다
+        assert paper.track_leg(leg)["mine"] is None
+
+    def test_주입_없이_BSS_는_계열의_다리를_그대로_쓴다(self, monkeypatch):
+        dates = _dates(26)
+        bss = [5.0] * 19 + [-4.0] + [1.0] * 6
+        monkeypatch.setattr(mr_mod, "series_points",
+                            lambda sid: {"id": sid, "unit": "bp",
+                                         "points": [{"t": d, "v": v, "legs": [4.0 + v / 100.0, 4.0]}
+                                                    for d, v in zip(dates, bss)]})
+        leg = {"entry": dates[19], "knobs": self.KN, "series": "BSS-3Y", "kind": "irs", "tenor": "3Y",
+               "rateSign": +1, "level": 4.0, "dv01": 2.8e6}
+        got = paper.track_leg(leg)
+        assert got["unit"] == "bp" and got["mine"]["others"] == [{"name": "국고", "v": 4.0}]
+
+    def test_계기_종류가_다르면_다리가_아니다(self):
+        dates = _dates(26)
+        curve = [5.0] * 19 + [-4.0] + [1.0] * 6
+        pts = [{"t": d, "v": v, "legs": [4.16, 4.16 - v / 100.0]} for d, v in zip(dates, curve)]
+        base = {"entry": dates[19], "knobs": self.KN, "series": "IRC-5Y-10Y", "tenor": "5Y",
+                "rateSign": -1, "level": 4.145, "dv01": 1e7}
+        for kind in ("bond", "fut"):
+            got = paper.track_leg({**base, "kind": kind}, points_of=lambda _s: pts)
+            assert got["mine"] is None, kind
+            assert "IRC-5Y-10Y" in got["mineWhy"] and "다리가 아니에요" in got["mineWhy"]
+            assert got["exitLevel"] is not None                       # 계열 값은 그대로 선다
+        # 계기 칸이 아예 없는 옛 다리 · tenor None 도 죽지 않고 사유로 떨어진다
+        got = paper.track_leg(base, points_of=lambda _s: pts)
+        assert got["mine"] is None and got["mineWhy"] and got["hit"] is None
+        got = paper.track_leg({**base, "kind": "irs", "tenor": None}, points_of=lambda _s: pts)
+        assert got["mine"] is None and got["mineWhy"]
+
+    def test_손절_손익도_적힌_레벨로_닫히고_비용은_왕복이다(self):
+        dates = _dates(26)
+        curve = [5.0] * 19 + [-4.0] + [1.0] * 6
+        pts = [{"t": d, "v": v, "legs": [4.16, 4.16 - v / 100.0]} for d, v in zip(dates, curve)]
+        leg = {"entry": dates[19], "knobs": self.KN, "series": "IRC-5Y-10Y", "kind": "irs", "tenor": "5Y",
+               "rateSign": -1, "level": 4.145, "dv01": 1e7}
+        m = paper.track_leg(leg, points_of=lambda _s: pts, cost_bp=0.5)["mine"]
+        for lv, pnl in (("exitLevel", "exitPnl"), ("stopLevel", "stopPnl")):
+            assert m[lv] == round(m[lv], 4)
+            # 적힌 레벨(4자리)로 다시 곱해 같은 돈 — 1원 안에서 (안 접은 레벨로 세면 2~4만원 어긋난다)
+            assert m[pnl] == pytest.approx(-1 * (m[lv] - 4.145) * 100 * 1e7 - 2 * 0.5 * 1e7, abs=1)
+        m0 = paper.track_leg(leg, points_of=lambda _s: pts, cost_bp=0.0)["mine"]
+        assert m0["exitPnl"] - m["exitPnl"] == pytest.approx(2 * 0.5 * 1e7, abs=1)     # 왕복
+        assert m0["stopPnl"] - m["stopPnl"] == pytest.approx(2 * 0.5 * 1e7, abs=1)
+        assert m0["exitPnl"] > 0 > m0["stopPnl"]                                          # 이 픽스처에서 청산=이익·손절=손해
+        md = paper.track_leg(leg, points_of=lambda _s: pts)["mine"]                      # 기본 비용 = 장부의 그 상수
+        assert md["exitPnl"] == pytest.approx(m0["exitPnl"] - 2 * paper.COST_BP * 1e7, abs=1)
+
+
+class Test계열_다리_규약_대사:
+    """★두 벌을 둘 수밖에 없으면 대사로 묶는다 — `series_legs` 는 `mrseries.points`
+    ([스왑, 국고])와 `combo_points`([긴, 짧은])의 다리 차례를 **손으로 옮겨 적은 것**이다.
+    저쪽이 차례를 바꾸면 페이퍼 북이 국고 금리를 IRS 줄에 적게 된다 — 합성 점이 아니라
+    **그 함수가 낸 점**으로 표가 값을 닫는지를 잰다."""
+
+    def test_BSS_점의_다리_차례는_스왑_국고이고_표가_그_값을_닫는다(self, monkeypatch):
+        from app import mrseries as mrs
+        dates = ["2026-01-02", "2026-01-05"]
+        govt, swap, cd = [3.995, 4.000], [4.0375, 4.050], [2.9, 2.9]
+        monkeypatch.setattr(mrs, "legs", lambda sid, *, need_cd=False: (dates, govt, swap, cd))
+        last = mrs.points("BSS-3Y")["points"][-1]
+        t = paper.series_legs("bss", "BSS-3Y", last)
+        assert sum(l["w"] * l["v"] for l in t["legs"]) * t["scale"] == pytest.approx(last["v"], abs=1e-6)
+        assert next(l["v"] for l in t["legs"] if l["kind"] == "irs") == swap[-1]
+        assert next(l["v"] for l in t["legs"] if l["kind"] == "bond") == govt[-1]
+
+    def test_커브_점의_다리_차례는_긴_짧은이고_표가_그_값을_닫는다(self, monkeypatch):
+        from app import mrseries as mrs
+        irs = {"5Y": {"2026-01-02": 4.11}, "10Y": {"2026-01-02": 4.16}}
+        monkeypatch.setattr(mrs, "bundle", lambda: {"ktb": {}, "irs": irs, "cd": {}})
+        last = mrs.combo_points("IRC-5Y-10Y")["points"][-1]
+        t = paper.series_legs("irc", "IRC-5Y-10Y", last)
+        assert sum(l["w"] * l["v"] for l in t["legs"]) * t["scale"] == pytest.approx(last["v"], abs=1e-6)
+        assert next(l["v"] for l in t["legs"] if l["tenor"] == "10Y") == 4.16
+        assert next(l["v"] for l in t["legs"] if l["tenor"] == "5Y") == 4.11
+        irs.update({"2Y": {"2026-01-02": 3.9}})
+        fly = mrs.combo_points("IRF-2Y-5Y-10Y")["points"][-1]
+        assert paper.series_legs("irf", "IRF-2Y-5Y-10Y", fly) is None       # 플라이 점엔 다리가 없다
+        t = paper.series_legs("irf", "IRF-2Y-5Y-10Y", fly,
+                              irs_of=lambda tenor, day: mrs.bundle()["irs"][tenor].get(day))
+        assert sum(l["w"] * l["v"] for l in t["legs"]) * t["scale"] == pytest.approx(fly["v"], abs=1e-6)
+
+
+class Test조건_붙이기:
+    """조건이 **없던** 다리에 조건을 붙인다 [OWNER 2026-09-28]. 「다시 고른다」가
+    아니라 「비어 있던 칸을 적는다」 — 언 다리는 거절하고, 붙인 날을 적는다."""
+
+    KN = {"lookback": 60, "entryZ": 2.5, "exitZ": 0.5, "stopZ": 3.0, "entryMode": "level"}
+
+    def _store(self, *, knobs=None, closed=False) -> dict:
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2026-09-21",
+                      level=3.0, notional=1e10, dv01=1_900_000.0, knobs=knobs)
+        if closed:
+            paper.close_leg(st, 1, "2026-09-22", 3.1)
+        return st
+
+    def test_빈_다리에_붙고_붙인_날이_남는다(self):
+        st = self._store()
+        paper.attach_knobs(st, 1, self.KN, "BSS-2Y", today="2026-09-28")
+        lg = st["legs"][0]
+        assert lg["knobs"] == self.KN
+        assert lg["series"] == "BSS-2Y"
+        assert lg["knobsAt"] == "2026-09-28", "뒤에 붙인 조건은 그 날을 들고 있어야 한다"
+
+    def test_언_조건은_다시_고르지_않는다(self):
+        st = self._store(knobs=self.KN)
+        with pytest.raises(paper.LegRejected, match="이미 조건이"):
+            paper.attach_knobs(st, 1, {**self.KN, "lookback": 20}, None, today="2026-09-28")
+        assert st["legs"][0]["knobs"] == self.KN and "knobsAt" not in st["legs"][0]
+
+    def test_닫힌_다리와_반쪽_조건과_없는_다리는_거절한다(self):
+        with pytest.raises(paper.LegRejected, match="닫혔어요"):
+            paper.attach_knobs(self._store(closed=True), 1, self.KN, None)
+        with pytest.raises(paper.LegRejected, match="빠진 것"):
+            paper.attach_knobs(self._store(), 1, {"lookback": 60}, None)
+        with pytest.raises(paper.LegRejected, match="붙일 조건이"):
+            paper.attach_knobs(self._store(), 1, None, None)
+        with pytest.raises(paper.LegRejected, match="없어요"):
+            paper.attach_knobs(self._store(), 9, self.KN, None)
+
+    def test_계열은_없을_때만_받는다(self):
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2026-09-21",
+                      level=3.0, notional=1e10, dv01=1_900_000.0, series="BSS-2Y")
+        paper.attach_knobs(st, 1, self.KN, "BSS-3Y", today="2026-09-28")
+        assert st["legs"][0]["series"] == "BSS-2Y", "담을 때 적은 계열이 이긴다"
+
+    def test_라우트가_사유를_그대로_낸다(self, monkeypatch, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from app import main as M
+
+        monkeypatch.setattr(paper, "STORE", tmp_path / "book.json")
+        c = TestClient(M.app)
+        c.post("/api/paper/leg", json=dict(kind="irs", tenor="2Y", side="pay",
+                                           entry="2026-09-21", level=3.0, notional=1e10))
+        r = c.post("/api/paper/leg/knobs", json=dict(n=1, knobs={"lookback": "60"}))
+        assert r.status_code == 422 and "빠진 것" in r.json()["detail"]
+        r = c.post("/api/paper/leg/knobs", json=dict(n=1, knobs=self.KN, series="BSS-2Y"))
+        assert r.status_code == 200, r.text
+        assert r.json()["available"] is True
+        lg = r.json()["position"]["legs"][0]
+        assert lg["knobs"]["lookback"] == 60 and lg["knobsAt"]
+        r = c.post("/api/paper/leg/knobs", json=dict(n=1, knobs=self.KN))
+        assert r.status_code == 422 and "이미 조건이" in r.json()["detail"]
+
+
+# ── 트레이드 추적 ────────────────────────────────────────────────────────────
+class Test트레이드_추적:
+    """다리들을 **백테스트 엔진의 포지션**으로 옮겨 적고, 장부 손익을 그 분해로
+    대조한다 [OWNER 2026-09-28]. 산술은 안 만든다 — 방향 번역 한 번과 대조식 하나."""
+
+    def _leg(self, kind: str, side: str, **kw) -> dict:
+        base = dict(n=1, kind=kind, tenor="3Y", side=side,
+                    rateSign=paper.SIDE_SIGN[(kind, side)],
+                    entry="2025-09-22", exit=None, level=3.0,
+                    notional=1e10, dv01=2_850_000.0)
+        base.update(kw)
+        return base
+
+    def test_방향은_계기마다_한_번만_옮긴다(self):
+        """스왑 +1 = 페이(금리↑에 번다) · 채권·선물 +1 = 매수(금리↓에 번다)."""
+        got = paper.trace_positions([
+            self._leg("irs", "pay"), self._leg("irs", "receive", n=2),
+            self._leg("bond", "buy", n=3), self._leg("fut", "sell", n=4),
+            self._leg("fut", "buy", n=5, exit="2026-01-05"),
+        ])
+        assert [(g["id"], g["direction"]) for g in got] == [
+            ("3Y", 1), ("3Y", -1), ("CB:KTB:3Y", 1), ("FUT:3Y", -1), ("FUT:3Y", 1)]
+        assert got[4]["exit"] == "2026-01-05" and got[0]["exit"] is None
+        assert all(g["entry"] == "2025-09-22" and g["notional"] == 1e10 for g in got)
+
+    def test_대조식이_닫힌다(self):
+        """장부 손익 = 체결 차이 + 엔진 손익 − 비용 + 차이 — 그리고 차이는 남는 몫이다."""
+        leg = self._leg("irs", "pay", level=3.97)
+        row = {"id": "3Y", "label": "3Y", "entry": "2025-09-22", "exit": "2026-09-23",
+               "entryValue": 3.99, "pnl": 100_000.0, "valuation": 90_000.0,
+               "carry": 20_000.0, "rolldown": -10_000.0, "startup": 0.0}
+        got = paper.reconcile_leg(leg, row, paper_pnl=150_000.0, cost=1_425_000.0)
+        # 페이인데 종가(3.99)보다 싸게(3.97) 냈다 → 체결 차이 = +2bp × DV01
+        assert got["exec"] == pytest.approx(2.0 * 2_850_000.0, abs=1)
+        assert got["engine"] == 100_000.0 and got["funding"] is None
+        assert got["residual"] == pytest.approx(
+            150_000.0 - (got["exec"] + 100_000.0 - 1_425_000.0), abs=1)
+        assert got["entryClose"] == 3.99 and got["level"] == 3.97
+
+    def test_진입일_종가를_모르면_체결_차이도_차이도_없다(self):
+        leg = self._leg("bond", "buy")
+        got = paper.reconcile_leg(leg, {"id": "CB:KTB:3Y", "pnl": 1.0},
+                                  paper_pnl=2.0, cost=3.0)
+        assert got["exec"] is None and got["residual"] is None
+        # 채권은 `entryYield` 가 진입일 종가다.
+        assert paper.entry_close_of({"entryYield": 2.457, "entryValue": None}) == 2.457
+
+    def test_라우트의_문(self, monkeypatch, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from app import main as M
+
+        monkeypatch.setattr(paper, "STORE", tmp_path / "book.json")
+        c = TestClient(M.app)
+        assert c.get("/api/paper/trace", params={"legs": "a"}).status_code == 422
+        assert c.get("/api/paper/trace", params={"legs": ""}).status_code == 422
+        r = c.get("/api/paper/trace", params={"legs": "7"})
+        assert r.status_code == 422 and "없는 다리" in r.json()["detail"]
+
+
+# ── 묶음 소계 ────────────────────────────────────────────────────────────────
+class Test묶음_소계:
+    """「트레이드」= 묶음. 소계는 **서버가 센다**(§16) — 화면 가드
+    (`guards/portfolio-canon.test.ts`)가 화면에 `reduce` 가 없음을 잰다."""
+
+    @staticmethod
+    def _row(n: int, tag: str, *, pnl, open=True, rs=1, dv01=1_000_000.0,
+             notional=1e10) -> dict:
+        return {"n": n, "tag": tag, "pnl": pnl, "open": open, "rateSign": rs,
+                "dv01": dv01, "notional": notional}
+
+    def test_묶음_차례는_첫_등장이고_없는_다리는_제_혼자다(self):
+        rows = [self._row(1, "A", pnl=1.0), self._row(2, "", pnl=2.0),
+                self._row(3, "A", pnl=3.0), self._row(4, "B", pnl=None)]
+        got = paper.group_legs(rows)
+        assert [g["key"] for g in got] == ["tag:A", "leg:2", "tag:B"]
+        assert got[0]["legs"] == [1, 3] and got[0]["label"] == "A"
+        assert got[1]["label"].startswith("2번 다리")
+
+    def test_합의_규율은_카드와_같다(self):
+        """한 다리라도 아직이면 합계는 None, 매겨진 것만의 소계는 따로."""
+        rows = [self._row(1, "A", pnl=1.0, rs=1, dv01=2.0),
+                self._row(2, "A", pnl=None, rs=-1, dv01=3.0),
+                self._row(3, "A", pnl=5.0, open=False, rs=1, dv01=9.0)]
+        g = paper.group_legs(rows)[0]
+        assert g["pnl"] is None and g["scoredPnl"] == 6.0
+        assert g["scored"] == 2 and g["pending"] == 1
+        assert g["open"] == 2 and g["closed"] == 1
+        # DV01 은 부호를 지고, 들고 있는 다리만.
+        assert g["netDv01"] == pytest.approx(2.0 - 3.0)
+        assert g["grossDv01"] == pytest.approx(5.0)
+        assert g["openNotional"] == pytest.approx(2e10)
+        full = paper.group_legs([self._row(1, "A", pnl=1.0), self._row(2, "A", pnl=2.5)])[0]
+        assert full["pnl"] == 3.5 and full["scoredPnl"] == 3.5 and full["pending"] == 0
+
+    def test_시트가_묶음과_전체_명목을_싣는다(self):
+        leg_of, _d, _v = _leg_of(120)
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2020-03-02",
+                      level=3.0, notional=1e10, dv01=1_900_000.0, tag="BSS 2Y")
+        paper.add_leg(st, kind="fut", tenor="3Y", side="buy", entry="2020-03-02",
+                      level=3.1, notional=2e10, dv01=1_900_000.0, tag="BSS 2Y")
+        sheet = paper.build_sheet(leg_of=leg_of, store=st,
+                                  mark_of=lambda k, t: ("2020-03-03", 3.05))
+        pos = sheet["position"]
+        assert pos["openNotional"] == pytest.approx(3e10)
+        assert len(pos["groups"]) == 1 and pos["groups"][0]["legs"] == [1, 2]
+        assert pos["groups"][0]["pnl"] == pos["pnl"]
