@@ -495,10 +495,15 @@ class TestTwoLegRecon:
             assert b["actual"] + s["actual"] == r["actual"], r["t"]
 
     def test_each_leg_closes_its_own_components(self, rec):
-        """다리마다 `평가 + 캐리 + 롤다운 + 조달 = 그날 손익`, 0원.
+        """다리마다 `평가 + 캐리 + 롤다운 + 풀투파 + 조달 = 그날 손익`, 0원.
 
         그리고 다리별 캐리·롤다운의 합이 하루의 것과 같다 — 안 그러면 표가
         세로로는 닫히는데 가로로는 안 닫힌다.
+
+        ★**풀투파가 여섯째 칸이다** [OWNER 2026-09-28 — 「칸을 나눈다」]. 옛
+        「롤다운」 칸에서 떼어낸 몫이라 여기 안 넣으면 국고 다리가 안 닫힌다
+        (실측으로 이 시험이 그걸 잡았다 — 2020-03-27 국고 124,682 대 124,391).
+        IRS 다리는 `None` 이다(par 로 당겨질 액면이 없다 — 공란 정책).
         """
         for r in rec["rows"]:
             if r.get("actual") is None:
@@ -506,10 +511,14 @@ class TestTwoLegRecon:
             b, s = r["legs"]
             for lg in (b, s):
                 parts = (lg["valuation"] + (lg["carry"] or 0)
-                         + (lg["rolldown"] or 0) + (lg["funding"] or 0))
+                         + (lg["rolldown"] or 0) + (lg.get("pullToPar") or 0)
+                         + (lg["funding"] or 0))
                 assert parts == lg["actual"], f"{r['t']} {lg['name']}"
             assert (b["carry"] or 0) + (s["carry"] or 0) == (r["carry"] or 0), r["t"]
             assert (b["rolldown"] or 0) + (s["rolldown"] or 0) == (r["rolldown"] or 0), r["t"]
+            # 풀투파는 국고 다리만 — 그 합이 하루의 것과 같고 IRS 는 공란이다.
+            assert s.get("pullToPar") is None, r["t"]
+            assert (b.get("pullToPar") or 0) == (r.get("pullToPar") or 0), r["t"]
 
     def test_only_the_bond_leg_is_funded(self, rec):
         """조달은 **국고 다리만** 진다 — 현물을 조달해 들고 있는 비용이다.

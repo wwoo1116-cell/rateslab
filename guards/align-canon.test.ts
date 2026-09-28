@@ -120,3 +120,53 @@ describe('규칙 2 — 라벨은 컨트롤 **위**다', () => {
     expect([...new Set(offenders)]).toEqual([]);
   });
 });
+
+/* ── 규칙 4½ — **격자 열 수는 그리는 칸과 같은 조건으로 센다** [2026-09-29] ───
+ *
+ * 백테스트 헤드라인 분해(`Decomp`)는 `grid-template-columns:
+ * repeat(cols, max-content)` 격자이고, `cols` 를 코드가 **손으로 센다**. 칸을
+ * 하나 더 그리면서 그 셈을 안 늘리면 격자가 넘친 칸을 **조용히 다음 줄로
+ * 접는다** — 실측 2026-09-29(ASW:KTB:3Y 100억): 풀투파 칸이 붙은 판에서
+ * 헤드라인의 조달이 아래 줄로 떨어지고 「국고」가 홈통이 아니라 둘째 열에,
+ * 「IRS」가 줄 가운데에 앉았다. 눌러 보면 숫자는 다 있고 **자리만 거짓말**을
+ * 한다(이 격자의 쓸모가 «세로로 같은 성분끼리 맞는 것» 이라 그게 전부다).
+ *
+ * 플레이라이트가 안 잡는 이유: 이 서랍은 북을 실행해야 열리고, 픽셀 가드는
+ * 실행 전 화면만 잰다. 그래서 소스에서 잡는다 — 「그리는 조건」과 「세는 조건」이
+ * 같은 낱말을 쓰는가.
+ */
+describe('규칙 4½ — 격자 열 수는 그리는 칸과 같은 조건으로 센다', () => {
+  const backtest = () => stripComments(read('backtest', 'BacktestWindow.tsx'));
+
+  it('헤드라인 칸을 켜는 깃발은 전부 열 셈에도 든다', () => {
+    const src = backtest();
+    const body = src.slice(src.indexOf('function Decomp('),
+                           src.indexOf('function LegCells('));
+    const cols = body.match(/const cols = ([^;]+);/);
+    expect(cols, '`Decomp` 에서 열 셈을 못 찾았어요').not.toBeNull();
+    /* 칸을 켜고 끄는 것은 `head.has*` 깃발과 `head.uFund != null` 둘뿐이다. */
+    const flags = new Set([...body.matchAll(/head\.(has[A-Z]\w*)/g)].map((m) => m[1]));
+    if (/head\.uFund != null/.test(body)) flags.add('uFund');
+    expect(flags.size, '헤드라인 칸을 켜는 깃발이 하나도 없어요 — 격자가 바뀌었나요?')
+      .toBeGreaterThanOrEqual(3);
+    for (const f of flags) {
+      expect(cols![1], `칸은 ${f} 로 켜는데 열 셈에 ${f} 가 없어요 — 격자가 접혀요`)
+        .toContain(f);
+    }
+  });
+
+  it('다리 줄의 칸은 **줄이 아니라 헤드라인**이 정한다', () => {
+    /* 줄마다 칸 수가 갈리면 그 줄의 다음 성분이 옆 열로 밀린다(국고는 숫자,
+       IRS 는 `null` → IRS 의 캐리가 풀투파 열 아래 섰다 — 실측 2026-09-29).
+       열이 섰으면 그 줄은 숫자든 em dash 든 한 칸을 낸다. */
+    const src = backtest();
+    const legs = src.slice(src.indexOf('function LegCells('),
+                           src.indexOf('function LegCells(') + 1400);
+    const gates = [...legs.matchAll(/if \(([^)]+)\) items\.push/g)].map((m) => m[1].trim());
+    expect(gates.length, '다리 칸의 조건을 못 찾았어요').toBeGreaterThanOrEqual(2);
+    expect(
+      gates.filter((g) => !/^has[A-Z]\w*$/.test(g)),
+      '다리 칸을 줄의 값(`row.*`)으로 켜고 있어요 — 줄마다 칸 수가 갈립니다',
+    ).toEqual([]);
+  });
+});

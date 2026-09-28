@@ -66,6 +66,22 @@ def _matrix(dates: list[dt.date], rate_pct: float = 3.10) -> cm.CreditMatrix:
     )
 
 
+def _futdata(dates: list[dt.date], price: float = 104.0):
+    """페이크 선물 — 값이 평평해 손익 0 이다(이 시험은 **달력**만 잰다)."""
+    from app import futures as ft
+    from irs_pricer.services.simulation.futures_pricing import implied_yield
+
+    def mk(years: int) -> "ft.FuturesSeries":
+        path = [price] * len(dates)
+        return ft.FuturesSeries(
+            dates=list(dates), price_adj=list(path),
+            implied=[implied_yield(price, years)] * len(dates), price_ctr=list(path),
+        )
+
+    return ft.FuturesData(series={"3Y": mk(3), "10Y": mk(10)},
+                          watermark=("test", len(dates)))
+
+
 def _pos(sid: str, direction: int, entry: dt.date, exit: dt.date | None = None):
     return mb.MixedPosition(sid, direction, N, entry, exit)
 
@@ -182,6 +198,50 @@ class TestCalendar:
         got = {p["t"] for p in out["points"]}
         assert not (got & {d.isoformat() for d in holes})
         assert out["calendar"]["dropped"] == 3
+
+    def test_the_rows_are_clipped_to_the_book_window(self):
+        """★Σ줄 == 헤드라인 [OWNER 2026-09-28 — 「북 창으로 깎는다」].
+
+        종전에는 헤드라인이 공통 달력의 마지막 점이고 줄들은 각자 **자기 달력의
+        청산일**까지 살아서, 같은 화면의 두 수가 어긋났다(실장 실측 683,680원 ·
+        선물 없는 `_mixed` 경로에서도 491,829원). 적대 검증(2026-09-28)이 잡았고,
+        그때 이 자리의 가드는 **달력이 완전히 겹치는 픽스처**여서 아무것도 안
+        재고 있었다 — 그래서 이 시험은 **달력을 일부러 어긋나게** 만든다.
+
+        고른 길: 모든 수가 한 날 위에 선다. 깎이기 전에 어디까지 살았는지는
+        버리지 않고 `clippedTo` 로 싣는다(「안 적었다」 ≠ 「0」).
+        """
+        ds = _dataset()
+        # 민평 달력을 **뒤에서 사흘** 짧게 만든다 — 스왑은 그 사흘을 더 산다.
+        m = _matrix(ds.dates[:-3])
+        book = [_pos("10Y", 1, ds.dates[5]), _pos("CB:KTB:3Y", 1, ds.dates[5])]
+        out = mb.run_backtest(m, ds, book, SPEC)
+        rows = out["positions"]
+        assert out["to"] == m.dates[-1].isoformat(), "북 창이 민평 끝이 아니다"
+        assert out["pnl"] == pytest.approx(sum(r["pnl"] for r in rows), abs=len(rows)), (
+            f'헤드라인 {out["pnl"]:,.0f} != Σ줄 {sum(r["pnl"] for r in rows):,.0f}')
+        # 스왑 줄은 깎였고, **어디까지 살았는지**를 말한다.
+        swap = next(r for r in rows if r["id"] == "10Y")
+        assert swap["exit"] == out["to"], "스왑 줄이 북 창 밖에서 끝난다"
+        assert swap["clippedTo"] == ds.dates[-1].isoformat(), swap.get("clippedTo")
+        # 채권 줄은 원래 북 창까지라 깎일 것이 없다 — 그럴 때는 칸이 없다.
+        bond = next(r for r in rows if r["id"] == "CB:KTB:3Y")
+        assert "clippedTo" not in bond, bond.get("clippedTo")
+
+    def test_the_clip_covers_the_futures_path_too(self):
+        """같은 규율이 `_mixed_any`(선물이 낀 북)에도 선다 — 경로가 둘이라
+        한쪽만 고치면 같은 북이 선물 유무로 다른 수를 낸다."""
+        ds = _dataset()
+        m = _matrix(ds.dates[:-3])
+        fut = _futdata(ds.dates)
+        book = [_pos("10Y", 1, ds.dates[5]), _pos("CB:KTB:3Y", 1, ds.dates[5]),
+                _pos("FUT:3Y", 1, ds.dates[5])]
+        out = mb.run_backtest(m, ds, book, SPEC, fut=fut)
+        rows = out["positions"]
+        assert out["pnl"] == pytest.approx(sum(r["pnl"] for r in rows), abs=len(rows)), (
+            f'헤드라인 {out["pnl"]:,.0f} != Σ줄 {sum(r["pnl"] for r in rows):,.0f}')
+        swap = next(r for r in rows if r["id"] == "10Y")
+        assert swap["clippedTo"] == ds.dates[-1].isoformat()
 
     def test_a_gap_day_measures_from_the_last_shared_close(self):
         """민평이 하루 빠진 다음 날의 `d` 는 **직전 공통일 대비**다 — 두 계열의
@@ -301,12 +361,16 @@ class TestRecon:
         assert s_body and b_body
         for row in s_body:
             assert "funding" not in row
+            # 순수 스왑에는 풀투파가 **없다** — 0 이 아니라 없다(공란 정책).
+            assert row.get("pullToPar") is None
             total = row["valuation"] + row["rolldown"] + row["carry"] + (row.get("startup") or 0)
             assert total == pytest.approx(row["actual"], abs=2.0)
         for row in b_body:
+            # ★채권 표에는 풀투파가 있다 [OWNER 2026-09-28 — 「칸을 나눈다」].
+            # 롤다운 칸에서 떼어낸 그 몫이라, 항등식에 같이 안 넣으면 안 닫힌다.
             total = (
-                row["valuation"] + row["rolldown"] + row["carry"]
-                + (row.get("startup") or 0) + (row["funding"] or 0)
+                row["valuation"] + row["rolldown"] + (row["pullToPar"] or 0)
+                + row["carry"] + (row.get("startup") or 0) + (row["funding"] or 0)
             )
             assert total == pytest.approx(row["actual"], abs=2.0)
 

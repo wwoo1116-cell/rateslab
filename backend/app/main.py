@@ -1556,8 +1556,13 @@ def _mr_scale_rows(rows: list[dict], scale: float) -> list[dict]:
             d["estTotal"] = sum(d["est"].values())     # 총계는 성분의 합이다
         if d.get("actual") is not None:
             # 「그날 손익」이 정본이고 **평가가 잔차를 진다**(엔진과 같은 규칙).
+            # ★풀투파도 빼야 한다 [OWNER 2026-09-28 — 「칸을 나눈다」]. 종전엔
+            # 그 몫이 롤다운 안에 있었으므로 이 줄이 저절로 맞았는데, 칸을 나눈
+            # 뒤에는 여기서 안 빼면 **평가가 풀투파만큼 부풀고** 그 오차가
+            # 그대로 잔차로 흘러간다(평가가 잔차를 지는 규칙이라 조용히 틀린다).
             d["valuation"] = (d["actual"] - (d.get("carry") or 0)
-                              - (d.get("rolldown") or 0) - (d.get("funding") or 0))
+                              - (d.get("rolldown") or 0) - (d.get("pullToPar") or 0)
+                              - (d.get("funding") or 0))
             if d.get("estTotal") is not None:
                 d["residual"] = d["valuation"] - d["estTotal"]
         # ── 다리 블록도 같은 자로 [OWNER 2026-09-04] ─────────────────────────
@@ -1600,10 +1605,14 @@ def _mr_scale_rows(rows: list[dict], scale: float) -> list[dict]:
                 # 세우면 다리합이 그날 손익과 원 단위로 갈린다.
                 bond["carry"] = (d.get("carry") or 0) - s_carry
                 bond["rolldown"] = (d.get("rolldown") or 0) - s_roll
+                # 풀투파는 스왑에 없으니(위 `pullToPar: None`) 총계의 그것이
+                # 곧 국고 다리의 것이다.
+                bond["pullToPar"] = d.get("pullToPar")
                 bond["funding"] = d.get("funding") or 0
                 bond["actual"] = d["actual"] - s_act
                 bond["valuation"] = (bond["actual"] - bond["carry"]
-                                     - bond["rolldown"] - bond["funding"])
+                                     - bond["rolldown"] - (bond["pullToPar"] or 0)
+                                     - bond["funding"])
                 for lg in (bond, swap):
                     if lg.get("estTotal") is not None:
                         lg["residual"] = lg["valuation"] - lg["estTotal"]

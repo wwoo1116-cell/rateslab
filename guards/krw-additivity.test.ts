@@ -266,7 +266,7 @@ describe('다리별 분해 — 세로가 헤드라인과 닫힌다', () => {
   });
   const head = splitCashBondKrw(ASW.pnl, ASW.valuation, ASW.rolldown!,
                                 ASW.funding!, ASW.startup!);
-  const parts = { ...head, hasTheta: true };
+  const parts = { ...head, hasTheta: true, hasPull: false };
 
   it('네 열이 모두 헤드라인과 **정확히** 닫힌다', () => {
     const rows = legRows([ASW], parts);
@@ -307,7 +307,7 @@ describe('다리별 분해 — 세로가 헤드라인과 닫힌다', () => {
       rolldown: -111_221_414, carry: 37_547_159, startup: -16_775, funding: null,
     });
     const h = splitKrw(fsw.pnl, fsw.valuation, fsw.rolldown!, fsw.startup!);
-    const rows = legRows([fsw], { ...h, uFund: null, hasTheta: true });
+    const rows = legRows([fsw], { ...h, uFund: null, hasTheta: true, hasPull: false });
     expect(rows[0].uCarry).toBeNull();
     expect(rows[0].uRoll).toBeNull();
     /* 잔차가 갈 곳이 IRS 하나뿐이므로 그 칸이 헤드라인과 같아진다. */
@@ -321,12 +321,50 @@ describe('다리별 분해 — 세로가 헤드라인과 닫힌다', () => {
                         startup: 0, funding: null, pnl: 100 }],
                      { kind: 'swap', pnl: 100, valuation: 100 });
     const h = splitKrw(swap.pnl, swap.valuation, 0, 0);
-    expect(legRows([swap], { ...h, uFund: null, hasTheta: true })).toEqual([]);
+    expect(legRows([swap], { ...h, uFund: null, hasTheta: true, hasPull: false })).toEqual([]);
   });
 
   it('한 줄이라도 `legParts` 가 없으면 아예 안 그린다 — 반쯤 묶으면 열이 샌다', () => {
     const old = pos(undefined, { pnl: 1, valuation: 1 });
     const h = splitKrw(1, 1, 0, 0);
-    expect(legRows([ASW, old], { ...h, uFund: null, hasTheta: true })).toEqual([]);
+    expect(legRows([ASW, old], { ...h, uFund: null, hasTheta: true, hasPull: false })).toEqual([]);
+  });
+});
+
+describe('풀투파는 캐리에 숨지 않는다 [OWNER 2026-09-28 — 「칸을 나눈다」]', () => {
+  /* 이 표의 규칙이 「캐리가 잔차를 진다」라서, 새 성분에 칸을 안 주면 그 몫이
+     **조용히 캐리로 들어간다.** 적대 검증(2026-09-28)이 혼합 북에서 실제로
+     그것을 잡았다 — 어긋남 683,680원 중 670,000원을 화면 캐리 칸이 먹고 있었다.
+     그래서 이 가드가 지는 명제는 하나다: **풀투파를 넣으면 캐리가 안 움직인다.** */
+  it('풀투파를 주면 캐리가 아니라 제 칸이 받는다', () => {
+    const PNL = 96_000_000, VAL = 10_000_000, ROLL = 20_000_000;
+    const PULL = 30_000_000;
+    const without = splitKrw(PNL, VAL, ROLL, 0, 0);
+    const withPull = splitKrw(PNL, VAL, ROLL, 0, PULL);
+    expect(without.uPull).toBe(0);
+    expect(withPull.uPull).toBe(manUnits(PULL));
+    /* 캐리가 정확히 풀투파만큼 줄어든다 — 즉 종전엔 그만큼을 먹고 있었다. */
+    expect(without.uCarry - withPull.uCarry).toBe(manUnits(PULL));
+    /* 그리고 가로합은 그대로 닫힌다 — 이 표의 존재 이유. */
+    expect(withPull.uVal + withPull.uRoll + withPull.uPull + withPull.uCarry)
+      .toBe(withPull.uPnl);
+  });
+
+  it('현금채권 쪽 분배기도 같다 — 조달이 끼어도 가로합이 닫힌다', () => {
+    const h = splitCashBondKrw(96_000_000, 10_000_000, 20_000_000,
+                               -12_000_000, 0, 30_000_000);
+    expect(h.uPull).toBe(manUnits(30_000_000));
+    expect(h.uVal + h.uRoll + h.uPull + h.uFund + h.uCarry).toBe(h.uPnl);
+    const bare = splitCashBondKrw(96_000_000, 10_000_000, 20_000_000,
+                                  -12_000_000, 0);
+    expect(bare.uPull).toBe(0);
+    expect(bare.uCarry - h.uCarry).toBe(manUnits(30_000_000));
+  });
+
+  it('순수 스왑에서는 한 원도 안 바뀐다 — 풀투파가 없는 성분이라', () => {
+    /* 기본값 0 이라 종전 호출부(인자 넷)가 그대로 같은 수를 낸다. */
+    const h = splitKrw(348_387_097, 422_078_127, -111_221_414, -16_775);
+    expect(h.uPull).toBe(0);
+    expect(h.uVal + h.uRoll + h.uCarry).toBe(h.uPnl);
   });
 });

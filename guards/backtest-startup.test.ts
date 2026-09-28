@@ -35,7 +35,9 @@ describe('접는 자리 둘 다 접는다 (소스 핀)', () => {
   it('헤드라인 분해가 포지션의 startup 을 더해 넘긴다', () => {
     const src = read('src/backtest/BacktestWindow.tsx');
     expect(src).toMatch(/startup \+= p\.startup \?\? 0/);
-    expect(src).toMatch(/splitKrw\(result\.pnl, valuation, rolldown, startup\)/);
+    /* 인자 하나가 더 붙었다 — 풀투파 [OWNER 2026-09-28 — 「칸을 나눈다」].
+       이 핀이 재는 것은 **개시가 넘어가는가**이므로 거기까지만 본다. */
+    expect(src).toMatch(/splitKrw\(result\.pnl, valuation, rolldown, startup/);
   });
 
   it('대사 행의 평가가 startup 을 접는다', () => {

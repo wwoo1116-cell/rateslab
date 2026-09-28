@@ -690,6 +690,8 @@ def run_one(
         "valuation": round(fut_leg_pnl + (swap_rec["valuation"] if swap_rec else 0.0), 0),
         "carry": swap_rec["carry"] if swap_rec else None,
         "rolldown": swap_rec["rolldown"] if swap_rec else None,
+        # 선물도 스왑도 par 로 당겨질 액면이 없다.
+        "pullToPar": None,
         "startup": swap_rec["startup"] if swap_rec else None,
     }
     # ── 다리별 성분 [OWNER 2026-09-23] ──────────────────────────────────────
@@ -1024,6 +1026,7 @@ def book_recon(fut: FuturesData, dataset, positions: list[FuturesPosition],
                 row["valuation"] = round(day_val) + (irs["valuation"] or 0)
                 row["carry"] = irs["carry"]
                 row["rolldown"] = irs["rolldown"]
+                row["pullToPar"] = None
                 row["startup"] = irs["startup"]
                 row["actual"] = round(day_val) + (irs["actual"] or 0)
                 row["residual"] = row["valuation"] - row["estTotal"]
@@ -1107,6 +1110,7 @@ def _bucket_leg(rows: list[dict], labels: list[str]) -> dict:
         "valuation": val,
         "carry": round(_sum("carry")),
         "rolldown": round(_sum("rolldown")),
+        "pullToPar": None,
         # 개시(거래일→발효일 한 밤)는 진입일 행에만 선다 — 스왑 표의 그 칸.
         "startup": round(_sum("startup")),
         # 조달은 현물 다리만 진다 — IRS 에는 조달할 원금이 없다(공란 정책).

@@ -79,6 +79,10 @@ export interface ReconMoney {
   residual?: number | null;
   carry: number | null;
   rolldown: number | null;
+  /** ★풀투파 — 옛 「롤다운」 칸에서 떼어낸 몫 [OWNER 2026-09-28 — 「칸을 나눈다」].
+   *  `null` 은 **그 성분이 없다**(순수 스왑·선물엔 par 로 당겨질 액면이 없다)이고
+   *  0 은 「그날 0 이었다」다 — 가로합 항등식에는 숫자일 때만 든다. */
+  pullToPar?: number | null;
   /** 조달 — 현금채권 대사에만 있다 [OWNER, 2026-08-14]. 필드가 하나라도 있으면
    * 조달 열이 서고, 없으면 IRS 모양 그대로다. 서버가
    * 이미 음수로 준다 — 여기서 부호를 다시 주지 않는다. */
@@ -246,6 +250,8 @@ export function ReconStack({
      서고, 선물 표만 그 질문 없는 열이 안 선다. */
   const hasCarry = days.some((d) => typeof d.carry === 'number');
   const hasRolldown = days.some((d) => typeof d.rolldown === 'number');
+  /* 풀투파도 같은 규칙 — 숫자를 가진 날이 하나라도 있을 때만 칸이 선다. */
+  const hasPull = days.some((d) => typeof d.pullToPar === 'number');
   /* 게터가 `ReconMoney` 를 받는 이유: 다리 모드에서 **같은 열이 다리 줄에도**
      선다. 두 벌로 쓰면 «다리의 캐리» 와 «하루의 캐리» 가 다른 코드가 되고, 그
      둘이 갈리는 순간 표가 두 답을 말한다. */
@@ -257,6 +263,9 @@ export function ReconStack({
     ...(hasCarry ? [{ label: '캐리', get: (d: ReconMoney) => d.carry }] : []),
     ...(hasRolldown
       ? [{ label: '롤다운', get: (d: ReconMoney) => d.rolldown }]
+      : []),
+    ...(hasPull
+      ? [{ label: '풀투파', get: (d: ReconMoney) => d.pullToPar ?? null }]
       : []),
     ...(hasFunding
       ? [{ label: '조달', get: (d: ReconMoney) => d.funding ?? null }]
@@ -663,6 +672,7 @@ export function ReconStack({
           감쇠 × 서 있는 충격, 볼록성, 리픽싱). 가로 합계(평가
           {hasCarry ? '+캐리' : ''}
           {hasRolldown ? '+롤다운' : ''}
+          {hasPull ? '+풀투파' : ''}
           {hasFunding ? '+조달' : ''})에는 안 들어가요.
         </p>
       ) : null}

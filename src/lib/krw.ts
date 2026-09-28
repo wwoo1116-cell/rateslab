@@ -66,7 +66,8 @@ export function splitKrw(
   valuation: number,
   rolldown: number = 0,
   startup: number = 0,
-): { uPnl: number; uVal: number; uRoll: number; uCarry: number } {
+  pullToPar: number = 0,
+): { uPnl: number; uVal: number; uRoll: number; uPull: number; uCarry: number } {
   const uPnl = manUnits(pnl);
   /* **개시는 평가에 접어 넣는다** [OWNER, 2026-08-14 — "개시손익 적으면 걍
    * 무시해도 될 거 같은데"]. 그 밤을 롤다운에서 빼낸 것은 그대로다 — 바뀌는
@@ -76,7 +77,12 @@ export function splitKrw(
    * 을 따로 보낸다 — 접는 것은 표시 결정이고, 다시 펴려면 여기 하나만 고친다. */
   const uVal = manUnits(valuation + startup);
   const uRoll = manUnits(rolldown);
-  return { uPnl, uVal, uRoll, uCarry: uPnl - uVal - uRoll };
+  /* ★**풀투파는 제 칸을 얻는다** [OWNER 2026-09-28 — 「칸을 나눈다」]. 여기서
+     안 빼면 캐리가 잔차를 지는 규칙 때문에 그 몫이 조용히 캐리로 들어간다 —
+     적대 검증(2026-09-28)이 혼합 북에서 실제로 그걸 잡았다(670,000원). 순수
+     스왑은 이 항이 0 이라 종전과 한 원도 다르지 않다. */
+  const uPull = manUnits(pullToPar);
+  return { uPnl, uVal, uRoll, uPull, uCarry: uPnl - uVal - uRoll - uPull };
 }
 
 /** 현금채권의 네 칸을 표시 정밀도에서 가산적으로 [OWNER, 2026-08-14].
@@ -97,18 +103,23 @@ export function splitCashBondKrw(
   rolldown: number,
   funding: number,
   startup: number,
+  pullToPar: number = 0,
 ): {
   uPnl: number;
   uVal: number;
   uRoll: number;
+  uPull: number;
   uFund: number;
   uCarry: number;
 } {
   const uPnl = manUnits(pnl);
   const uVal = manUnits(valuation + startup);
   const uRoll = manUnits(rolldown);
+  /* 풀투파 — `splitKrw` 의 그 주석과 같은 이유다(캐리가 잔차를 지므로). */
+  const uPull = manUnits(pullToPar);
   const uFund = manUnits(funding);
-  return { uPnl, uVal, uRoll, uFund, uCarry: uPnl - uVal - uRoll - uFund };
+  return { uPnl, uVal, uRoll, uPull, uFund,
+           uCarry: uPnl - uVal - uRoll - uPull - uFund };
 }
 
 /** **부호 없는** 압축 크기 — `1.2억` · `100만` · `8,300`.

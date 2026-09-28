@@ -254,9 +254,14 @@ function legsSentence(p: BacktestPosition): string {
 function decompose(result: BacktestResult) {
   let valuation = 0;
   let rolldown = 0;
+  let pullToPar = 0;
   let startup = 0;
   let funding = 0;
   let hasFunding = false;
+  /* ★풀투파 칸이 서는 조건 [OWNER 2026-09-28] — 캐리·롤다운과 **같은 판정**이다:
+     숫자를 가진 줄이 하나라도 있나. 순수 스왑·선물은 전부 `null` 이라(par 로
+     당겨질 액면이 없다) 그 북에서는 칸이 아예 안 선다. */
+  let hasPull = false;
   /* 캐리·롤다운 항목이 서는 조건 [2026-08-25]: **숫자를 가진 줄이 하나라도
      있나** — ReconStack 의 열 규칙과 같은 판정이다. FUT 아웃라이트는 둘 다
      null(합성채는 늙지 않는다 — 성분 자체가 없다)이라 선물만의 북은 평가
@@ -267,6 +272,10 @@ function decompose(result: BacktestResult) {
   for (const p of result.positions) {
     valuation += p.valuation;
     rolldown += p.rolldown ?? 0;
+    if (p.pullToPar != null) {
+      pullToPar += p.pullToPar;
+      hasPull = true;
+    }
     // 개시(거래일→발효일 한 밤)는 평가에 접는다 [OWNER, 2026-08-14].
     startup += p.startup ?? 0;
     if (p.funding != null) {
@@ -275,36 +284,49 @@ function decompose(result: BacktestResult) {
     }
   }
   if (!hasFunding)
-    return { ...splitKrw(result.pnl, valuation, rolldown, startup), uFund: null, hasTheta };
-  return { ...splitCashBondKrw(result.pnl, valuation, rolldown, funding, startup), hasTheta };
+    return {
+      ...splitKrw(result.pnl, valuation, rolldown, startup, pullToPar),
+      uFund: null, hasTheta, hasPull,
+    };
+  return {
+    ...splitCashBondKrw(result.pnl, valuation, rolldown, funding, startup, pullToPar),
+    hasTheta, hasPull,
+  };
 }
 
 /** 줄 하나의 분해 — `decompose` 와 **같은 헬퍼·같은 규칙**이다. 「자세히」의
  *  다리 줄이 바로 위에 선 그 줄과 세로로 닫히게 하려고 같은 수를 쓴다. */
 function splitToParts(p: BacktestPosition): Parts {
   const hasTheta = p.carry != null || p.rolldown != null;
+  const hasPull = p.pullToPar != null;
   if (p.funding == null) {
     return {
-      ...splitKrw(p.pnl, p.valuation, p.rolldown ?? 0, p.startup ?? 0),
+      ...splitKrw(p.pnl, p.valuation, p.rolldown ?? 0, p.startup ?? 0, p.pullToPar ?? 0),
       uFund: null,
       hasTheta,
+      hasPull,
     };
   }
   return {
-    ...splitCashBondKrw(p.pnl, p.valuation, p.rolldown ?? 0, p.funding, p.startup ?? 0),
+    ...splitCashBondKrw(p.pnl, p.valuation, p.rolldown ?? 0, p.funding, p.startup ?? 0,
+                        p.pullToPar ?? 0),
     hasTheta,
+    hasPull,
   };
 }
 
 /** 헤드라인 분해의 모양 — `decompose` 가 내는 것과 같은 칸들. */
-type Parts = { uPnl: number; uVal: number; uRoll: number; uCarry: number;
-               uFund: number | null; hasTheta: boolean };
+type Parts = { uPnl: number; uVal: number; uRoll: number; uPull: number;
+               uCarry: number; uFund: number | null;
+               hasTheta: boolean; hasPull: boolean };
 
 /** 다리 한 줄 — 성분마다 **없으면 `null`**(0 이 아니다). */
 export type LegRow = {
   name: string;
   uVal: number | null;
   uRoll: number | null;
+  /** 풀투파 — 국고 다리만 숫자다(IRS·선물은 `null`) [OWNER 2026-09-28]. */
+  uPull: number | null;
   uCarry: number | null;
   uFund: number | null;
 };
@@ -347,11 +369,12 @@ export function legRows(positions: BacktestPosition[], head: Parts): LegRow[] {
      북을 다른 차례로 적는다. */
   const order: string[] = [];
   const sum = new Map<string, { val: number; roll: number | null;
+                                pull: number | null;
                                 carry: number | null; fund: number | null }>();
   for (const p of positions) {
     for (const lg of p.legParts as BacktestLegParts[]) {
       if (!sum.has(lg.name)) { order.push(lg.name); sum.set(lg.name, {
-        val: 0, roll: null, carry: null, fund: null }); }
+        val: 0, roll: null, pull: null, carry: null, fund: null }); }
       const g = sum.get(lg.name)!;
       /* 개시는 평가에 접는다 — 헤드라인과 **같은 규칙**이다(`splitKrw` 의 그
          주석). 다리마다 다른 규칙을 쓰면 세로 합이 어긋난다. */
@@ -359,6 +382,9 @@ export function legRows(positions: BacktestPosition[], head: Parts): LegRow[] {
       /* 「없음」과 「0」을 가른다: 하나라도 값이 있으면 그 칸은 숫자가 되고,
          끝까지 아무 줄도 값을 안 주면 공란으로 남는다(공란 정책). */
       if (lg.rolldown != null) g.roll = (g.roll ?? 0) + lg.rolldown;
+      /* 풀투파는 **국고 다리만** 진다 — IRS 다리는 `null` 로 오므로 그 다리의
+         칸은 공란으로 남는다(par 로 당겨질 액면이 없다). */
+      if (lg.pullToPar != null) g.pull = (g.pull ?? 0) + lg.pullToPar;
       if (lg.carry != null) g.carry = (g.carry ?? 0) + lg.carry;
       if (lg.funding != null) g.fund = (g.fund ?? 0) + lg.funding;
     }
@@ -371,6 +397,7 @@ export function legRows(positions: BacktestPosition[], head: Parts): LegRow[] {
       name,
       uVal: manUnits(g.val),
       uRoll: g.roll == null ? null : manUnits(g.roll),
+      uPull: g.pull == null ? null : manUnits(g.pull),
       uCarry: g.carry == null ? null : manUnits(g.carry),
       uFund: g.fund == null ? null : manUnits(g.fund),
     };
@@ -378,7 +405,7 @@ export function legRows(positions: BacktestPosition[], head: Parts): LegRow[] {
 
   /* 열마다 **값을 가진 마지막 줄**이 잔차를 진다. 값이 없는 줄에 잔차를 실으면
      없던 성분이 생긴다(선물 다리의 캐리 같은) — 그건 반올림이 아니라 거짓말이다. */
-  const settle = (key: 'uVal' | 'uRoll' | 'uCarry' | 'uFund',
+  const settle = (key: 'uVal' | 'uRoll' | 'uPull' | 'uCarry' | 'uFund',
                   target: number | null) => {
     if (target == null) return;
     let last = -1;
@@ -390,6 +417,7 @@ export function legRows(positions: BacktestPosition[], head: Parts): LegRow[] {
   };
   settle('uVal', head.uVal);
   settle('uRoll', head.hasTheta ? head.uRoll : null);
+  settle('uPull', head.hasPull ? head.uPull : null);
   settle('uCarry', head.hasTheta ? head.uCarry : null);
   settle('uFund', head.uFund);
   return rows;
@@ -407,7 +435,14 @@ export function legRows(positions: BacktestPosition[], head: Parts): LegRow[] {
  * CSS 에 못 박으면 그 북에서 빈 열이 선다.
  */
 function Decomp({ head, legs }: { head: Parts; legs: LegRow[] }) {
-  const cols = 1 + 1 + (head.hasTheta ? 2 : 0) + (head.uFund != null ? 1 : 0);
+  /* ★열을 세는 조건은 **칸을 그리는 조건과 같은 것**이어야 한다 [2026-09-29].
+     풀투파 칸이 붙던 날 이 줄을 안 늘렸고, 그래서 격자가 여섯 칸을 다섯 열에
+     흘려 **헤드라인의 조달이 다음 줄로 떨어지고 다리 이름이 홈통을 벗어났다**
+     (실측 2026-09-29, ASW:KTB:3Y 100억: 「국고」가 둘째 열, 「IRS」가 줄 가운데).
+     `max-content` 격자라 넘친 칸이 조용히 다음 줄로 접힌다 — 이 줄과 아래 칸
+     목록은 **한 몸으로** 고친다(가드: `krw-additivity.test.ts::격자 열 수는 …`). */
+  const cols = 1 + 1 + (head.hasTheta ? 2 : 0) + (head.hasPull ? 1 : 0)
+             + (head.uFund != null ? 1 : 0);
   return (
     <div
       className="sr-bt-decomp"
@@ -421,6 +456,12 @@ function Decomp({ head, legs }: { head: Parts; legs: LegRow[] }) {
       {head.hasTheta ? (
         <>
           <Part label="롤다운" u={head.uRoll} />
+          {/* ★풀투파 — 옛 「롤다운」 칸에서 떼어낸 몫 [OWNER 2026-09-28 —
+              「칸을 나눈다」]. 경과만 흘러 가격이 par 로 당겨지는 것이고,
+              커브를 타고 내려온 것이 아니다. 자산스왑에서는 둘의 부호가
+              갈리므로(옛 칸 +254만 대 진짜 롤 −5,962만) 한 칸으로 두면
+              그 북이 벌었는지 잃었는지가 뒤집혀 읽힌다. */}
+          {head.hasPull ? <Part label="풀투파" u={head.uPull} /> : null}
           <Part label="캐리" u={head.uCarry} />
         </>
       ) : null}
@@ -430,6 +471,7 @@ function Decomp({ head, legs }: { head: Parts; legs: LegRow[] }) {
           key={row.name}
           row={row}
           hasTheta={head.hasTheta}
+          hasPull={head.hasPull}
           hasFunding={head.uFund != null}
         />
       ))}
@@ -439,8 +481,8 @@ function Decomp({ head, legs }: { head: Parts; legs: LegRow[] }) {
 
 /** 다리 한 줄의 칸들 — 헤드라인의 `Part` 들과 **같은 낱말·같은 차례**다.
  *  격자의 칸이므로 감싸는 상자를 두지 않는다(두면 그 줄만 한 칸이 된다). */
-function LegCells({ row, hasTheta, hasFunding }: {
-  row: LegRow; hasTheta: boolean; hasFunding: boolean;
+function LegCells({ row, hasTheta, hasPull, hasFunding }: {
+  row: LegRow; hasTheta: boolean; hasPull: boolean; hasFunding: boolean;
 }) {
   /* 없는 성분은 **em dash** 다 — 0 을 적으면 「캐리가 0원이었다」는 다른 말이
      되고, 칸을 아예 비우면 다음 성분이 그 열로 밀려 세로가 어긋난다. */
@@ -448,7 +490,14 @@ function LegCells({ row, hasTheta, hasFunding }: {
   const tone = (u: number | null) =>
     u == null || u === 0 ? undefined : u > 0 ? 'sr-up' : 'sr-down';
   const items: [string, number | null][] = [['평가', row.uVal]];
-  if (hasTheta) items.push(['롤다운', row.uRoll], ['캐리', row.uCarry]);
+  if (hasTheta) items.push(['롤다운', row.uRoll]);
+  /* ★조건은 **줄이 아니라 헤드라인**이 정한다 [2026-09-29]. `row.uPull != null`
+     로 물으면 국고 다리(숫자)와 IRS 다리(`null`)의 칸 수가 갈리고, 그러면 이
+     격자에서 IRS 의 캐리가 풀투파 **열 아래** 선다 — 바로 위 주석이 「칸을 아예
+     비우면 다음 성분이 그 열로 밀려 세로가 어긋난다」로 금지한 그것이다.
+     열이 섰으면 그 줄은 숫자든 em dash 든 **한 칸을 낸다**(공란 정책). */
+  if (hasPull) items.push(['풀투파', row.uPull]);
+  if (hasTheta) items.push(['캐리', row.uCarry]);
   if (hasFunding) items.push(['조달', row.uFund]);
   return (
     <>

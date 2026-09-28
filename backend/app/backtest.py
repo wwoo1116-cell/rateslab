@@ -554,6 +554,8 @@ def _run_one(
         # night, which is neither (the swap has not started, so nothing accrues).
         "valuation": round(last_val, 0),
         "rolldown": round(last_roll, 0),
+        # 순수 스왑에는 par 로 당겨질 액면이 없다 — 0 이 아니라 없다(공란 정책).
+        "pullToPar": None,
         "carry": round(last_carry, 0),
         # 개시 = 거래일→발효일 한 밤 (위 주석). 넷을 더하면 `pnl` 이다.
         "startup": round(last_start, 0),
@@ -571,6 +573,7 @@ def _run_one(
         "name": "IRS",
         "valuation": record["valuation"],
         "rolldown": record["rolldown"],
+        "pullToPar": None,
         "carry": record["carry"],
         "startup": record["startup"],
         # 스왑에는 조달할 원금이 없다 — 0 이 아니라 공란이다(공란 정책).
@@ -643,6 +646,7 @@ def trace(dataset: Dataset, pos: Position) -> list[dict]:
                 "pnl": round(val_total + carry, 0),
                 "valuation": round(val_total - roll_cum - start_cum, 0),
                 "rolldown": round(roll_cum, 0),
+                "pullToPar": None,
                 "carry": round(carry, 0),
                 "startup": round(start_cum, 0),
                 "npv": round(clean + accrued, 0),
@@ -934,6 +938,7 @@ def _book_recon(
                 "actual": round(day_val + day_carry + day_roll + day_start),
                 "valuation": round(day_val),
                 "rolldown": round(day_roll),
+                "pullToPar": None,
                 "carry": round(day_carry),
                 # 개시 — 진입일 행에만 선다 (그 밖의 날은 0)
                 "startup": round(day_start),
@@ -963,6 +968,7 @@ def _book_recon(
             "actual": None,
             "valuation": None,
             "rolldown": None,
+            "pullToPar": None,
             "carry": None,
             "startup": None,
             "carryover": True,

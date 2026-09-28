@@ -265,8 +265,12 @@ def run_bond_leg(
 
     own: dict[int, float] = {}
     last = last_val = last_roll = last_carry = last_fund = 0.0
+    last_pull = 0.0
     prev_i, prev_clean = entry_i, clean0
-    roll_cum = 0.0
+    # 진입일의 이 채권 수익률 = 쿠폰(그날 수익률로 스트럭한 합성채라 dirty = 1.0).
+    prev_y = leg.coupon
+
+    roll_cum = pull_cum = 0.0
 
     for i in live:
         elapsed = (m.dates[i] - entry_date).days / 365.0
@@ -279,15 +283,35 @@ def run_bond_leg(
         clean = dirty - accrued + redeemed
 
         if i > prev_i:
-            # 롤다운 = **전일 커브**로 오늘의 (짧아진) 채권을 다시 값 매긴 것.
-            # Tuckman 의 불변 기간구조 가정이고, IRS 쪽 체인과 같은 규약이다.
+            # ★**두 걸음으로 간다** [OWNER 2026-09-28 — 「칸을 나눈다」].
+            #
+            # 종전에는 한 걸음이었다: 전일 커브로 오늘의 (짧아진) 채권을 다시
+            # 값 매기고 그 전부를 「롤다운」이라 불렀다. 그런데 그 걸음 안에는
+            # **성질이 다른 둘**이 겹쳐 있다 — 경과가 흘러 가격이 par 로 당겨지는
+            # 몫은 수익률이 하나도 안 움직여도 나고, 그건 커브를 타고 내려온 것이
+            # 아니다. 실측(CB:KTB:3Y 100억 1년): 한 걸음이 +9,680만인데 진짜 동결
+            # 롤은 +940만이고 나머지 +8,740만이 풀투파였다. **자산스왑에서는
+            # 부호까지 뒤집힌다**(칸은 +495만, 동결 롤은 −1,062만).
+            #
+            #   ① 풀투파 — 수익률은 **어제 그 채권의 그 수익률** 그대로 두고
+            #      경과만 오늘로 옮긴다.
+            #   ② 롤다운 — 경과는 오늘에 두고 수익률을 **어제 커브의 오늘 잔존
+            #      지점**으로 옮긴다(Tuckman 의 불변 기간구조, IRS 체인과 같은 규약).
+            #
+            # 둘의 합은 종전의 한 걸음과 **정확히 같다** — 이것은 재정의가 아니라
+            # 분해다. 그래서 `valuation`·`pnl` 은 한 원도 안 움직인다
+            # (게이트: `test_splitting_the_rolldown_moves_no_total`).
+            d_p, a_p, _cp_p, rd_p = price(prev_y, leg.coupon, leg.n, elapsed)
+            clean_pulled = d_p - a_p + rd_p
+            pull_cum += clean_pulled - prev_clean
+
             y_frozen = (
                 cm.yield_at(m, pos.bond_type, prev_i, remaining)
                 if remaining > 0
                 else leg.coupon
             )
             d_f, a_f, _cp_f, rd_f = price(y_frozen, leg.coupon, leg.n, elapsed)
-            roll_cum += (d_f - a_f + rd_f) - prev_clean
+            roll_cum += (d_f - a_f + rd_f) - clean_pulled
 
         # 조달은 **초기 투자금액**에 붙는다 [OWNER, 2026-08-14 — "조달은 초기
         # 투자 금액 기준으로 붙여야 함" · 2026-09-09 — "실제로 Bond를 매입하는데
@@ -326,10 +350,12 @@ def run_bond_leg(
         val_total = (clean - clean0) * N
         carry = (accrued - accrued0 + coupons) * N
         own[i] = last = val_total + carry - funding
-        last_val = val_total - roll_cum * N
+        last_val = val_total - roll_cum * N - pull_cum * N
         last_roll = roll_cum * N
+        last_pull = pull_cum * N
         last_carry, last_fund = carry, funding
         prev_i, prev_clean = i, clean
+        prev_y = y
 
     def at(i: int) -> float:
         if i < entry_i:
@@ -350,6 +376,9 @@ def run_bond_leg(
         ),
         "valuation": round(last_val, 0),
         "rolldown": round(last_roll, 0),
+        # ★풀투파 — 「경과만 흘렀을 때」의 몫 [OWNER 2026-09-28]. 종전에는 이것이
+        # 롤다운 칸 안에 숨어 있었다(위 두-걸음 주석의 실측).
+        "pullToPar": round(last_pull, 0),
         "carry": round(last_carry, 0),
         "funding": round(-last_fund, 0),  # 화면에서 빼는 값이라 부호를 여기서 준다
         "pnl": round(last, 0),
@@ -507,6 +536,7 @@ def run_bond_position(
             "name": CURVE_LABEL.get(pos.bond_type, pos.bond_type),
             "valuation": rec["valuation"],
             "rolldown": rec["rolldown"],
+            "pullToPar": rec["pullToPar"],
             "carry": rec["carry"],
             "startup": 0.0,
             "funding": rec["funding"],
@@ -533,6 +563,7 @@ def run_bond_position(
                 "name": CURVE_LABEL.get(pos.bond_type, pos.bond_type),
                 "valuation": rec["valuation"],
                 "rolldown": rec["rolldown"],
+                "pullToPar": rec["pullToPar"],
                 "carry": rec["carry"],
                 "startup": rec["startup"],
                 "funding": rec["funding"],
@@ -542,6 +573,8 @@ def run_bond_position(
                 "name": "IRS",
                 "valuation": srec["valuation"],
                 "rolldown": srec["rolldown"],
+                # 스왑에는 par 로 당겨질 액면이 없다 — 0 이 아니라 없다(공란 정책).
+                "pullToPar": None,
                 "carry": srec["carry"],
                 "startup": srec["startup"],
                 "funding": None,
@@ -1374,7 +1407,8 @@ def book_recon(
         cur, prv = node[cur_i], node[prv_i]
         return None if cur is None or prv is None else (cur - prv) * 100.0
 
-    def mark_bond(d: dict, i: int, curve_i: int | None = None) -> tuple[float, float, float]:
+    def mark_bond(d: dict, i: int, curve_i: int | None = None,
+                  at_yield: float | None = None) -> tuple[float, float, float]:
         """(clean, 경과이자, 결제현금) — **국고 다리**의 마킹. 셋의 합이 마크다.
 
         `curve_i` 는 **어느 날의 커브로** 값을 매길지다. 기본은 그날 자신이고,
@@ -1382,12 +1416,19 @@ def book_recon(
         커브가 안 움직였다면 얼마였겠나가 곧 캐리+롤다운이기 때문이다. 이걸
         빼먹으면 그날의 커브 무브까지 롤다운에 들어가고, 평가가 통째로 0 이
         된다(2026-08-14 에 실제로 그랬다: 평가 열 전체가 0).
+
+        `at_yield` 는 **수익률을 아예 붙들고** 경과만 옮길 때 쓴다 — 풀투파를
+        롤다운에서 떼어내는 중간 걸음이다 [OWNER 2026-09-28 — 「칸을 나눈다」].
+        커브를 안 읽으므로 `curve_i` 보다 세다: 잔존이 짧아진 것도 안 반영한다.
         """
         leg, pos = d["leg"], d["pos"]
         elapsed = (m.dates[i] - m.dates[leg.entry_i]).days / 365.0
         remaining = max(0.0, leg.years - elapsed)
-        src = i if curve_i is None else curve_i
-        y = cm.yield_at(m, pos.bond_type, src, remaining) if remaining > 0 else leg.coupon
+        if at_yield is not None:
+            y = at_yield
+        else:
+            src = i if curve_i is None else curve_i
+            y = cm.yield_at(m, pos.bond_type, src, remaining) if remaining > 0 else leg.coupon
         dirty, accrued, coupons, redeemed = price(y, leg.coupon, leg.n, elapsed)
         scale = pos.notional * pos.direction
         return (dirty - accrued + redeemed) * scale, accrued * scale, coupons * scale
@@ -1408,7 +1449,7 @@ def book_recon(
         krd = {lb: 0.0 for lb in labels}
         krd_s = {lb: 0.0 for lb in swap_labels}
         bumped: dict[str, object] = {}        # 한 행 안에서 공유 (부트스트랩이 비싸다)
-        b_val = b_carry = b_roll = b_fund = 0.0
+        b_val = b_carry = b_roll = b_fund = b_pull = 0.0
         s_val = s_carry = s_roll = 0.0
 
         for d in info:
@@ -1425,8 +1466,8 @@ def book_recon(
 
             if i > leg.entry_i:
                 if d["prev_fwd"] is not None:
-                    pc, pr, _pf = d["prev_fwd"]
-                    b_val += (b_now - d["prev"]) - (pc + pr)
+                    pc, pr, _pf, pp = d["prev_fwd"]
+                    b_val += (b_now - d["prev"]) - (pc + pr + pp)
                     if has_swap:
                         qc, qr = d["prev_fwd_s"]
                         s_val += (s_now - d["prev_s"]) - (qc + qr)
@@ -1462,8 +1503,20 @@ def book_recon(
             if alive_fwd:
                 # **오늘 커브로** 내일을 매긴다 — 동결 재평가 (mark_bond 의 주석)
                 fb_c, fb_a, fb_h = mark_bond(d, i + 1, curve_i=i)
+                # ★두 걸음 [OWNER 2026-09-28 — 「칸을 나눈다」]. 종전엔 `fb_c - bc`
+                # 한 덩이를 롤다운이라 불렀는데, 그 안에 **경과만 흘러도 나는
+                # 풀투파**가 섞여 있었다(자산스왑에서는 부호까지 뒤집혔다).
+                #   ① 풀투파 = 오늘 수익률을 **붙들고** 내일 경과로만 옮긴 몫
+                #   ② 롤다운 = 거기서 오늘 커브의 내일 잔존 지점으로 옮긴 몫
+                # 둘의 합은 종전의 한 덩이와 정확히 같다 — 분해이지 재정의가 아니다.
+                el_b = (on - m.dates[leg.entry_i]).days / 365.0
+                rem_b = max(0.0, leg.years - el_b)
+                y_today = (cm.yield_at(m, pos.bond_type, i, rem_b)
+                           if rem_b > 0 else leg.coupon)
+                pb_c, _pb_a, _pb_h = mark_bond(d, i + 1, at_yield=y_today)
                 carry_b = (fb_a - ba) + (fb_h - bh)
-                roll_b = fb_c - bc
+                pull_b = pb_c - bc
+                roll_b = fb_c - pb_c
                 # 조달은 **국고 다리만** 진다 — 현물을 조달해 들고 있는 비용이고
                 # IRS 다리엔 조달할 원금이 없다(그 다리의 캐리는 CD − 고정이다).
                 fund_b = (
@@ -1473,8 +1526,9 @@ def book_recon(
                 )
                 b_carry += carry_b
                 b_roll += roll_b
+                b_pull += pull_b
                 b_fund += fund_b
-                d["prev_fwd"] = (carry_b, roll_b, fund_b)
+                d["prev_fwd"] = (carry_b, roll_b, fund_b, pull_b)
                 if has_swap:
                     fs_c, fs_a, fs_h = mark_swap(d, i + 1, curve_i=i)
                     carry_s = (fs_a - sa) + (fs_h - sh)
@@ -1483,7 +1537,7 @@ def book_recon(
                     s_roll += roll_s
                     d["prev_fwd_s"] = (carry_s, roll_s)
             else:
-                d["prev_fwd"] = (0.0, 0.0, 0.0)
+                d["prev_fwd"] = (0.0, 0.0, 0.0, 0.0)
                 d["prev_fwd_s"] = (0.0, 0.0)
             if alive_fwd or open_end:
                 # 마지막 날에는 `nxt` 가 오늘이라 이것이 그대로 종가 KRD 다
@@ -1504,6 +1558,10 @@ def book_recon(
             day_val = b_val + s_val
             day_carry = b_carry + s_carry
             day_roll = b_roll + s_roll
+            # 풀투파는 **국고 다리만**이다 — 스왑에는 par 로 당겨질 액면이 없다.
+            # 0 을 적으면 「그날 풀투파가 0 이었다」는 다른 말이 되므로, 스왑 다리
+            # 블록에서는 `None` 이다(이 파일의 공란 정책).
+            day_pull = b_pull
             day_fund = b_fund
             dbp: dict[str, float | None] = {}
             est: dict[str, float] = {}
@@ -1521,9 +1579,10 @@ def book_recon(
                 "dbp": dbp,
                 "est": {lb: round(est[lb]) for lb in labels},
                 "estTotal": total_est,
-                "actual": round(day_val + day_carry + day_roll - day_fund),
+                "actual": round(day_val + day_carry + day_roll + day_pull - day_fund),
                 "valuation": round(day_val),
                 "rolldown": round(day_roll),
+                "pullToPar": round(day_pull),
                 "carry": round(day_carry),
                 # 화면이 빼는 값이라 부호를 여기서 준다 (백테스트 조달 칸과 같은 규약)
                 "funding": round(-day_fund),
@@ -1563,10 +1622,11 @@ def book_recon(
                         "dbp": b_dbp,
                         "est": {lb: round(b_est[lb]) for lb in labels},
                         "estTotal": b_total,
-                        "actual": round(b_val + b_carry + b_roll - b_fund),
+                        "actual": round(b_val + b_carry + b_roll + b_pull - b_fund),
                         "valuation": round(b_val),
                         "carry": round(b_carry),
                         "rolldown": round(b_roll),
+                        "pullToPar": round(b_pull),
                         "funding": round(-b_fund),
                         "residual": round(b_val) - b_total,
                     },
@@ -1580,6 +1640,8 @@ def book_recon(
                         "valuation": round(s_val),
                         "carry": round(s_carry),
                         "rolldown": round(s_roll),
+                        # 스왑에는 par 로 당겨질 액면이 없다 — 0 이 아니라 없다.
+                        "pullToPar": None,
                         # 조달은 국고 다리만 진다 — 여기 0 을 적으면 「그날 조달이
                         # 0 이었다」는 다른 말이 된다(공란 정책).
                         "funding": None,
@@ -1613,6 +1675,7 @@ def book_recon(
             "actual": None,
             "valuation": None,
             "rolldown": None,
+            "pullToPar": None,
             "carry": None,
             "funding": None,
             "residual": None,
@@ -1622,11 +1685,11 @@ def book_recon(
             anchor["legs"] = [
                 {"name": leg_name, "krd": {lb: round(prev_krd[lb]) for lb in labels},
                  "dbp": {}, "est": {}, "estTotal": None, "actual": None,
-                 "valuation": None, "carry": None, "rolldown": None,
+                 "valuation": None, "carry": None, "rolldown": None, "pullToPar": None,
                  "funding": None, "residual": None},
                 {"name": "IRS", "krd": {lb: round(prev_krd_s[lb]) for lb in swap_labels},
                  "dbp": {}, "est": {}, "estTotal": None, "actual": None,
-                 "valuation": None, "carry": None, "rolldown": None,
+                 "valuation": None, "carry": None, "rolldown": None, "pullToPar": None,
                  "funding": None, "residual": None},
             ]
         rows.append(anchor)

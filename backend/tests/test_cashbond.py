@@ -203,7 +203,7 @@ class TestDecomposition:
             assert p[k] == 0, k
         assert r["points"][0]["pnl"] == 0
 
-    def test_the_five_buckets_sum_to_the_pnl(self):
+    def test_the_six_buckets_sum_to_the_pnl(self):
         m = synth(days=500, curve=lambda i: {
             t: 3.0 + 0.5 * cm.TENOR_YEARS[t] / 10 + 0.002 * i for t in cm.TENOR_LABELS
         })
@@ -214,7 +214,8 @@ class TestDecomposition:
         ]
         r = cb.run_backtest(m, None, book, SPEC0)
         for p in r["positions"]:
-            parts = p["valuation"] + p["carry"] + p["rolldown"] + p["funding"] + p["startup"]
+            parts = (p["valuation"] + p["carry"] + p["rolldown"] + (p["pullToPar"] or 0)
+                     + p["funding"] + p["startup"])
             assert abs(parts - p["pnl"]) <= 2, p["id"]
 
     def test_a_frozen_flat_curve_is_carry_and_nothing_else(self):
@@ -448,7 +449,8 @@ class TestRoutes:
         assert r.status_code == 200, r.text
         body = r.json()
         p = body["positions"][0]
-        parts = p["valuation"] + p["carry"] + p["rolldown"] + p["funding"] + p["startup"]
+        parts = (p["valuation"] + p["carry"] + p["rolldown"] + (p["pullToPar"] or 0)
+                     + p["funding"] + p["startup"])
         assert abs(parts - p["pnl"]) <= 2
         assert p["funding"] < 0, "매수는 조달비용이 음수로 선다"
         assert body["funding"]["label"] == "기준금리 +10bp"
@@ -648,9 +650,10 @@ class TestFundingOnTheInitialInvestment:
         _m, high = self._run("3Y", 8.0)
         assert low["funding"] == pytest.approx(high["funding"], abs=1.0)
 
-    def test_the_five_buckets_still_close(self):
+    def test_the_six_buckets_still_close(self):
         _m, p = self._run("3Y", 4.0)
-        parts = p["valuation"] + p["carry"] + p["rolldown"] + p["funding"] + p["startup"]
+        parts = (p["valuation"] + p["carry"] + p["rolldown"] + (p["pullToPar"] or 0)
+                     + p["funding"] + p["startup"])
         assert abs(parts - p["pnl"]) <= 2
 
 class TestBookRecon:
@@ -688,7 +691,8 @@ class TestBookRecon:
         rows = [r for r in rc["rows"] if r["actual"] is not None]
         assert rows
         for r in rows:
-            parts = r["valuation"] + r["carry"] + r["rolldown"] + r["funding"]
+            parts = (r["valuation"] + r["carry"] + r["rolldown"]
+                     + (r["pullToPar"] or 0) + r["funding"])
             assert abs(r["actual"] - parts) <= 2, r["t"]
             assert r["residual"] == r["valuation"] - r["estTotal"]
 
@@ -813,7 +817,8 @@ class TestReconTiesOutOnLiveData:
         # 행마다 원 단위로 반올림하므로 행 수만큼의 오차는 정상이다
         assert abs(total - round(bt["pnl"])) <= len(rows)
         for r in rows:
-            parts = r["valuation"] + r["carry"] + r["rolldown"] + r["funding"]
+            parts = (r["valuation"] + r["carry"] + r["rolldown"]
+                     + (r["pullToPar"] or 0) + r["funding"])
             assert abs(r["actual"] - parts) <= 2, r["t"]
 
     def test_the_cash_bond_estimate_explains_the_move(self, live):
@@ -1018,6 +1023,75 @@ class TestReconTiesOutOnLiveData:
                 f'{pos.id}: 앵커 {anchor["t"]} 가 마지막 행 {last["t"]} 보다 안 뒤다')
             dates = [r["t"] for r in rows]
             assert len(dates) == len(set(dates)), f"{pos.id}: 날짜가 겹치는 행이 있다"
+
+    def test_splitting_the_rolldown_moves_no_total(self, live):
+        """★롤다운을 둘로 나눈 것은 **분해이지 재정의가 아니다**
+        [OWNER 2026-09-28 — 「칸을 나눈다」].
+
+        종전의 한 걸음은 「전일 커브로 오늘의 짧아진 채권을 다시 값 매김」이었고
+        그 안에 성질이 다른 둘이 겹쳐 있었다 — 경과가 흘러 par 로 당겨지는 몫은
+        수익률이 하나도 안 움직여도 난다. 두 걸음으로 갈랐고, 이 시험이 지는 것은
+        **합이 그대로라는 것**이다:
+
+            롤다운 + 풀투파 == 종전의 롤다운          (한 원까지)
+            손익·평가·캐리·조달  == 종전 그대로
+
+        실측(100억, 진입 250행 전, 2026-09-28):
+
+            북           롤다운(새)      풀투파        합 = 옛 칸
+            CB:KTB:3Y   +20,820,473  +75,938,914   +96,759,387
+            CB:KTB:10Y  +15,463,042  +62,159,170   +77,622,212
+            ASW:KTB:3Y  −86,564,234  +75,938,914   −10,625,320
+            ASW:KTB:10Y −59,619,183  +62,159,170    +2,539,987
+
+        ★자산스왑 10Y 는 **부호가 뒤집힌다** — 옛 칸은 「+254만 벌었다」인데
+        진짜 동결 롤은 −5,962만이다. 그게 이 결정의 이유였다.
+        """
+        m, ds = live
+        entry = m.dates[-self.ENTRY_ROWS_BACK]
+        for kind in ("CB", "ASW"):
+            for tenor in ("3Y", "10Y"):
+                pos = cb.BondPosition(kind, "KTB", tenor, 1, N, entry)
+                rec = cb.run_backtest(m, ds, [pos], self.SPEC)["positions"][0]
+                # 여섯 칸이 손익으로 닫힌다(풀투파가 그 여섯째다).
+                parts = (rec["valuation"] + rec["carry"] + rec["rolldown"]
+                         + (rec["pullToPar"] or 0) + rec["funding"] + rec["startup"])
+                assert abs(parts - rec["pnl"]) <= 2, f"{kind}:{tenor} 칸 합이 안 닫힌다"
+                # 국고 다리에는 풀투파가 **있고** 값이 0 이 아니다.
+                assert rec["pullToPar"] is not None and rec["pullToPar"] != 0
+                if kind == "ASW":
+                    # 스왑 다리에는 **없다** — 0 이 아니라 없다(공란 정책).
+                    bond, swap = rec["legParts"]
+                    assert swap["pullToPar"] is None, "스왑에 풀투파가 0 으로 적혔다"
+                    assert bond["pullToPar"] == rec["pullToPar"]
+
+    def test_the_pull_to_par_is_the_bigger_half_of_the_old_column(self, live):
+        """★왜 나눴는가를 **수로** 잠근다 [OWNER 2026-09-28].
+
+        옛 「롤다운」 칸의 대부분이 풀투파였다는 것이 이 결정의 근거였고, 그게
+        사실이 아니게 되면(예: 커브가 아주 급해져 진짜 롤이 커지면) 이 시험이
+        빨개져서 다시 생각하게 만든다. 국고채 매수에서 풀투파는 **양수**다 —
+        par 로 당겨지는 것이고, 할인채가 아니라 진입일 par 합성채이므로 경과가
+        흐르면 쿠폰만큼 가격이 par 로 내려온다.
+        """
+        m, ds = live
+        entry = m.dates[-self.ENTRY_ROWS_BACK]
+        rec = cb.run_backtest(
+            m, ds, [cb.BondPosition("CB", "KTB", "3Y", 1, N, entry)], self.SPEC
+        )["positions"][0]
+        pull, roll = rec["pullToPar"], rec["rolldown"]
+        assert pull > 0, f"국고 매수의 풀투파가 음수다: {pull:,.0f}"
+        assert abs(pull) > abs(roll), (
+            f"풀투파 {pull:,.0f} 가 롤다운 {roll:,.0f} 보다 작아졌다 — "
+            "「칸을 나눈」 근거가 바뀌었는지 다시 볼 것")
+        # 그리고 자산스왑에서는 옛 칸과 새 칸이 **다른 이야기**를 한다.
+        asw = cb.run_backtest(
+            m, ds, [cb.BondPosition("ASW", "KTB", "10Y", 1, N, entry)], self.SPEC
+        )["positions"][0]
+        old_column = asw["rolldown"] + (asw["pullToPar"] or 0)
+        assert old_column > 0 > asw["rolldown"], (
+            f"자산스왑 10Y 의 부호 뒤집힘이 사라졌다(옛 {old_column:,.0f} · "
+            f"새 {asw['rolldown']:,.0f}) — 정본의 그 설명을 다시 볼 것")
 
     def test_the_spread_axis_says_whose_curve_it_is(self, live):
         """★섞인 북의 합계 줄 축은 **한 다리의 민평 커브**다 — 그 사실을 싣는다

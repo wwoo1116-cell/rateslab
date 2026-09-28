@@ -1324,6 +1324,7 @@
             "funding": null,
             "name": "IRS",
             "pnl": 90865936.0,
+            "pullToPar": null,
             "rolldown": -15645250.0,
             "startup": 22263.0,
             "valuation": 67995423.0
@@ -1341,6 +1342,7 @@
         "matured": false,
         "notional": 10000000000.0,
         "pnl": 90865936.0,
+        "pullToPar": null,
         "rolldown": -15645250.0,
         "startup": 22263.0,
         "valuation": 67995423.0
@@ -1361,6 +1363,7 @@
             "funding": null,
             "name": "IRS",
             "pnl": -14271037.0,
+            "pullToPar": null,
             "rolldown": 7551390.0,
             "startup": -61406.0,
             "valuation": -7767847.0
@@ -1378,6 +1381,7 @@
         "matured": true,
         "notional": 10000000000.0,
         "pnl": -14271037.0,
+        "pullToPar": null,
         "rolldown": 7551390.0,
         "startup": -61406.0,
         "valuation": -7767847.0
@@ -1398,6 +1402,7 @@
             "funding": null,
             "name": "IRS",
             "pnl": -43941224.0,
+            "pullToPar": null,
             "rolldown": -17770413.0,
             "startup": -179027.0,
             "valuation": -886818.0
@@ -1422,6 +1427,7 @@
         "matured": false,
         "notional": 5000000000.0,
         "pnl": -43941224.0,
+        "pullToPar": null,
         "rolldown": -17770413.0,
         "startup": -179027.0,
         "valuation": -886818.0
@@ -1442,6 +1448,7 @@
             "funding": null,
             "name": "IRS",
             "pnl": 11323791.0,
+            "pullToPar": null,
             "rolldown": 6342367.0,
             "startup": 32411.0,
             "valuation": -1440735.0
@@ -1473,6 +1480,7 @@
         "matured": false,
         "notional": 5000000000.0,
         "pnl": 11323791.0,
+        "pullToPar": null,
         "rolldown": 6342367.0,
         "startup": 32411.0,
         "valuation": -1440735.0
@@ -1493,6 +1501,7 @@
             "funding": null,
             "name": "IRS",
             "pnl": 51184039.0,
+            "pullToPar": null,
             "rolldown": -1714682.0,
             "startup": 95863.0,
             "valuation": 16413468.0
@@ -1510,6 +1519,7 @@
         "matured": false,
         "notional": 10000000000.0,
         "pnl": 51184039.0,
+        "pullToPar": null,
         "rolldown": -1714682.0,
         "startup": 95863.0,
         "valuation": 16413468.0
@@ -1696,6 +1706,7 @@
           "9M": 482,
           "9Y": -4698229
         },
+        "pullToPar": null,
         "residual": -2798,
         "rolldown": -84885,
         "startup": 0,
@@ -1757,6 +1768,7 @@
           "9M": 485,
           "9Y": -4732916
         },
+        "pullToPar": null,
         "residual": -2802,
         "rolldown": -84477,
         "startup": 0,
@@ -1818,6 +1830,7 @@
           "9M": 489,
           "9Y": -4767577
         },
+        "pullToPar": null,
         "residual": -2805,
         "rolldown": -84067,
         "startup": 0,
@@ -1879,6 +1892,7 @@
           "9M": 492,
           "9Y": -4802211
         },
+        "pullToPar": null,
         "residual": -2807,
         "rolldown": -251470,
         "startup": 0,
@@ -1940,6 +1954,7 @@
           "9M": 483,
           "9Y": -4909573
         },
+        "pullToPar": null,
         "residual": -2817,
         "rolldown": -83577,
         "startup": 0,
@@ -2001,6 +2016,7 @@
           "9M": 486,
           "9Y": -4944113
         },
+        "pullToPar": null,
         "residual": -2819,
         "rolldown": -83163,
         "startup": 0,
@@ -2062,6 +2078,7 @@
           "9M": 489,
           "9Y": -4978627
         },
+        "pullToPar": null,
         "residual": -2821,
         "rolldown": -82747,
         "startup": 0,
@@ -2123,6 +2140,7 @@
           "9M": 491,
           "9Y": -5013114
         },
+        "pullToPar": null,
         "residual": -2823,
         "rolldown": -82329,
         "startup": 0,
@@ -2184,6 +2202,7 @@
           "9M": 494,
           "9Y": -5047575
         },
+        "pullToPar": null,
         "residual": -2826,
         "rolldown": -246229,
         "startup": 0,
@@ -2245,6 +2264,7 @@
           "9M": 484,
           "9Y": -5154502
         },
+        "pullToPar": null,
         "residual": -2832,
         "rolldown": -81822,
         "startup": 0,
@@ -2306,6 +2326,7 @@
           "9M": 486,
           "9Y": -5188870
         },
+        "pullToPar": null,
         "residual": -2834,
         "rolldown": -81399,
         "startup": 0,
@@ -2367,6 +2388,7 @@
           "9M": 488,
           "9Y": -5223212
         },
+        "pullToPar": null,
         "residual": -2835,
         "rolldown": -162116,
         "startup": 0,
@@ -2428,6 +2450,7 @@
           "9M": 484,
           "9Y": -5293691
         },
+        "pullToPar": null,
         "residual": -2839,
         "rolldown": -242642,
         "startup": 0,
@@ -2489,6 +2512,7 @@
           "9M": 472,
           "9Y": -5400203
         },
+        "pullToPar": null,
         "residual": -2842,
         "rolldown": -80619,
         "startup": 0,
@@ -2550,6 +2574,7 @@
           "9M": 474,
           "9Y": -5434406
         },
+        "pullToPar": null,
         "residual": -2843,
         "rolldown": -80190,
         "startup": 0,
@@ -2611,6 +2636,7 @@
           "9M": 475,
           "9Y": -5468583
         },
+        "pullToPar": null,
         "residual": -2844,
         "rolldown": -79759,
         "startup": 0,
@@ -2672,6 +2698,7 @@
           "9M": 477,
           "9Y": -5502733
         },
+        "pullToPar": null,
         "residual": -2844,
         "rolldown": -79328,
         "startup": 0,
@@ -2733,6 +2760,7 @@
           "9M": 478,
           "9Y": -5536858
         },
+        "pullToPar": null,
         "residual": -2845,
         "rolldown": -237175,
         "startup": 0,
@@ -2794,6 +2822,7 @@
           "9M": 465,
           "9Y": -5642941
         },
+        "pullToPar": null,
         "residual": -2846,
         "rolldown": -78787,
         "startup": 0,
@@ -2855,6 +2884,7 @@
           "9M": 466,
           "9Y": -5676974
         },
+        "pullToPar": null,
         "residual": -2847,
         "rolldown": -78351,
         "startup": 0,
@@ -2916,6 +2946,7 @@
           "9M": 467,
           "9Y": -5710981
         },
+        "pullToPar": null,
         "residual": -2846,
         "rolldown": -77913,
         "startup": 0,
@@ -2977,6 +3008,7 @@
           "9M": 468,
           "9Y": -5744962
         },
+        "pullToPar": null,
         "residual": -2846,
         "rolldown": -77473,
         "startup": 0,
@@ -3038,6 +3070,7 @@
           "9M": 468,
           "9Y": -5778918
         },
+        "pullToPar": null,
         "residual": -2846,
         "rolldown": -231586,
         "startup": 0,
@@ -3099,6 +3132,7 @@
           "9M": 454,
           "9Y": -5884573
         },
+        "pullToPar": null,
         "residual": -2845,
         "rolldown": -76915,
         "startup": 0,
@@ -3160,6 +3194,7 @@
           "9M": 454,
           "9Y": -5918438
         },
+        "pullToPar": null,
         "residual": -2844,
         "rolldown": -76471,
         "startup": 0,
@@ -3221,6 +3256,7 @@
           "9M": 454,
           "9Y": -5952277
         },
+        "pullToPar": null,
         "residual": -2843,
         "rolldown": -76025,
         "startup": 0,
@@ -3282,6 +3318,7 @@
           "9M": 454,
           "9Y": -5986090
         },
+        "pullToPar": null,
         "residual": -2842,
         "rolldown": -75578,
         "startup": 0,
@@ -3343,6 +3380,7 @@
           "9M": 454,
           "9Y": -6019878
         },
+        "pullToPar": null,
         "residual": 297,
         "rolldown": -228810,
         "startup": 0,
@@ -3404,6 +3442,7 @@
           "9M": 422,
           "9Y": -6129142
         },
+        "pullToPar": null,
         "residual": 298,
         "rolldown": -81412,
         "startup": 0,
@@ -3465,6 +3504,7 @@
           "9M": 406,
           "9Y": -6166896
         },
+        "pullToPar": null,
         "residual": -119540,
         "rolldown": -62163,
         "startup": 0,
@@ -3526,6 +3566,7 @@
           "9M": 389,
           "9Y": -6204649
         },
+        "pullToPar": null,
         "residual": 300,
         "rolldown": -93048,
         "startup": 0,
@@ -3587,6 +3628,7 @@
           "9M": 484,
           "9Y": -6242400
         },
+        "pullToPar": null,
         "residual": 299,
         "rolldown": -73987,
         "startup": 0,
@@ -3648,6 +3690,7 @@
           "9M": -10114,
           "9Y": -6280149
         },
+        "pullToPar": null,
         "residual": 300,
         "rolldown": -6960,
         "startup": 0,
@@ -3709,6 +3752,7 @@
           "9M": -41689,
           "9Y": -6388691
         },
+        "pullToPar": null,
         "residual": 300,
         "rolldown": -6958,
         "startup": 0,
@@ -3770,6 +3814,7 @@
           "9M": -52109,
           "9Y": -6426222
         },
+        "pullToPar": null,
         "residual": -27126,
         "rolldown": -2429,
         "startup": 0,
@@ -3831,6 +3876,7 @@
           "9M": -62473,
           "9Y": -6463751
         },
+        "pullToPar": null,
         "residual": 300,
         "rolldown": -3576,
         "startup": 0,
@@ -3892,6 +3938,7 @@
           "9M": -72776,
           "9Y": -6501279
         },
+        "pullToPar": null,
         "residual": 300,
         "rolldown": 10748,
         "startup": 0,
@@ -3953,6 +4000,7 @@
           "9M": -83017,
           "9Y": -6538804
         },
+        "pullToPar": null,
         "residual": 300,
         "rolldown": 24322,
         "startup": 0,
@@ -4014,6 +4062,7 @@
           "9M": -113400,
           "9Y": -6647066
         },
+        "pullToPar": null,
         "residual": 301,
         "rolldown": 5566,
         "startup": 0,
@@ -4075,6 +4124,7 @@
           "9M": -123423,
           "9Y": -6684543
         },
+        "pullToPar": null,
         "residual": 300,
         "rolldown": 4147,
         "startup": 0,
@@ -4136,6 +4186,7 @@
           "9M": -133391,
           "9Y": -6722017
         },
+        "pullToPar": null,
         "residual": 300,
         "rolldown": 2729,
         "startup": 0,
@@ -4197,6 +4248,7 @@
           "9M": -143302,
           "9Y": -6759489
         },
+        "pullToPar": null,
         "residual": 299,
         "rolldown": 1311,
         "startup": 0,
@@ -4258,6 +4310,7 @@
           "9M": -153158,
           "9Y": -6796959
         },
+        "pullToPar": null,
         "residual": 298,
         "rolldown": -3584,
         "startup": 0,
@@ -4319,6 +4372,7 @@
           "9M": -182361,
           "9Y": -6905043
         },
+        "pullToPar": null,
         "residual": 296,
         "rolldown": -3701,
         "startup": 0,
@@ -4380,6 +4434,7 @@
           "9M": -191992,
           "9Y": -6942491
         },
+        "pullToPar": null,
         "residual": 295,
         "rolldown": -5118,
         "startup": 0,
@@ -4441,6 +4496,7 @@
           "9M": -201567,
           "9Y": -6979936
         },
+        "pullToPar": null,
         "residual": 293,
         "rolldown": -6535,
         "startup": 0,
@@ -4502,6 +4558,7 @@
           "9M": -211086,
           "9Y": -7017378
         },
+        "pullToPar": null,
         "residual": 292,
         "rolldown": -7951,
         "startup": 0,
@@ -4563,6 +4620,7 @@
           "9M": -220549,
           "9Y": -7054818
         },
+        "pullToPar": null,
         "residual": 290,
         "rolldown": -31375,
         "startup": 0,
@@ -4624,6 +4682,7 @@
           "9M": -248568,
           "9Y": -7162726
         },
+        "pullToPar": null,
         "residual": 286,
         "rolldown": -3479,
         "startup": 0,
@@ -4685,6 +4744,7 @@
           "9M": -257806,
           "9Y": -7200142
         },
+        "pullToPar": null,
         "residual": 117163,
         "rolldown": -29327,
         "startup": 0,
@@ -4746,6 +4806,7 @@
           "9M": -267084,
           "9Y": -7237556
         },
+        "pullToPar": null,
         "residual": 277,
         "rolldown": -4158,
         "startup": 0,
@@ -4807,6 +4868,7 @@
           "9M": -276249,
           "9Y": -7274781
         },
+        "pullToPar": null,
         "residual": 274,
         "rolldown": -42022,
         "startup": 0,
@@ -4868,6 +4930,7 @@
           "9M": -285335,
           "9Y": -7312087
         },
+        "pullToPar": null,
         "residual": 272,
         "rolldown": -133654,
         "startup": 0,
@@ -4929,6 +4992,7 @@
           "9M": -312150,
           "9Y": -7419509
         },
+        "pullToPar": null,
         "residual": 266,
         "rolldown": -47102,
         "startup": 0,
@@ -4990,6 +5054,7 @@
           "9M": -320988,
           "9Y": -7456791
         },
+        "pullToPar": null,
         "residual": 264,
         "rolldown": -48541,
         "startup": 0,
@@ -5051,6 +5116,7 @@
           "9M": -329769,
           "9Y": -7494070
         },
+        "pullToPar": null,
         "residual": 261,
         "rolldown": -49979,
         "startup": 0,
@@ -5112,6 +5178,7 @@
           "9M": -338494,
           "9Y": -7531345
         },
+        "pullToPar": null,
         "residual": 257,
         "rolldown": -51417,
         "startup": 0,
@@ -5173,6 +5240,7 @@
           "9M": -347162,
           "9Y": -7568618
         },
+        "pullToPar": null,
         "residual": 255,
         "rolldown": -161903,
         "startup": 0,
@@ -5234,6 +5302,7 @@
           "9M": -372788,
           "9Y": -7675856
         },
+        "pullToPar": null,
         "residual": 246,
         "rolldown": -56518,
         "startup": 0,
@@ -5295,6 +5364,7 @@
           "9M": -381230,
           "9Y": -7713103
         },
+        "pullToPar": null,
         "residual": 243,
         "rolldown": -57955,
         "startup": 0,
@@ -5356,6 +5426,7 @@
           "9M": -389615,
           "9Y": -7750348
         },
+        "pullToPar": null,
         "residual": 239,
         "rolldown": -119897,
         "startup": 0,
@@ -5417,6 +5488,7 @@
           "9M": -406195,
           "9Y": -7822523
         },
+        "pullToPar": null,
         "residual": 232,
         "rolldown": -189173,
         "startup": 0,
@@ -5478,6 +5550,7 @@
           "9M": -430628,
           "9Y": -7929557
         },
+        "pullToPar": null,
         "residual": 221,
         "rolldown": -65609,
         "startup": 0,
@@ -5539,6 +5612,7 @@
           "9M": -438672,
           "9Y": -7966762
         },
+        "pullToPar": null,
         "residual": 216,
         "rolldown": -67045,
         "startup": 0,
@@ -5600,6 +5674,7 @@
           "9M": -446660,
           "9Y": -8003964
         },
+        "pullToPar": null,
         "residual": 211,
         "rolldown": -68479,
         "startup": 0,
@@ -5661,6 +5736,7 @@
           "9M": -454591,
           "9Y": -8041162
         },
+        "pullToPar": null,
         "residual": 207,
         "rolldown": -69913,
         "startup": 0,
@@ -5722,6 +5798,7 @@
           "9M": -462466,
           "9Y": -8078357
         },
+        "pullToPar": null,
         "residual": 203,
         "rolldown": -217394,
         "startup": 0,
@@ -5783,6 +5860,7 @@
           "9M": -485702,
           "9Y": -8185199
         },
+        "pullToPar": null,
         "residual": -2733,
         "rolldown": -74127,
         "startup": 0,
@@ -5844,6 +5922,7 @@
           "9M": -493302,
           "9Y": -8217643
         },
+        "pullToPar": null,
         "residual": -2728,
         "rolldown": -74669,
         "startup": 0,
@@ -5905,6 +5984,7 @@
           "9M": -500844,
           "9Y": -8250062
         },
+        "pullToPar": null,
         "residual": -2721,
         "rolldown": -75208,
         "startup": 0,
@@ -5966,6 +6046,7 @@
           "9M": -508329,
           "9Y": -8282456
         },
+        "pullToPar": null,
         "residual": -2715,
         "rolldown": -75746,
         "startup": 0,
@@ -6027,6 +6108,7 @@
           "9M": -515756,
           "9Y": -8314826
         },
+        "pullToPar": null,
         "residual": -2709,
         "rolldown": -232194,
         "startup": 0,
@@ -6088,6 +6170,7 @@
           "9M": -537742,
           "9Y": -8416564
         },
+        "pullToPar": null,
         "residual": -2690,
         "rolldown": -79048,
         "startup": 0,
@@ -6149,6 +6232,7 @@
           "9M": -544939,
           "9Y": -8448845
         },
+        "pullToPar": null,
         "residual": -2683,
         "rolldown": -79578,
         "startup": 0,
@@ -6210,6 +6294,7 @@
           "9M": -552078,
           "9Y": -8481102
         },
+        "pullToPar": null,
         "residual": -2676,
         "rolldown": -80106,
         "startup": 0,
@@ -6271,6 +6356,7 @@
           "9M": -559160,
           "9Y": -8513335
         },
+        "pullToPar": null,
         "residual": -2669,
         "rolldown": -80632,
         "startup": 0,
@@ -6332,6 +6418,7 @@
           "9M": -566185,
           "9Y": -8545544
         },
+        "pullToPar": null,
         "residual": -2662,
         "rolldown": -246816,
         "startup": 0,
@@ -6393,6 +6480,7 @@
           "9M": -586963,
           "9Y": -8646862
         },
+        "pullToPar": null,
         "residual": -2641,
         "rolldown": -83908,
         "startup": 0,
@@ -6454,6 +6542,7 @@
           "9M": -593757,
           "9Y": -8678982
         },
+        "pullToPar": null,
         "residual": -2633,
         "rolldown": -84427,
         "startup": 0,
@@ -6515,6 +6604,7 @@
           "9M": -600494,
           "9Y": -8711079
         },
+        "pullToPar": null,
         "residual": -2626,
         "rolldown": -84944,
         "startup": 0,
@@ -6576,6 +6666,7 @@
           "9M": -607173,
           "9Y": -8743151
         },
+        "pullToPar": null,
         "residual": -2618,
         "rolldown": -85459,
         "startup": 0,
@@ -6637,6 +6728,7 @@
           "9M": -613794,
           "9Y": -8775199
         },
+        "pullToPar": null,
         "residual": -2610,
         "rolldown": -532545,
         "startup": 0,
@@ -6698,6 +6790,7 @@
           "9M": -652444,
           "9Y": -8979306
         },
+        "pullToPar": null,
         "residual": -2563,
         "rolldown": -92053,
         "startup": 0,
@@ -6759,6 +6852,7 @@
           "9M": -658662,
           "9Y": -9011207
         },
+        "pullToPar": null,
         "residual": -2554,
         "rolldown": -281021,
         "startup": 0,
@@ -6820,6 +6914,7 @@
           "9M": -677024,
           "9Y": -9111736
         },
+        "pullToPar": null,
         "residual": -2528,
         "rolldown": -95292,
         "startup": 0,
@@ -6881,6 +6976,7 @@
           "9M": -683011,
           "9Y": -9143551
         },
+        "pullToPar": null,
         "residual": -2519,
         "rolldown": -95793,
         "startup": 0,
@@ -6942,6 +7038,7 @@
           "9M": -688941,
           "9Y": -9175342
         },
+        "pullToPar": null,
         "residual": -2509,
         "rolldown": -96292,
         "startup": 0,
@@ -7003,6 +7100,7 @@
           "9M": -694813,
           "9Y": -9207109
         },
+        "pullToPar": null,
         "residual": -2501,
         "rolldown": -96789,
         "startup": 0,
@@ -7064,6 +7162,7 @@
           "9M": -700627,
           "9Y": -9238853
         },
+        "pullToPar": null,
         "residual": -2491,
         "rolldown": -295192,
         "startup": 0,
@@ -7125,6 +7224,7 @@
           "9M": -717778,
           "9Y": -9338969
         },
+        "pullToPar": null,
         "residual": -2462,
         "rolldown": -258214,
         "startup": 0,
@@ -7186,6 +7286,7 @@
           "9M": -728914,
           "9Y": -9404782
         },
+        "pullToPar": null,
         "residual": 256837,
         "rolldown": -316752,
         "startup": 0,
@@ -7247,6 +7348,7 @@
           "9M": -727617,
           "9Y": -9470518
         },
+        "pullToPar": null,
         "residual": -2427,
         "rolldown": -205971,
         "startup": 0,
@@ -7308,6 +7410,7 @@
           "9M": -695663,
           "9Y": -9569887
         },
+        "pullToPar": null,
         "residual": -2399,
         "rolldown": -74778,
         "startup": 0,
@@ -7369,6 +7472,7 @@
           "9M": -685110,
           "9Y": -9601196
         },
+        "pullToPar": null,
         "residual": 27923,
         "rolldown": -135019,
         "startup": 0,
@@ -7430,6 +7534,7 @@
           "9M": -664186,
           "9Y": -9666303
         },
+        "pullToPar": null,
         "residual": -2371,
         "rolldown": -67654,
         "startup": 0,
@@ -7491,6 +7596,7 @@
           "9M": -653906,
           "9Y": -9697546
         },
+        "pullToPar": null,
         "residual": -2362,
         "rolldown": -182684,
         "startup": 0,
@@ -7552,6 +7658,7 @@
           "9M": -623456,
           "9Y": -9796236
         },
+        "pullToPar": null,
         "residual": -2333,
         "rolldown": -62456,
         "startup": 0,
@@ -7613,6 +7720,7 @@
           "9M": -613407,
           "9Y": -9827368
         },
+        "pullToPar": null,
         "residual": -2323,
         "rolldown": -62960,
         "startup": 0,
@@ -7674,6 +7782,7 @@
           "9M": -603415,
           "9Y": -9858477
         },
+        "pullToPar": null,
         "residual": -2313,
         "rolldown": -63463,
         "startup": 0,
@@ -7735,6 +7844,7 @@
           "9M": -593481,
           "9Y": -9889562
         },
+        "pullToPar": null,
         "residual": -2302,
         "rolldown": -63963,
         "startup": 0,
@@ -7796,6 +7906,7 @@
           "9M": -583605,
           "9Y": -9920625
         },
+        "pullToPar": null,
         "residual": -2291,
         "rolldown": -196348,
         "startup": 0,
@@ -7857,6 +7968,7 @@
           "9M": -554362,
           "9Y": -10018879
         },
+        "pullToPar": null,
         "residual": -2261,
         "rolldown": -66933,
         "startup": 0,
@@ -7918,6 +8030,7 @@
           "9M": -544717,
           "9Y": -10049858
         },
+        "pullToPar": null,
         "residual": -2249,
         "rolldown": -67426,
         "startup": 0,
@@ -7979,6 +8092,7 @@
           "9M": -535130,
           "9Y": -10080814
         },
+        "pullToPar": null,
         "residual": -2238,
         "rolldown": -67918,
         "startup": 0,
@@ -8040,6 +8154,7 @@
           "9M": -525601,
           "9Y": -10111747
         },
+        "pullToPar": null,
         "residual": -2227,
         "rolldown": -68407,
         "startup": 0,
@@ -8101,6 +8216,7 @@
           "9M": -516129,
           "9Y": -10142657
         },
+        "pullToPar": null,
         "residual": -2216,
         "rolldown": -209645,
         "startup": 0,
@@ -8162,6 +8278,7 @@
           "9M": -488095,
           "9Y": -10240509
         },
+        "pullToPar": null,
         "residual": -2182,
         "rolldown": -52331,
         "startup": 0,
@@ -8223,6 +8340,7 @@
           "9M": -478243,
           "9Y": -7341143
         },
+        "pullToPar": null,
         "residual": -285,
         "rolldown": -54246,
         "startup": 0,
@@ -8284,6 +8402,7 @@
           "9M": -469103,
           "9Y": -7366050
         },
+        "pullToPar": null,
         "residual": -293,
         "rolldown": -56160,
         "startup": 0,
@@ -8345,6 +8464,7 @@
           "9M": -460020,
           "9Y": -7390953
         },
+        "pullToPar": null,
         "residual": -301,
         "rolldown": -58075,
         "startup": 0,
@@ -8406,6 +8526,7 @@
           "9M": -450993,
           "9Y": -7415852
         },
+        "pullToPar": null,
         "residual": -309,
         "rolldown": -184907,
         "startup": 0,
@@ -8467,6 +8588,7 @@
           "9M": -424208,
           "9Y": -7486790
         },
+        "pullToPar": null,
         "residual": -335,
         "rolldown": -65198,
         "startup": 0,
@@ -8528,6 +8650,7 @@
           "9M": -415409,
           "9Y": -7511667
         },
+        "pullToPar": null,
         "residual": -343,
         "rolldown": -67114,
         "startup": 0,
@@ -8589,6 +8712,7 @@
           "9M": -406666,
           "9Y": -7536540
         },
+        "pullToPar": null,
         "residual": -352,
         "rolldown": -69029,
         "startup": 0,
@@ -8650,6 +8774,7 @@
           "9M": -397980,
           "9Y": -7561408
         },
+        "pullToPar": null,
         "residual": -362,
         "rolldown": -70945,
         "startup": 0,
@@ -8711,6 +8836,7 @@
           "9M": -389351,
           "9Y": -7586273
         },
+        "pullToPar": null,
         "residual": -371,
         "rolldown": -223533,
         "startup": 0,
@@ -8772,6 +8898,7 @@
           "9M": -363763,
           "9Y": -7657060
         },
+        "pullToPar": null,
         "residual": -397,
         "rolldown": -78079,
         "startup": 0,
@@ -8833,6 +8960,7 @@
           "9M": -355361,
           "9Y": -7681901
         },
+        "pullToPar": null,
         "residual": -406,
         "rolldown": -79995,
         "startup": 0,
@@ -8894,6 +9022,7 @@
           "9M": -347016,
           "9Y": -7706738
         },
+        "pullToPar": null,
         "residual": -416,
         "rolldown": -81911,
         "startup": 0,
@@ -8955,6 +9084,7 @@
           "9M": -338728,
           "9Y": -7731571
         },
+        "pullToPar": null,
         "residual": -425,
         "rolldown": -83828,
         "startup": 0,
@@ -9016,6 +9146,7 @@
           "9M": -330498,
           "9Y": -7756400
         },
+        "pullToPar": null,
         "residual": -435,
         "rolldown": -262197,
         "startup": 0,
@@ -9077,6 +9208,7 @@
           "9M": -306110,
           "9Y": -7827034
         },
+        "pullToPar": null,
         "residual": -463,
         "rolldown": -90972,
         "startup": 0,
@@ -9138,6 +9270,7 @@
           "9M": -298108,
           "9Y": -7851839
         },
+        "pullToPar": null,
         "residual": -473,
         "rolldown": -92889,
         "startup": 0,
@@ -9199,6 +9332,7 @@
           "9M": -290162,
           "9Y": -7876639
         },
+        "pullToPar": null,
         "residual": -483,
         "rolldown": -94806,
         "startup": 0,
@@ -9260,6 +9394,7 @@
           "9M": -282274,
           "9Y": -7901435
         },
+        "pullToPar": null,
         "residual": -493,
         "rolldown": -96722,
         "startup": 0,
@@ -9321,6 +9456,7 @@
           "9M": -274443,
           "9Y": -7926226
         },
+        "pullToPar": null,
         "residual": -503,
         "rolldown": -300896,
         "startup": 0,
@@ -9382,6 +9518,7 @@
           "9M": -251259,
           "9Y": -7996705
         },
+        "pullToPar": null,
         "residual": -532,
         "rolldown": -103876,
         "startup": 0,
@@ -9443,6 +9580,7 @@
           "9M": -243657,
           "9Y": -8021471
         },
+        "pullToPar": null,
         "residual": -543,
         "rolldown": -105794,
         "startup": 0,
@@ -9504,6 +9642,7 @@
           "9M": -236113,
           "9Y": -8046234
         },
+        "pullToPar": null,
         "residual": -553,
         "rolldown": -107711,
         "startup": 0,
@@ -9565,6 +9704,7 @@
           "9M": -228625,
           "9Y": -8070991
         },
+        "pullToPar": null,
         "residual": -564,
         "rolldown": -109628,
         "startup": 0,
@@ -9626,6 +9766,7 @@
           "9M": -221195,
           "9Y": -8095744
         },
+        "pullToPar": null,
         "residual": -574,
         "rolldown": -339627,
         "startup": 0,
@@ -9687,6 +9828,7 @@
           "9M": -199219,
           "9Y": -8166065
         },
+        "pullToPar": null,
         "residual": -605,
         "rolldown": -116791,
         "startup": 0,
@@ -9748,6 +9890,7 @@
           "9M": -192019,
           "9Y": -8190793
         },
+        "pullToPar": null,
         "residual": -616,
         "rolldown": -118709,
         "startup": 0,
@@ -9809,6 +9952,7 @@
           "9M": -184876,
           "9Y": -8215516
         },
+        "pullToPar": null,
         "residual": -626,
         "rolldown": -120626,
         "startup": 0,
@@ -9870,6 +10014,7 @@
           "9M": -177790,
           "9Y": -8240235
         },
+        "pullToPar": null,
         "residual": -638,
         "rolldown": -122544,
         "startup": 0,
@@ -9931,6 +10076,7 @@
           "9M": -170762,
           "9Y": -8264948
         },
+        "pullToPar": null,
         "residual": -648,
         "rolldown": -378386,
         "startup": 0,
@@ -9992,6 +10138,7 @@
           "9M": -149997,
           "9Y": -8335108
         },
+        "pullToPar": null,
         "residual": -681,
         "rolldown": -129715,
         "startup": 0,
@@ -10053,6 +10200,7 @@
           "9M": -143199,
           "9Y": -8359796
         },
+        "pullToPar": null,
         "residual": -692,
         "rolldown": -131633,
         "startup": 0,
@@ -10114,6 +10262,7 @@
           "9M": -136460,
           "9Y": -8384479
         },
+        "pullToPar": null,
         "residual": -703,
         "rolldown": -133551,
         "startup": 0,
@@ -10175,6 +10324,7 @@
           "9M": -129777,
           "9Y": -8409157
         },
+        "pullToPar": null,
         "residual": -715,
         "rolldown": -135468,
         "startup": 0,
@@ -10236,6 +10386,7 @@
           "9M": -123153,
           "9Y": -8433830
         },
+        "pullToPar": null,
         "residual": -726,
         "rolldown": -417172,
         "startup": 0,
@@ -10297,6 +10448,7 @@
           "9M": -103601,
           "9Y": -8503826
         },
+        "pullToPar": null,
         "residual": -760,
         "rolldown": -142648,
         "startup": 0,
@@ -10358,6 +10510,7 @@
           "9M": -97208,
           "9Y": -8528473
         },
+        "pullToPar": null,
         "residual": -771,
         "rolldown": -144566,
         "startup": 0,
@@ -10419,6 +10572,7 @@
           "9M": -90872,
           "9Y": -8553115
         },
+        "pullToPar": null,
         "residual": -784,
         "rolldown": -146483,
         "startup": 0,
@@ -10480,6 +10634,7 @@
           "9M": -84595,
           "9Y": -8577752
         },
+        "pullToPar": null,
         "residual": -795,
         "rolldown": -148401,
         "startup": 0,
@@ -10541,6 +10696,7 @@
           "9M": -78375,
           "9Y": -8602383
         },
+        "pullToPar": null,
         "residual": -807,
         "rolldown": -455981,
         "startup": 0,
@@ -10602,6 +10758,7 @@
           "9M": -60041,
           "9Y": -8672213
         },
+        "pullToPar": null,
         "residual": -842,
         "rolldown": -155588,
         "startup": 0,
@@ -10663,6 +10820,7 @@
           "9M": -54053,
           "9Y": -8696818
         },
+        "pullToPar": null,
         "residual": -908,
         "rolldown": -315098,
         "startup": 0,
@@ -10724,6 +10882,7 @@
           "9M": -42219,
           "9Y": -8739920
         },
+        "pullToPar": null,
         "residual": -882,
         "rolldown": -159507,
         "startup": 0,
@@ -10785,6 +10944,7 @@
           "9M": -36385,
           "9Y": -8760429
         },
+        "pullToPar": null,
         "residual": -869,
         "rolldown": -486896,
         "startup": 0,
@@ -10846,6 +11006,7 @@
           "9M": -19255,
           "9Y": -8825966
         },
+        "pullToPar": null,
         "residual": -831,
         "rolldown": -165086,
         "startup": 0,
@@ -10907,6 +11068,7 @@
           "9M": -13655,
           "9Y": -8846418
         },
+        "pullToPar": null,
         "residual": -817,
         "rolldown": -373689,
         "startup": 0,
@@ -10968,6 +11130,7 @@
           "9M": -2663,
           "9Y": -8846058
         },
+        "pullToPar": null,
         "residual": 255717,
         "rolldown": -71966,
         "startup": 0,
@@ -11029,6 +11192,7 @@
           "9M": 11,
           "9Y": -8823226
         },
+        "pullToPar": null,
         "residual": -827,
         "rolldown": -112866,
         "startup": 0,
@@ -11090,6 +11254,7 @@
           "9M": -229,
           "9Y": -8759058
         },
+        "pullToPar": null,
         "residual": -856,
         "rolldown": -40093,
         "startup": 0,
@@ -11151,6 +11316,7 @@
           "9M": -358,
           "9Y": -8736454
         },
+        "pullToPar": null,
         "residual": -866,
         "rolldown": -41238,
         "startup": 0,
@@ -11212,6 +11378,7 @@
           "9M": -486,
           "9Y": -8713871
         },
+        "pullToPar": null,
         "residual": -875,
         "rolldown": -47051,
         "startup": 0,
@@ -11273,6 +11440,7 @@
           "9M": -619,
           "9Y": -8691308
         },
+        "pullToPar": null,
         "residual": 28782,
         "rolldown": -28813,
         "startup": 0,
@@ -11334,6 +11502,7 @@
           "9M": -7009,
           "9Y": -8668764
         },
+        "pullToPar": null,
         "residual": -893,
         "rolldown": -83732,
         "startup": 0,
@@ -11395,6 +11564,7 @@
           "9M": -25826,
           "9Y": -8593517
         },
+        "pullToPar": null,
         "residual": -922,
         "rolldown": -30767,
         "startup": 0,
@@ -11456,6 +11626,7 @@
           "9M": -32002,
           "9Y": -8565212
         },
+        "pullToPar": null,
         "residual": -932,
         "rolldown": -31958,
         "startup": 0,
@@ -11517,6 +11688,7 @@
           "9M": -38144,
           "9Y": -8536933
         },
+        "pullToPar": null,
         "residual": -943,
         "rolldown": -33145,
         "startup": 0,
@@ -11578,6 +11750,7 @@
           "9M": -44252,
           "9Y": -8508678
         },
+        "pullToPar": null,
         "residual": -953,
         "rolldown": -34329,
         "startup": 0,
@@ -11639,6 +11812,7 @@
           "9M": -50325,
           "9Y": -8480447
         },
+        "pullToPar": null,
         "residual": -963,
         "rolldown": -111426,
         "startup": 0,
@@ -11700,6 +11874,7 @@
           "9M": -68366,
           "9Y": -8399748
         },
+        "pullToPar": null,
         "residual": -995,
         "rolldown": -39951,
         "startup": 0,
@@ -11761,6 +11936,7 @@
           "9M": -74304,
           "9Y": -8371600
         },
+        "pullToPar": null,
         "residual": -1003,
         "rolldown": 0,
         "startup": 0,
@@ -11791,6 +11967,7 @@
           "9M": -80208,
           "9Y": -8343477
         },
+        "pullToPar": null,
         "residual": null,
         "rolldown": null,
         "startup": null,

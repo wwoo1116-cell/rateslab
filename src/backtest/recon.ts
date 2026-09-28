@@ -72,6 +72,9 @@ export function backtestDays(recon: BacktestRecon): ReconStackDay[] {
     residual: r.residual,
     carry: r.carry,
     rolldown: r.rolldown,
+    /* 풀투파 — 서버가 낸 칸 그대로 [OWNER 2026-09-28]. `null` 은 「그 성분이
+       없다」(순수 스왑·선물)이고 0 은 「그날 0 이었다」다. */
+    pullToPar: r.pullToPar ?? null,
     ...(r.funding === undefined ? {} : { funding: r.funding }),
     actual: r.actual,
     /* 다리별 대사 [2026-09-04]. 여기서도 **이름만 바꿔 넘긴다** — 개시를

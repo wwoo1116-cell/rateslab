@@ -469,6 +469,10 @@ export interface BacktestPosition {
    * memory — the server always sends it now. */
   valuation: number;
   rolldown?: number;
+  /** ★풀투파 — 옛 「롤다운」 칸에서 떼어낸 몫 [OWNER 2026-09-28 —
+   *  「칸을 나눈다」]. 경과만 흘러 가격이 par 로 당겨지는 몫이고 커브를
+   *  타고 내려온 것이 아니다. `null` = 그 성분 자체가 없다(순수 스왑·선물). */
+  pullToPar?: number | null;
   /** 선물 줄은 null — 캐리라는 성분 자체가 없다(합성채는 늙지 않는다;
    * backend/app/futures.py). 0 으로 채우면 "캐리가 0원이었다" 로 읽힌다. */
   carry: number | null;
@@ -528,6 +532,10 @@ export interface BacktestLegParts {
   /** 없는 성분은 `null` 이다 — 선물 다리엔 캐리·롤다운·개시가 **없고**,
    *  0 을 적으면 「캐리가 0원이었다」는 다른 말이 된다(서버의 공란 정책). */
   rolldown: number | null;
+  /** ★풀투파 — 옛 「롤다운」 칸에서 떼어낸 몫 [OWNER 2026-09-28 —
+   *  「칸을 나눈다」]. 경과만 흘러 가격이 par 로 당겨지는 몫이고 커브를
+   *  타고 내려온 것이 아니다. `null` = 그 성분 자체가 없다(순수 스왑·선물). */
+  pullToPar?: number | null;
   carry: number | null;
   startup: number | null;
   /** 조달은 **현물 채권 다리만** 진다. IRS·선물은 `null`. */
@@ -553,6 +561,10 @@ export interface BacktestReconRow {
   actual: number | null;
   valuation: number | null;
   rolldown: number | null;
+  /** ★풀투파 — 옛 「롤다운」 칸에서 떼어낸 몫 [OWNER 2026-09-28 —
+   *  「칸을 나눈다」]. 경과만 흘러 가격이 par 로 당겨지는 몫이고 커브를
+   *  타고 내려온 것이 아니다. `null` = 그 성분 자체가 없다(순수 스왑·선물). */
+  pullToPar?: number | null;
   carry: number | null;
   /** 개시 — 그 포지션의 진입일 행에만 0 이 아니다 [OWNER, 2026-08-14].
    * 화면에서는 평가에 접는다(`backtest/recon.ts` 의 backtestDays). */
@@ -579,6 +591,10 @@ export interface BacktestReconLeg {
   actual: number | null;
   valuation: number | null;
   rolldown: number | null;
+  /** ★풀투파 — 옛 「롤다운」 칸에서 떼어낸 몫 [OWNER 2026-09-28 —
+   *  「칸을 나눈다」]. 경과만 흘러 가격이 par 로 당겨지는 몫이고 커브를
+   *  타고 내려온 것이 아니다. `null` = 그 성분 자체가 없다(순수 스왑·선물). */
+  pullToPar?: number | null;
   carry: number | null;
   funding?: number | null;
   residual: number | null;
@@ -842,6 +858,10 @@ export interface CashBondPosition {
   valuation: number;
   carry: number;
   rolldown: number;
+  /** ★풀투파 — 옛 「롤다운」 칸에서 떼어낸 몫 [OWNER 2026-09-28 —
+   *  「칸을 나눈다」]. 경과만 흘러 가격이 par 로 당겨지는 몫이고 커브를
+   *  타고 내려온 것이 아니다. `null` = 그 성분 자체가 없다(순수 스왑·선물). */
+  pullToPar?: number | null;
   funding: number;
   startup: number;
   pnl: number;

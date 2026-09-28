@@ -49,6 +49,7 @@
 
 from __future__ import annotations
 
+import dataclasses as _dc
 import datetime as dt
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
@@ -305,6 +306,25 @@ def _mixed(
     last_k = max(b for _a, b in spans.values())
     sample_k = _thin(list(range(first_k, last_k + 1)), MAX_POINTS)
 
+    # ── ★줄을 **북 창으로 깎는다** [OWNER 2026-09-28] ────────────────────────
+    # `_mixed_any` 의 그 절과 같은 규율이고 같은 이유다(적대 검증은 이 경로에도
+    # 같은 어긋남이 있다고 했고, 실측 491,829원이었다). 헤드라인은 공통 달력의
+    # 마지막 점인데 줄은 자기 달력의 청산일까지 살아서 Σ줄 ≠ 헤드라인이었다.
+    book_end = m.dates[mi[last_k]]
+    clipped: dict[int, str] = {}
+    for n, bp in list(bonds.items()):
+        own_exit = m.dates[legs[n].exit_i]
+        if own_exit > book_end:
+            clipped[n] = own_exit.isoformat()
+            bonds[n] = _dc.replace(bp, exit=book_end)
+            legs[n] = cb._bond_leg(m, bonds[n])
+    for n, sp in list(swaps.items()):
+        _e_i, x_i, _mat = _span_of(dataset, sp)
+        own_exit = dataset.dates[x_i]
+        if own_exit > book_end:
+            clipped[n] = own_exit.isoformat()
+            swaps[n] = _dc.replace(sp, exit=book_end)
+
     # 두 달력이 어긋난 자리 — 모듈 주석의 `d` 절. 그 날만 직전 공통일을 평가
     # 표본에 더한다(전체에 더하지 않는 이유: 롤다운 체인의 걸음 폭이 바뀐다).
     gaps = {
@@ -349,6 +369,9 @@ def _mixed(
 
     pnls = [p["pnl"] for p in points]
     a, b = m.dates[mi[first_k]], m.dates[mi[last_k]]
+    for n, upto in clipped.items():
+        # 이 줄은 원래 `upto` 까지 살았는데 북 창(`to`)에서 끊겼다.
+        records[n]["clippedTo"] = upto
     return {
         "positions": [records[n] for n in range(len(positions))],
         "from": a.isoformat(),
@@ -446,6 +469,44 @@ def _mixed_any(
     if not window:
         raise MixedBookError("포지션들이 함께 사는 날짜가 없습니다.")
 
+    # ── ★줄을 **북 창으로 깎는다** [OWNER 2026-09-28] ────────────────────────
+    #
+    # 종전에는 헤드라인이 교집합 달력의 마지막 점이고(`pnls[-1]`) 줄들은 각자
+    # **자기 달력의 청산일**까지 살아서, 같은 화면의 Σ줄과 헤드라인이 어긋났다
+    # (실측 683,680원 · 그중 670,000원을 화면 캐리 칸이 먹었다). 두 길이 있었고
+    # 오너가 이쪽을 골랐다 — **모든 수가 한 날 위에 선다.**
+    #
+    # 반대 길(헤드라인을 Σ줄로 바꾸기)을 안 고른 이유: 그러면 헤드라인 하나가
+    # 09-23 과 09-25 를 섞은 수가 되어 「어느 날의 북인가」에 답을 못 한다 —
+    # 같은 날 고친 「반쪽 장중」과 똑같은 병이다(한 줄은 한 시계만 말한다).
+    #
+    # 깎이기 전에 어디까지 살았는지는 **버리지 않는다**: 줄마다 `clippedTo` 로
+    # 싣는다 — 값은 **깎이기 전 그 줄의 청산일**이다(이름이 가리키는 목표가
+    # 아니라 출처다). ⚠지금은 **자료에만 있다**: `src/lib/api.ts` 의
+    # `BacktestPosition` 이 이 열을 아직 안 받고 화면도 안 적는다. 화면은 깎인
+    # 청산일(`exit`)만 말하므로 거짓은 아니고, 「원래 어디까지였나」를 적을지는
+    # 오너 판단으로 열려 있다(2026-09-29 확인).
+    book_end = window[-1]
+    clipped: dict[int, str] = {}
+    for n, bp in list(bonds.items()):
+        own_exit = m.dates[blegs[n].exit_i]
+        if own_exit > book_end:
+            clipped[n] = own_exit.isoformat()
+            bonds[n] = _dc.replace(bp, exit=book_end)
+            blegs[n] = cb._bond_leg(m, bonds[n])
+    for n, sp in list(swaps.items()):
+        _e_i, x_i, _mat = _span_of(dataset, sp)
+        own_exit = dataset.dates[x_i]
+        if own_exit > book_end:
+            clipped[n] = own_exit.isoformat()
+            swaps[n] = _dc.replace(sp, exit=book_end)
+    for n, fp in list(futs.items()):
+        _a, b_i = ft._span_on(fut_cals[n], fp)
+        own_exit = fut_cals[n][b_i]
+        if own_exit > book_end:
+            clipped[n] = own_exit.isoformat()
+            futs[n] = _dc.replace(fp, exit=book_end)
+
     sample_k = _thin(list(range(len(window))), MAX_POINTS)
 
     def _own_prev(cal: list[dt.date], d: dt.date) -> dt.date | None:
@@ -516,6 +577,9 @@ def _mixed_any(
         kinds.append("IRS")
     if futs:
         kinds.append("선물")
+    for n, upto in clipped.items():
+        # 이 줄은 원래 `upto` 까지 살았는데 북 창(`to`)에서 끊겼다.
+        records[n]["clippedTo"] = upto
     union_dates = sorted(set().union(*[set(c) for c in cals]))
     dropped = len([d for d in union_dates if a <= d <= b]) - len(
         [d for d in window if a <= d <= b]
