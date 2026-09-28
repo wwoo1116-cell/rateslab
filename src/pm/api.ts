@@ -138,6 +138,20 @@ export interface PaperSheet {
     /** 매겨진 다리 수 · 아직인 다리 수 — 화면이 「3다리 중 2다리」를 적는다. */
     scored: number;
     pending: number;
+    /** 묶음(트레이드) 수와 그중 들고 있는 수 — 사실 스트립이 읽는다(서버가 센다). */
+    trades?: number;
+    tradesOpen?: number;
+    /** ★**제일 가까운 문** — 열린 묶음 중 청산·손절선에 제일 가까운 하나. 거리는
+     *  계열 단위이고 0 이하면 이미 닿은 것이다. 화면이 묶음을 훑어 고르지 않게
+     *  서버가 고른다(§16). 후보가 없으면 `null`. */
+    nearest?: {
+      key: string;
+      label: string;
+      series: string | null;
+      kind: 'stop' | 'exit';
+      gap: number;
+      unit: string | null;
+    } | null;
     /** **부호를 지고** 더한 DV01 — 페이와 리시브가 상쇄되는 것이 이 북의 알맹이다. */
     netDv01: number;
     grossDv01: number;
@@ -169,6 +183,9 @@ export interface PaperPositionGroup {
   netDv01: number;
   grossDv01: number;
   openNotional: number;
+  /** 조건 없는 **열린** 다리 수 — 그 묶음에 청산선이 안 서는 다리가 몇인가.
+   *  화면이 다리를 세지 않게 서버가 센다(§16). */
+  unconditioned?: number;
   /** ── 묶음의 **계열 시선** [OWNER 2026-09-28 — "묶음으로 지금 얼마나 벌어져있는지
    *  왜 안알려줘?"]. 다리 줄이 다리의 금리를 말하면 묶음 줄은 계열 값을 말한다.
    *  전체 줄(화면이 `position` 에서 옮겨 적는 것)에는 없다 — 계열이 하나가 아니다. */
@@ -261,6 +278,9 @@ export interface PaperLegTrack {
   /** 거리(계열 단위). **살아 있으면 양수** — 0 이하는 닿은 것이고 `hit` 와 같은 말. */
   exitGap: number | null;
   stopGap: number | null;
+  /** 두 문 중 **가까운 쪽** — 화면이 둘을 견줘 고르지 않게 서버가 고른다(§16).
+   *  같으면 손절이 이름을 갖는다(엔진의 우선순위). */
+  nearest: { kind: 'stop' | 'exit'; gap: number } | null;
   /** ★**내 다리의 레벨** [OWNER 2026-09-28 — "각각 레벨로 적어줘야지 2년이면 3.xx
    *  에서 얼마, 10년이면 4.xx 에서 얼마"]. 계열 값 = scale × Σ w·r 이므로 **다른
    *  다리를 지금 값에 둔 채** 이 다리만 움직여 계열이 그 선에 닿는 레벨(%)과, 그

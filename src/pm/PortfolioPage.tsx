@@ -34,6 +34,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { Select } from '@coinbase/cds-web/alpha/select';
 import { Box, HStack, VStack } from '@coinbase/cds-web/layout';
+import { Pressable } from '@coinbase/cds-web/system';
 import { Table, TableBody, TableCell, TableHeader, TableRow } from '@coinbase/cds-web/tables';
 import { TextInput } from '@coinbase/cds-web/controls';
 import { Text } from '@coinbase/cds-web/typography';
@@ -49,6 +50,7 @@ import { CONTROL_H } from '@/ui/controlHeight';
 import { fitWidth, useControlFont } from '@/ui/fit';
 import { GAP } from '@/ui/gaps';
 import { ErrorState, LoadingState } from '@/ui/DataState';
+import { Stat, StatColumn } from '@/ui/Stat';
 import { ThHelp } from '@/ui/ThHelp';
 import { DROPDOWN_STYLES } from '@/ui/window/popup';
 
@@ -229,13 +231,15 @@ function LevelCell({ track, open }: { track: PaperLegTrack | null; open: boolean
 }
 
 /**
- * 표의 줄 — 다리와 **소계** [OWNER 2026-09-28 — "각 트레이드 별과 포트폴리오 전체에서의
- * PnL 이 나와주고"].
+ * 표의 줄 — **트레이드 머리**와 그 밑의 다리 [OWNER 2026-09-28 — "각 트레이드 별과
+ * 포트폴리오 전체에서의 PnL" → "묶음이랑 포트폴리오 전체랑 개별 포지션 간에 위계
+ * 고려해서 … 재디자인"].
  *
  * 「트레이드」는 이 데스크의 말로 **묶음**(태그)이다 — BSS 하나가 IRS 페이 + 선물
- * 매수 두 다리다. 다리 줄들 뒤에 묶음 소계 줄이 서고, 맨 아래 포트폴리오 전체가
- * 선다. 묶음이 없는 다리는 제 혼자 트레이드다(소계 줄이 곧 그 다리 — 추적 버튼이
- * 거기 서야 하므로 줄을 생략하지 않는다). 순서는 묶음의 첫 등장 차례다.
+ * 매수 두 다리다. 묶음 줄이 **자기 다리들 위에** 서고(위계는 위에서 아래로),
+ * 포트폴리오 전체는 표가 아니라 위의 사실 스트립이 진다. 묶음이 없는 다리는 제
+ * 혼자 트레이드다(머리 줄이 곧 그 다리 — 추적 버튼이 거기 서야 하므로 줄을
+ * 생략하지 않는다). 순서는 묶음의 첫 등장 차례다.
  *
  * 합은 서버의 규율 그대로 센다: 한 다리라도 못 매겼으면 합계는 «—»이고, 매겨진
  * 다리만의 소계를 「n/N 매김」으로 따로 적는다(`position.pnl`·`scoredPnl` 의 그 규칙).
@@ -244,24 +248,33 @@ type RowItem =
   | { kind: 'leg'; leg: PaperPositionLeg }
   | { kind: 'sum'; group: PaperPositionGroup };
 
-/** 줄 차례 — **서버의 묶음 차례**를 따른다. 여기서 더하는 수는 없다(§16). 묶음이
- *  모르는 다리(있을 수 없지만)는 끝에 세워 표에서 사라지지 않게 한다. */
+/**
+ * 줄 차례 — **트레이드 머리가 자기 다리들 위에** 선다 [OWNER 2026-09-28 — "묶음이랑
+ * 포트폴리오 전체랑 개별 포지션 간에 위계 고려해서 … 재디자인"].
+ *
+ * 종전에는 다리들 뒤에 소계가 붙는 «회계 장부» 차례라 트레이드가 자기 다리 밑에
+ * 묻혔다. 위계는 위에서 아래로 읽혀야 한다: 포트폴리오(표 위 사실 스트립) →
+ * 트레이드(머리 줄) → 다리(들여쓴 줄). 「포트폴리오 전체」 줄은 표에서 내려가고
+ * 스트립이 그 자리다 — 같은 수를 두 곳에 적지 않는다.
+ *
+ * 차례는 **서버의 묶음 차례**를 따르고 여기서 더하는 수는 없다(§16). 접힌 묶음은
+ * 머리 줄만 서고, 묶음이 모르는 다리(있을 수 없지만)는 끝에 세워 안 사라지게 한다.
+ */
 function groupRows(legs: PaperPositionLeg[], groups: PaperPositionGroup[],
-                   total: PaperPositionGroup | null): RowItem[] {
+                   collapsed: ReadonlySet<string>): RowItem[] {
   const byN = new Map(legs.map((l) => [l.n, l]));
   const seen = new Set<number>();
   const out: RowItem[] = [];
   for (const g of groups) {
+    out.push({ kind: 'sum', group: g });
     for (const n of g.legs) {
       const l = byN.get(n);
       if (!l) continue;
       seen.add(n);
-      out.push({ kind: 'leg', leg: l });
+      if (!collapsed.has(g.key)) out.push({ kind: 'leg', leg: l });
     }
-    out.push({ kind: 'sum', group: g });
   }
   for (const l of legs) if (!seen.has(l.n)) out.push({ kind: 'leg', leg: l });
-  if (total && legs.length > 0) out.push({ kind: 'sum', group: total });
   return out;
 }
 
@@ -271,9 +284,61 @@ function seriesWord(v: number | null | undefined, unit: string | null | undefine
   return `${unit === '%' ? v.toFixed(3) : v.toFixed(2)}${unit ?? ''}`;
 }
 
-function SubtotalRow({ group: g, busy, onTrace }: {
+/**
+ * 포트폴리오 전체 — 표 **위**의 사실 스트립 [OWNER 2026-09-28, 위계].
+ *
+ * 종전에는 같은 수가 두 곳에 있었다(카드 머리의 한 줄 + 표 맨 아래 「전체」 줄).
+ * 위계의 꼭대기는 한 번만 말해야 하고, 이 앱에서 «여러 사실을 한 줄에 눕히는»
+ * 문법은 `.sr-stats` + `StatColumn`/`Stat` 하나다(캐논). 전부 서버가 센 수다(§16).
+ */
+function PortfolioStrip({ p }: { p: PaperSheet['position'] }) {
+  const won = (v: number) => fmtKrw(v);
+  const near = p.nearest;
+  return (
+    <HStack className="sr-stats" width="100%" flexWrap="wrap">
+      <StatColumn title="손익">
+        {p.pnl != null ? (
+          <Stat label="합계" value={won(p.pnl)} tone={p.pnl >= 0 ? 'up' : 'down'} />
+        ) : (
+          <Stat label="매겨진 다리" value={p.scoredPnl == null ? MINUS : won(p.scoredPnl)}
+            tone={p.scoredPnl == null ? undefined : p.scoredPnl >= 0 ? 'up' : 'down'}
+            note={`${p.scored}/${p.scored + p.pending}다리 · 나머지는 아직이에요`} />
+        )}
+      </StatColumn>
+      <StatColumn title="들고 있는 것">
+        <Stat label="트레이드" value={`${p.tradesOpen ?? 0} / ${p.trades ?? 0}`} />
+        <Stat label="다리" value={`${p.open} / ${p.open + p.closed}`} />
+        <Stat label="명목" value={`${((p.openNotional ?? 0) / 1e8).toLocaleString('ko-KR', { maximumFractionDigits: 1 })}억`} />
+      </StatColumn>
+      <StatColumn title="금리 민감도">
+        <Stat label="순 DV01" value={`${won(p.netDv01)}/bp`} />
+        <Stat label="총 DV01" value={`${won(p.grossDv01)}/bp`} />
+      </StatColumn>
+      <StatColumn title="제일 가까운 문">
+        {/* 어느 트레이드가 청산·손절에 먼저 닿는가 — **서버가 고른다**(§16).
+            거리가 0 이하면 이미 닿은 것이고, 그건 밴드 칸이 그 줄에서 적는다. */}
+        {/* ⚠ 이름을 `label` 에 넣지 말 것 — CDS `caption` 이 **대문자 변환**을 걸어
+            「2nd Trader」가 「2ND TRADER」로 렌더된다(실측 2026-09-28 · σ 가 Σ 로
+            렌더되던 그 자리와 같은 성질). 이름은 값 아래 `note` 가 진다. */}
+        {near ? (
+          <Stat label={near.kind === 'stop' ? '손절까지' : '청산까지'}
+            value={near.gap <= 0 ? '닿았어요' : `${seriesWord(near.gap, near.unit)} 남음`}
+            tone={near.kind === 'stop' ? 'down' : 'up'}
+            note={`${near.label}${near.series ? ` · ${near.series}` : ''}`} />
+        ) : (
+          <Stat label="아직" value={MINUS} note="계열과 조건이 선 묶음이 없어요" />
+        )}
+      </StatColumn>
+    </HStack>
+  );
+}
+
+function SubtotalRow({ group: g, busy, collapsed, onToggle, onTrace }: {
   group: PaperPositionGroup;
   busy: boolean;
+  /** 이 묶음의 다리가 접혀 있는가 — 머리 줄이 그 상태를 지고 토글한다. */
+  collapsed: boolean;
+  onToggle: () => void;
   onTrace: (ns: number[], title: string) => void;
 }) {
   const shown = g.pnl ?? g.scoredPnl;
@@ -288,18 +353,27 @@ function SubtotalRow({ group: g, busy, onTrace }: {
   const hasSeries = !!g.series && g.now != null;
   const deltaTone = shown == null ? undefined : directionClass(shown);
   return (
-    <TableRow style={{ height: ROW_H }}>
+    <TableRow style={{ height: ROW_H }} data-sr-trade="">
       <TableCell>
-        <VStack as="span" className="sr-name-stack">
-          <Text font="label1" as="span" noWrap>
-            {g.total ? g.label : `묶음 · ${g.label}`}
-          </Text>
-          <Text font="legal" as="span" color="fgMuted" noWrap>
-            {`${g.legs.length}다리 · 보유 ${g.open}`}
-          </Text>
-        </VStack>
+        {/* ★트레이드 이름이 곧 **접기 손잡이**다 [OWNER 2026-09-28, 위계].
+            그림 위 onClick 이 아니라 CDS `Pressable as="button"` 이라 탭·엔터가
+            그대로 듣고(WCAG §2.1.1), 펼침 상태는 `aria-expanded` 가 진다.
+            8개가 넘어가면 다리를 접어 트레이드만 훑는 것이 이 줄의 값어치다. */}
+        <Pressable as="button" noScaleOnPress
+          onClick={onToggle}
+          aria-expanded={!collapsed}
+          accessibilityLabel={`${g.label} 다리 ${collapsed ? '펼치기' : '접기'}`}>
+          <VStack as="span" className="sr-name-stack" alignItems="flex-start">
+            <Text font="label1" as="span" noWrap>
+              {`${collapsed ? '▸' : '▾'} ${g.label}`}
+            </Text>
+            <Text font="legal" as="span" color="fgMuted" noWrap>
+              {`${g.legs.length}다리 · 보유 ${g.open}`
+                + (g.unconditioned ? ` · 조건 없는 다리 ${g.unconditioned}` : '')}
+            </Text>
+          </VStack>
+        </Pressable>
       </TableCell>
-      <TableCell>{blank}</TableCell>
       <TableCell>
         {g.series ? (
           <VStack as="span" className="sr-name-stack" title={g.seriesWhy ?? undefined}>
@@ -380,7 +454,7 @@ function SubtotalRow({ group: g, busy, onTrace }: {
             {shown == null ? MINUS : fmtKrw(shown)}
           </Text>
           <Text font="legal" as="span" color="fgMuted" noWrap>
-            {g.pending === 0 ? (g.total ? '합계' : '소계') : `${g.scored}/${g.legs.length} 매김`}
+            {g.pending === 0 ? '트레이드 손익' : `${g.scored}/${g.legs.length} 매김`}
           </Text>
         </VStack>
       </TableCell>
@@ -399,12 +473,12 @@ function SubtotalRow({ group: g, busy, onTrace }: {
 }
 
 function PositionTable({
-  legs, groups, total, busy, today, exitDateW, exitLevelW, onClose, canAttach, onAttach, onTrace,
+  legs, groups, busy, today, exitDateW, exitLevelW, onClose, canAttach, onAttach, onTrace,
 }: {
   legs: PaperPositionLeg[];
-  /** 묶음 소계와 전체 — **서버가 센 수**(§16). */
+  /** 묶음(트레이드)들 — **서버가 센 수**(§16). 포트폴리오 전체는 표가 아니라
+   *  위의 사실 스트립이 진다(`PortfolioStrip`). */
   groups: PaperPositionGroup[];
-  total: PaperPositionGroup | null;
   busy: boolean;
   /** 오늘(서울) — 청산일의 기본값이다. **`asof`(자료의 날)가 아니다.** */
   today: string;
@@ -430,6 +504,15 @@ function PositionTable({
      오늘 적는» 경우를 장부가 받을 수 없었다. 서버는 처음부터 이 날을 받고
      있었고(`check_exit`), 화면만 안 물었다. */
   const [exitT, setExitT] = useState<Record<number, string>>({});
+  /* 접힌 묶음 — **화면의 상태**라 서버에 안 간다. 기본은 펼침(보던 그대로)이고,
+     트레이드가 많아지면 머리 줄을 눌러 접는다. 브라우저를 새로 고치면 다시
+     펼쳐진다 — 어제의 접힘이 오늘 화면을 숨기면 안 된다(`book.ts` 의 그 판단). */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const toggle = (key: string) => setCollapsed((prev) => {
+    const next = new Set(prev);
+    if (!next.delete(key)) next.add(key);
+    return next;
+  });
 
   if (legs.length === 0) {
     return (
@@ -447,9 +530,6 @@ function PositionTable({
           <TableRow>
             <TableCell as="th" scope="col">
               <Text font="caption" as="span" color="fgMuted">계기</Text>
-            </TableCell>
-            <TableCell as="th" scope="col">
-              <Text font="caption" as="span" color="fgMuted">묶음</Text>
             </TableCell>
             {/* ★조건 — 묶음 **오른쪽**이다 [트레이더 2026-09-23 · 자리는 오너].
                 「어제 60일/2.5/0.5/3 으로 들어갔는데 오늘 화면은 120/2.5/0/3」
@@ -502,16 +582,23 @@ function PositionTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {groupRows(legs, groups, total).map((item) => {
+          {groupRows(legs, groups, collapsed).map((item) => {
             if (item.kind === 'sum') {
-              return <SubtotalRow key={`sum-${item.group.key}`} group={item.group} busy={busy} onTrace={onTrace} />;
+              return (
+                <SubtotalRow key={`sum-${item.group.key}`} group={item.group} busy={busy}
+                  collapsed={collapsed.has(item.group.key)}
+                  onToggle={() => toggle(item.group.key)}
+                  onTrace={onTrace} />
+              );
             }
             const l = item.leg;
             return (
-            <TableRow key={l.n} style={{ height: ROW_H }}>
+            <TableRow key={l.n} style={{ height: ROW_H }} data-sr-leg="">
               <TableCell>
-                <VStack as="span" className="sr-name-stack">
-                  <Text font="label1" as="span" noWrap>
+                {/* 다리는 트레이드 **밑**이다 — 들여쓰기와 활자(label2)가 그 위계를
+                    진다. 트레이드 머리는 label1 이라 두 층이 한눈에 갈린다. */}
+                <VStack as="span" className="sr-name-stack" paddingStart={2}>
+                  <Text font="label2" as="span" noWrap>
                     {`${KIND_WORD[l.kind] ?? l.kind} ${l.tenor} ${SIDE_WORD[l.side] ?? l.side}`}
                   </Text>
                   <Text font="legal" as="span" color="fgMuted" noWrap>
@@ -519,9 +606,9 @@ function PositionTable({
                   </Text>
                 </VStack>
               </TableCell>
-              <TableCell>
-                <Text font="legal" as="span" color="fgMuted" noWrap>{l.tag || MINUS}</Text>
-              </TableCell>
+              {/* 「묶음」 열은 내려갔다 [2026-09-28, 위계] — 이름은 **바로 위
+                  트레이드 머리 줄**이 적는다. 같은 이름을 다리마다 되풀이하면
+                  위계가 안 보이고 열만 하나 넓어진다. */}
               <TableCell>
                 {/* 조건 없는 다리는 «—» 다 — 「전부 0 으로 들어갔다」가 아니라
                     「안 적었다」이고, 둘은 다른 말이다(서버의 공란 정책). */}
@@ -1009,37 +1096,20 @@ export function PortfolioPage() {
             paddingX={2} paddingTop={1.5} paddingBottom={0.5} flexWrap="wrap">
             <HStack alignItems="baseline" gap={1}>
               <Text font="label1" as="h2" noWrap>포지션</Text>
-              <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
-                {`보유 ${sheet.position.open} · 청산 ${sheet.position.closed}`}
+              <Text font="legal" as="span" color="fgMuted" noWrap>
+                포트폴리오 → 트레이드 → 다리 차례예요 — 트레이드 이름을 누르면 다리를 접어요.
               </Text>
             </HStack>
-            <Text font="legal" as="span" color="fgMuted" tabularNumbers>
-              {`순 DV01 ${fmtKrw(sheet.position.netDv01)}/bp · 총 ${fmtKrw(sheet.position.grossDv01)}/bp`}
-              {/* 합계는 **전부 매겨졌을 때만** 선다(하나라도 「아직」이면 0 으로
-                  채우는 셈이 된다). 그때는 매겨진 다리의 소계를 «몇 중 몇»과 같이
-                  적는다 — 다른 칸이라 둘을 섞을 수 없다 [2026-09-22]. */}
-              {sheet.position.pnl != null
-                ? ` · 합계 ${fmtKrw(sheet.position.pnl)}`
-                : sheet.position.scoredPnl != null
-                  ? ` · 매겨진 ${sheet.position.scored}다리 ${fmtKrw(sheet.position.scoredPnl)}`
-                    + ` · 아직 ${sheet.position.pending}다리`
-                  : ''}
-            </Text>
           </HStack>
+          {/* ★위계의 꼭대기 — 포트폴리오 전체는 **표 위 한 줄**이다 [OWNER
+              2026-09-28]. 종전에는 이 카드 머리와 표 맨 아래 「전체」 줄에 같은
+              수가 두 번 있었다. */}
+          <Box paddingX={2} paddingBottom={1}>
+            <PortfolioStrip p={sheet.position} />
+          </Box>
           <PositionTable
             legs={sheet.position.legs}
             groups={sheet.position.groups ?? []}
-            /* 전체 줄도 서버의 그 수다 — `position` 의 합계 칸들을 묶음 모양으로 옮겨
-               적을 뿐이다(더하는 것이 없다). */
-            total={{
-              key: 'all', label: '포트폴리오 전체', total: true,
-              legs: sheet.position.legs.map((l) => l.n),
-              open: sheet.position.open, closed: sheet.position.closed,
-              pnl: sheet.position.pnl, scoredPnl: sheet.position.scoredPnl,
-              scored: sheet.position.scored, pending: sheet.position.pending,
-              netDv01: sheet.position.netDv01, grossDv01: sheet.position.grossDv01,
-              openNotional: sheet.position.openNotional ?? 0,
-            }}
             busy={busy}
             today={sheet.today}
             exitDateW={exitDateW}

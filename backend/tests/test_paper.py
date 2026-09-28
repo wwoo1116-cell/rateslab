@@ -1127,6 +1127,10 @@ class Test청산_손절_레벨:
         assert got["exitGap"] > 0 and got["stopGap"] > 0
         assert got["exitGap"] == pytest.approx(got["exitLevel"] - got["v"], abs=1e-3)
         assert got["stopGap"] == pytest.approx(got["v"] - got["stopLevel"], abs=1e-3)
+        # 가까운 문 — 서버가 고른다(§16). 이 픽스처는 청산선이 더 가깝다.
+        near = got["nearest"]
+        assert near["kind"] == ("exit" if got["exitGap"] <= got["stopGap"] else "stop")
+        assert near["gap"] == pytest.approx(min(got["exitGap"], got["stopGap"]), abs=1e-3)
 
     def test_숏은_전부_반대쪽이다(self):
         vals = [10.0] * 19 + [16.0] + [12.0] * 5
@@ -1630,6 +1634,7 @@ class Test묶음_소계:
         assert g["netDv01"] == pytest.approx(2.0 - 3.0)
         assert g["grossDv01"] == pytest.approx(5.0)
         assert g["openNotional"] == pytest.approx(2e10)
+        assert g["unconditioned"] == 2, "열린 두 다리 다 조건이 없다(닫힌 다리는 안 센다)"
         full = paper.group_legs([self._row(1, "A", pnl=1.0), self._row(2, "A", pnl=2.5)])[0]
         assert full["pnl"] == 3.5 and full["scoredPnl"] == 3.5 and full["pending"] == 0
 
@@ -1752,3 +1757,4 @@ class Test묶음_소계:
         assert pos["openNotional"] == pytest.approx(3e10)
         assert len(pos["groups"]) == 1 and pos["groups"][0]["legs"] == [1, 2]
         assert pos["groups"][0]["pnl"] == pos["pnl"]
+        assert pos["trades"] == 1 and pos["tradesOpen"] == 1

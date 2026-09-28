@@ -162,7 +162,30 @@ describe('자를 두 벌 만들지 않는다', () => {
     const p = page();
     expect(p).not.toMatch(/\.reduce\(/);
     expect(p).toMatch(/l\.pnl/);
-    expect(p).toMatch(/sheet\.position\.pnl/);
+    /* 포트폴리오 합계는 **서버가 낸 `position` 을 통째로** 스트립에 넘겨 읽는다
+       [2026-09-28, 위계 재디자인] — 종전에는 카드 머리가 `sheet.position.pnl` 을
+       직접 적었고, 그 수가 표 맨 아래 「전체」 줄과 두 벌이었다. 화면이 더하지
+       않는다는 명제는 그대로다(`reduce` 금지 + 합계는 `p.pnl`·`p.scoredPnl`). */
+    expect(p).toMatch(/<PortfolioStrip p=\{sheet\.position\} \/>/);
+    expect(p).toMatch(/p\.pnl != null/);
+    expect(p).toMatch(/p\.scoredPnl/);
+    /* 묶음 소계와 「제일 가까운 문」도 서버 값이다 — 화면이 묶음을 훑어 고르지 않는다. */
+    expect(p).toMatch(/const near = p\.nearest/);
+  });
+
+  it('위계는 **위에서 아래로** — 포트폴리오 → 트레이드 → 다리 [2026-09-28]', () => {
+    /* [OWNER "묶음이랑 포트폴리오 전체랑 개별 포지션 간에 위계 고려해서 재디자인"]
+       종전 표는 다리 뒤에 소계가 붙는 회계 장부 차례라 트레이드가 자기 다리 밑에
+       묻혔다. 셋을 잰다: ①묶음 머리가 다리보다 **먼저** push 된다 ②전체 줄은 표에
+       없다(스트립이 그 자리) ③다리 이름은 들여쓰고 활자가 한 급 작다. */
+    const p = page();
+    expect(p).toMatch(/out\.push\(\{ kind: 'sum', group: g \}\);\s*\n\s*for \(const n of g\.legs\)/);
+    expect(p).not.toMatch(/label: '포트폴리오 전체'/);
+    expect(p).toMatch(/<VStack as="span" className="sr-name-stack" paddingStart=\{2\}>/);
+    /* 접기는 **키보드로도** 된다 — 그림 위 onClick 이 아니라 CDS Pressable 이고
+       상태는 `aria-expanded` 가 진다(CLAUDE.md 「키보드와 접근성」 1). */
+    expect(p).toMatch(/<Pressable as="button" noScaleOnPress/);
+    expect(p).toMatch(/aria-expanded=\{!collapsed\}/);
   });
 
   it('내 다리 레벨의 자릿수는 서버와 **한 값**이다 [2026-09-28]', () => {

@@ -328,7 +328,7 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
                 "exitLevel": None, "stopLevel": None,
                 "exitGap": None, "stopGap": None,
                 "mine": None, "mineWhy": None,
-                "entryV": None, "legsNow": None}
+                "entryV": None, "legsNow": None, "nearest": None}
 
     unit: str | None = None
     try:
@@ -447,6 +447,13 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
         # 계열 값으로 말할 때 쓴다(`group_series`).
         "entryV": round(vals[i0], 4),
         "legsNow": None if table is None else table["legs"],
+        # 두 문 중 **가까운 쪽** — 화면이 두 수를 견줘 고르지 않게(§16). 거리는 계열
+        # 단위이고 살아 있으면 양수다. 같으면 손절이 이름을 갖는다(엔진의 우선순위).
+        "nearest": (
+            {"kind": "stop", "gap": round(pos * (v1 - stop_level), 4)}
+            if pos * (v1 - stop_level) <= pos * (exit_level - v1)
+            else {"kind": "exit", "gap": round(pos * (exit_level - v1), 4)}
+        ),
     }
 
 
@@ -810,6 +817,9 @@ def sum_legs(rows: list[dict], *, key: str, label: str, total: bool = False) -> 
         "netDv01": round(sum(l["rateSign"] * l["dv01"] for l in open_), 2),
         "grossDv01": round(sum(abs(l["dv01"]) for l in open_), 2),
         "openNotional": round(sum(float(l["notional"]) for l in open_), 2),
+        # 조건 없는 **열린** 다리 수 — 화면이 다리를 세지 않게(§16). 이 수가 0 이
+        # 아니면 그 묶음엔 청산선이 안 서는 다리가 있다.
+        "unconditioned": sum(1 for l in open_ if not l.get("knobs")),
     }
 
 
@@ -995,6 +1005,25 @@ def series_path(sid: str, entry: str, knobs: dict, *,
         "dir": pos,
         "why": None,
     }
+
+
+def _nearest_door(groups: list[dict]) -> dict[str, Any] | None:
+    """열린 묶음들 중 **문에 제일 가까운** 하나 — `{key, label, series, kind, gap, unit}`.
+
+    후보는 계열 시선이 서고(`track.nearest`) 아직 들고 있는 묶음뿐이다. 거리는 계열
+    단위라 묶음끼리 단위가 다를 수 있는데(bp 대 %), 그래도 **하나를 골라야** 화면이
+    「지금 제일 급한 것」을 말할 수 있다 — 단위를 같이 실어서 읽는 사람이 안다.
+    이미 닿은 묶음(거리 ≤ 0)이 있으면 그쪽이 먼저다(음수가 제일 작다).
+    """
+    best: dict[str, Any] | None = None
+    for g in groups:
+        near = ((g.get("track") or {}).get("nearest")) if g.get("open") else None
+        if not near:
+            continue
+        if best is None or near["gap"] < best["gap"]:
+            best = {"key": g["key"], "label": g["label"], "series": g.get("series"),
+                    "kind": near["kind"], "gap": near["gap"], "unit": g.get("unit")}
+    return best
 
 
 def group_legs(rows: list[dict], **series_kw: Any) -> list[dict[str, Any]]:
@@ -1567,7 +1596,13 @@ def build_sheet(*, leg_of: Callable[..., dict],
                                       if l["open"]), 2),
             # ★묶음(트레이드) 소계 [OWNER 2026-09-28] — 서버가 센다(§16). 화면은
             # 이 차례로 줄을 세우고 수를 읽기만 한다.
-            "groups": group_legs(pos_legs),
+            "groups": (groups := group_legs(pos_legs)),
+            "trades": len(groups),
+            "tradesOpen": sum(1 for g in groups if g["open"] > 0),
+            # ★**가장 가까운 문** — 열린 묶음들 중 청산·손절선에 제일 가까운 하나.
+            # 사실 스트립의 다섯째 칸이고, 화면이 묶음들을 훑어 고르지 않게 서버가
+            # 고른다(§16). 계열 시선이 선 묶음만 후보다(조건·계열이 있어야 문이 있다).
+            "nearest": _nearest_door(groups),
         },
         # 이 화면이 실제로 묻는 물음 — 내 판단이 규칙보다 나은가.
         "diff": {"today": round(_today(man_daily) - _today(rule_daily), 2),
