@@ -49,6 +49,8 @@ from irs_pricer.services.simulation.futures_pricing import (
     synth_pvbp,
 )
 
+from bisect import bisect_left
+
 from .backtest import (
     MAX_POINTS,
     RECON_MAX_DAYS,
@@ -520,7 +522,7 @@ def fsw_swap_leg(
     함수를 불러 같은 다리를 얻는다 — 두 번째 정의 금지.
     """
     cal = calendar_of(fut, dataset, pos)
-    entry_i, _exit_i = _span_on(cal, pos)
+    entry_i, exit_i = _span_on(cal, pos)
     entry_date = cal[entry_i]
     fs = fut.series[pos.tenor]
     # 진입 내재금리는 **벤더 값을 읽는다** — 조정가 역산이 아니다. DV01 산정이
@@ -540,12 +542,25 @@ def fsw_swap_leg(
     # 처음 이 나눗셈에 1e-4 가 없어 스왑 다리가 10⁴배 작게 섰다 — 실측
     # 2026-08-25: 100억 FSW 의 IRS 다리가 100만원. 그 결함이 이 주석의 이유다.
     swap_notional = fut_dv01_won / (unit_dv01 * 1e-4)
+    # ★스왑 다리는 **패키지의 마지막 선물 마크**에서 끝난다 [2026-09-28].
+    #
+    # 종전에는 `exit=pos.exit`(열린 다리면 None) 라 스왑 다리가 IRS 달력 끝까지
+    # 따로 살았다. 달력이 둘이라 IRS 가 선물보다 더 사는 날이 있다(추석 연휴
+    # 2026-09-24·25 — IRS 는 역외 프린트, 국채선물은 09-23 이 끝). 그 이틀 동안
+    # 헤드라인(`run_one` 의 `own`)은 선물 달력에서 얼어 있는데 스왑 다리의 기록·
+    # 성분(`swap_rec`)은 09-25 까지 움직여, **다리 손익의 합 ≠ 줄 손익**이 됐다
+    # (실측 FSW 3Y 100억: 710,090원). 패키지는 두 다리가 다 마킹된 날에만 값이
+    # 있으므로 스왑 다리도 그 마지막 날(`cal[exit_i]`)에서 끝나야 한다 — 닫힌
+    # 다리도 같다(청산일이 IRS 만 찍힌 날이면 선물은 그 전 거래일로 스냅되는데
+    # 스왑만 청산일에 서면 같은 어긋남이 선다). 그 뒤 IRS 움직임은 사라지는 것이
+    # 아니라 다음 선물 마크(예 09-28)의 Δ 에 통째로 들어간다 — `book_recon` 의
+    # 버킷 규칙과 같은 사상이다.
     swap_pos = Position(
         series_id=pos.tenor,
         direction=pos.direction,
         notional=swap_notional,
         entry=entry_date,
-        exit=pos.exit,
+        exit=cal[exit_i],
     )
     return swap_pos, y0, fut_dv01_won
 
@@ -902,10 +917,18 @@ def book_recon(fut: FuturesData, dataset, positions: list[FuturesPosition],
                 continue
             if lo is not None and rd <= lo:
                 continue                      # 잘린 창 앞 — 표가 truncated 라 말한다
-            j = _index_on_or_after(window, rd)
             # 마지막 선물 행보다 뒤인 IRS 행은 **마지막 행에** 담는다. 버리면
             # 세로합이 그만큼 스왑 표와 갈린다.
-            key = window[j] if j < len(window) and window[j] >= rd else window[-1]
+            #
+            # ★`_index_on_or_after` 를 쓰면 안 된다 [2026-09-28]. 그 함수는 창 끝을
+            # 넘는 날짜에 **예외를 던지므로** 아래 「마지막 행에」 분기가 죽은
+            # 코드였다 — 추석 연휴(2026-09-24·25)에 IRS 종가는 역외 프린트로 찍히고
+            # 국채선물은 09-23 이 끝이라, 스왑 다리 대사표의 09-24 행이 여기서
+            # 422 `2026-09-24 is after the last observation` 로 죽었고 그 한 줄이
+            # **FSW 백테스트 전체**를 죽였다(라우트가 recon 을 본체 뒤에 붙인다).
+            # 달력이 둘인 자리라 IRS 가 선물보다 하루 이틀 더 사는 것은 정상이다.
+            j = bisect_left(window, rd)
+            key = window[j] if j < len(window) else window[-1]
             if key < window[start]:
                 key = window[start]
             bucket[key].append(r)

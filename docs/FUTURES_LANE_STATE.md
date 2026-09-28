@@ -336,6 +336,63 @@ DV01 중립 명목도 따라 움직인다). 시험 다섯이 그것을 잰다.
 
 ---
 
+## Phase 5 — 달력이 둘인 자리에서 퓨처스왑이 죽었다 · 결함 둘 수리 (2026-09-28)
+
+추석 연휴(2026-09-24·25)가 드러냈다. IRS 종가는 역외 프린트로 그 이틀에도 찍히고
+국채선물은 09-23 이 마지막이라, **IRS 달력이 선물 달력보다 이틀 더 산다.** 그날
+아침 프로덕션 `GET /api/backtest?positions=FSW:3Y,…` 가 422
+`2026-09-24 is after the last observation (2026-09-23)` 였고(10Y 도 같음), pytest
+전수의 `test_cashbond.py::TestLegParts` 넷이 같은 이유로 빨갰다.
+
+### 결함 ① `book_recon` 의 버킷 — 주석은 옳고 코드가 죽은 분기였다
+
+`futures.book_recon(with_legs=True)` 는 IRS 다리의 대사 행을 선물 행에 담는다.
+「마지막 선물 행보다 뒤인 IRS 행은 마지막 행에 담는다」고 주석까지 적어 두고
+`_index_on_or_after(window, rd)` 로 자리를 찾았는데, 그 함수는 창 끝을 넘는
+날짜에 **예외를 던진다** — 그 뒤의 `j < len(window)` 분기는 한 번도 돌 수 없는
+코드였다. 라우트가 recon 을 본체 뒤에 붙이므로 recon 의 그 한 줄이 **FSW
+백테스트 전체**를 422 로 만들었다. `bisect_left` 로 바꿨다(창 끝 넘김 → 마지막 행).
+
+### 결함 ② 스왑 다리가 패키지보다 오래 살았다 — 422 가 걷히자 드러났다
+
+`fsw_swap_leg` 가 스왑 다리 `Position` 을 `exit=pos.exit`(열린 다리면 `None`)로
+만들어 스왑 다리가 IRS 달력 끝(09-25)까지 따로 평가됐다. 헤드라인(`run_one` 의
+`own`)은 선물 달력에서 09-23 에 얼어 있는데 다리 기록·성분(`swap_rec`)은 이틀
+더 움직여 **다리 손익의 합 ≠ 줄 손익** — 실측 FSW 3Y 100억에서 710,090원.
+`test_the_legs_add_back_to_the_row` 가 정확히 이것을 잡았다.
+
+패키지는 **두 다리가 다 마킹된 날에만 값이 있다.** 그래서 스왑 다리의 끝을
+`cal[exit_i]`(패키지의 마지막 선물 마크)로 못 박았다 — 닫힌 다리도 같다(청산일이
+IRS 만 찍힌 날이면 선물은 그 전 거래일로 스냅되는데 스왑만 청산일에 서면 같은
+어긋남이 선다). 그 뒤의 IRS 움직임은 사라지는 것이 아니라 **다음 선물 마크의
+Δ 에 통째로** 들어간다 — `book_recon` 버킷 규칙(「IRS 가 쉰 날의 돈은 다음
+버킷에」)과 같은 사상이고, 이제 두 자리가 같은 날에 끝난다.
+
+MR 대사표의 IRS 블록(`main._mr_recon_rows` 가 `fsw_swap_leg` 로 세우는 것)도 같은
+함수를 지나므로 같은 날 끝난다 — 선물 블록과 어긋나던 꼬리가 없어진다.
+
+### 실측 (재기동 뒤 프로덕션)
+
+    FSW:3Y   exit 2026-09-23  pnl −11,689,816  다리합 −11,689,816  Δ0
+    FSW:10Y  exit 2026-09-23  pnl +13,803,599  다리합 +13,803,599  Δ0
+    혼합 북(ASW·3Y·FSW)  세 줄 전부 Δ0 · 3Y 는 09-25 까지 산다(자기 달력)
+
+### 게이트
+
+`tests/test_futures.py::TestFswLegs::test_irs_rows_past_the_last_futures_row_land_in_the_last_bucket`
+— 선물이 IRS 보다 이틀 먼저 끝나고 가운데 하루도 빠지는 픽스처에서 ①스왑 다리
+끝 = 마지막 선물 마크 ②줄의 가산성 ③표가 서고 마지막 행이 마지막 선물 행
+④세로합 보존 ⑤쉰 날의 IRS 행이 다음 선물 행에 담김. `test_cashbond.py::TestLegParts`
+15건 · MR 셋(`test_mr`·`test_mr_convention`·`test_mr_legrecon`) 84건 초록.
+
+### 같은 날 옆에서 잡힌 것 — 발행 캘린더 시험은 수집기 탓이 아니었다
+
+`test_issuance.py::test_the_server_does_not_pre_sum_the_sectors` 가 빨갰던 것은
+DART 파이프라인 CSV 가 **최근 30일 창**(rawData README)이라 8월을 박아 둔
+픽스처가 한 달 뒤 저절로 빈 것이다. 수집기(`rawDataFullCollect` 07:54 ·
+`rawDataWatch` 08:50)는 그날 아침에도 정상이었다. 달은 자료가 말하게 고쳤다
+(`_latest_filing_day`).
+
 ## 부록 — CDS 준수 레인 (2026-08-26, 선물 레인과 별개)
 
 오너 지적에서 시작했다 [OWNER — "이 가이드라인들을 안 지키는 거 같아 + 컴포넌트의

@@ -109,12 +109,38 @@ def test_sectors_keep_their_seat_even_at_zero():
     assert [s["k"] for s in p["sectors"]] == issuance.SECTORS
 
 
+def _latest_filing_day() -> dt.date:
+    """발행 파이프라인의 **마지막 제출일**.
+
+    DART 파이프라인 CSV 는 수집기가 **최근 30일 창**으로 다시 쓴다(rawData README
+    「DART 파이프라인 (최근 30일)」). 그래서 달을 손으로 박은 픽스처(2026-08)는 한
+    달 뒤에 저절로 비었고, 그 실패는 「수집기가 멈췄다」로 읽혔다 — 실측 2026-09-28,
+    수집기는 그날 아침에도 정상이었다. 자료가 있는 달은 자료가 말하게 한다.
+    """
+    stamps = sorted({(r.get("제출일") or "").replace("-", "")[:8]
+                     for r in issuance._read("pipeline")})
+    stamps = [s for s in stamps if len(s) == 8 and s.isdigit()]
+    assert stamps, "발행 파이프라인 CSV 에 제출일이 하나도 없어요"
+    return dt.datetime.strptime(stamps[-1], "%Y%m%d").date()
+
+
 @needs_data
 def test_the_server_does_not_pre_sum_the_sectors():
-    """하루치가 섹터별로 갈려 있어야 화면의 필터가 달력을 바꿀 수 있다."""
-    p = build(months_from(2026, 8, 1), MPC, today=dt.date(2026, 8, 20))
-    days = [d for d in p["months"]["2026-08"]["days"] if d["isec"]]
-    assert days, "이 달에 발행이 하나도 없어요 — 픽스처가 이상해요"
+    """하루치가 섹터별로 갈려 있어야 화면의 필터가 달력을 바꿀 수 있다.
+
+    달은 **자료가 있는 달**이다(`_latest_filing_day`) — 마지막 제출일의 달과 그
+    전달 중 발행이 서는 쪽. 창이 30일이라 월초에는 마지막 제출일의 달이 며칠
+    분밖에 없을 수 있어 둘을 본다.
+    """
+    last = _latest_filing_day()
+    prev = (last.replace(day=1) - dt.timedelta(days=1))
+    days: list[dict] = []
+    for y, m in ((last.year, last.month), (prev.year, prev.month)):
+        p = build(months_from(y, m, 1), MPC, today=last)
+        days = [d for d in p["months"][f"{y}-{m:02d}"]["days"] if d["isec"]]
+        if days:
+            break
+    assert days, f"{last} 기준 최근 두 달에 발행이 하나도 없어요 — 수집기를 보세요"
     assert all(isinstance(d["isec"], dict) and d["isec"] for d in days)
     assert all(set(d["isn"]) <= set(d["isec"]) for d in days)
 

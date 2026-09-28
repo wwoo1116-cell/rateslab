@@ -483,6 +483,83 @@ class TestFsw:
             want = _money(alone, lambda r, k=key: r[k])
             assert got == pytest.approx(want, abs=1.0), key
 
+    def test_irs_rows_past_the_last_futures_row_land_in_the_last_bucket(self):
+        """★달력이 둘이라 IRS 가 선물보다 **더 사는 날**이 있다 — 그 행은 마지막
+        선물 행에 담긴다, 죽지 않는다 [2026-09-28].
+
+        추석 연휴(2026-09-24·25)에 IRS 종가는 역외 프린트로 찍혔고 국채선물은
+        09-23 이 끝이었다. 종전 코드는 `_index_on_or_after` 로 버킷을 찾아서 창
+        끝을 넘는 IRS 행에 **예외**를 던졌고 — 주석은 「마지막 행에 담는다」였는데
+        그 분기가 죽은 코드였다 — 라우트가 recon 을 본체 뒤에 붙이므로 프로덕션
+        FSW 백테스트가 통째로 422 였다(`2026-09-24 is after the last observation`).
+
+        그리고 그 422 가 걷히자 둘째 결함이 드러났다: 스왑 다리(`fsw_swap_leg`)가
+        `exit=None` 으로 IRS 달력 끝까지 따로 살아서, 헤드라인은 선물 달력에서
+        얼고 다리 기록은 이틀 더 움직여 **다리 손익의 합 ≠ 줄 손익**(실측
+        710,090원)이었다. 패키지는 두 다리가 다 마킹된 날에만 값이 있다 — 스왑
+        다리도 마지막 선물 마크에서 끝난다.
+
+        픽스처: 선물은 IRS 보다 이틀 먼저 끝나고 **가운데 하루도 빠진다**(연휴
+        아닌 보통의 두 달력 어긋남). IRS 는 빠진 날과 뒤 이틀에 실제로 움직인다.
+        """
+        path = [104.0, 104.0, 103.5, 103.5, 103.8, 103.8, 104.1, 104.1, 104.1]
+        gap = DATES[5]                                       # 선물만 쉰 날
+        short = [d for d in DATES[:10] if d != gap]          # 뒤 이틀도 없다
+        assert len(short) == len(path)
+
+        def mk(p: list[float], years: int) -> ft.FuturesSeries:
+            return ft.FuturesSeries(
+                dates=list(short), price_adj=list(p),
+                implied=[implied_yield(x, years) for x in p], price_ctr=list(p),
+            )
+
+        fut = ft.FuturesData(
+            series={"3Y": mk(path, 3), "10Y": mk([120.0] * len(short), 10)},
+            watermark=("test", len(short)),
+        )
+        bump = [0.0] * len(DATES)
+        bump[5], bump[6] = 0.15, 0.05          # 빠진 날과 그 다음 날
+        bump[10], bump[11] = 0.30, 0.45        # 선물이 끝난 뒤 — 패키지엔 없어야 한다
+        ds = _dataset({n: [FLAT + b for b in bump] for n in NODES})
+        pos = ft.as_position("FSW:3Y", 1, 1e10, DATES[0], None)
+
+        # ① 스왑 다리는 마지막 선물 마크에서 끝난다.
+        swap_pos, _y0, _dv = ft.fsw_swap_leg(fut, ds, pos)
+        assert swap_pos.exit == short[-1]
+
+        # ② 줄: 다리 손익의 합 = 줄 손익 (test_cashbond 의 그 가산성 규칙).
+        rec, own, _prev = ft.run_one(fut, ds, pos, list(short))
+        assert rec["exit"] == short[-1].isoformat()
+        assert rec["pnl"] == pytest.approx(own[short[-1]], abs=1.0)
+        assert abs(sum(l["pnl"] for l in rec["legParts"]) - rec["pnl"]) <= 2
+        for k in ("valuation", "rolldown", "carry", "startup"):
+            got = sum(l[k] for l in rec["legParts"] if l[k] is not None)
+            assert got == pytest.approx(rec.get(k) or 0.0, abs=1.0), k
+
+        # ③ 표: 종전엔 여기서 죽었다. 마지막 행은 마지막 선물 행이다.
+        out = ft.book_recon(fut, ds, [pos], with_legs=True)
+        body = [r for r in out["rows"] if not r.get("carryover")]
+        assert [r["t"] for r in body] == [d.isoformat() for d in short]
+
+        alone = bt_engine.book_recon(ds, [swap_pos])
+        swap_rows = [r for r in alone["rows"] if not r.get("carryover")]
+        assert swap_rows[-1]["t"] == short[-1].isoformat(), "스왑 표도 같은 날 끝난다"
+
+        def _money(rows, pick):
+            return sum(pick(r) or 0.0 for r in rows)
+
+        # ④ 세로합 보존 — 스왑 표의 그 다리와 같다.
+        for key in ("actual", "valuation", "carry", "rolldown", "startup"):
+            got = _money(body, lambda r, k=key: r["legs"][1][k])
+            want = _money(swap_rows, lambda r, k=key: r[k])
+            assert got == pytest.approx(want, abs=1.0), key
+        # ⑤ 선물이 쉰 날의 IRS 행은 **다음 선물 행**에 담긴다(돈이 보존되는 이유).
+        nxt = [r for r in body if r["t"] == DATES[6].isoformat()][0]
+        two = [r for r in swap_rows if r["t"] in (gap.isoformat(), DATES[6].isoformat())]
+        assert len(two) == 2 and any(r["actual"] for r in two)
+        assert nxt["legs"][1]["actual"] == pytest.approx(
+            _money(two, lambda r: r["actual"]), abs=1.0)
+
 
 # ── ④ 선물 대사표 ──────────────────────────────────────────────────────────
 
