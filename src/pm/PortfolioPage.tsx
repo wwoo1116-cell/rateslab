@@ -58,7 +58,7 @@ import { DROPDOWN_STYLES } from '@/ui/window/popup';
  * `retireSeries` 는 계약(`api.ts`)과 라우트에 그대로 살아 있고 여기서만 안 부른다
  * [OWNER 2026-09-22 — "지금은 일단"]. 되살릴 때 임포트만 되돌리면 된다. */
 import {
-  addLeg, attachKnobs, closeLeg, fetchInstruments, fetchPaper, fetchSuggest,
+  addLeg, attachKnobs, closeLeg, fetchInstruments, fetchLive, fetchPaper, fetchSuggest,
   knobsComplete, resetBook,
   type PaperInstruments, type PaperLegTrack,
   type PaperPositionGroup, type PaperPositionLeg,
@@ -170,6 +170,10 @@ function TrackCell({ track, open }: { track: PaperLegTrack | null; open: boolean
 /** 내 다리 레벨의 자릿수 — 서버 `paper.track_leg` 의 `round(r, 4)` 와 **같은 수**여야
  *  한다(적힌 레벨 × DV01 = 적힌 돈). `guards/portfolio-canon.test.ts` 가 둘을 대사한다. */
 const LEVEL_DP = 4;
+
+/** 지금 시세를 다시 끌어오는 주기 — 초 단위 피드지만 화면이 그만큼 자주 다시
+ *  매길 이유는 없다(한 번에 계열 둘·밴드 둘을 다시 센다). 10초면 눈이 따라간다. */
+const LIVE_EVERY_MS = 10_000;
 
 function LevelCell({ track, open }: { track: PaperLegTrack | null; open: boolean }) {
   if (!open || !track || track.exitLevel == null || track.stopLevel == null) {
@@ -841,6 +845,31 @@ export function PortfolioPage() {
    *  다시 매겨 보낸다(§16 — 화면은 글자를 보내고 수를 받는다). 장부엔 안 적힌다.
    *  열쇠는 `계기:만기` 이고 값은 친 글자 그대로다(빈 칸은 안 보낸다). */
   const [liveLv, setLiveLv] = useState<Record<string, string>>({});
+  /** ★**지금 시세를 그대로** [OWNER 2026-09-28 — "장중에 CRS IRS 종합이랑 3년국채,
+   *  10년국채선물 떠있는거 보고 바로바로 입력해주면 안되나?"]. 그 화면들이 이미
+   *  DB 로 초 단위로 들어오고 있다(`/api/paper/live`) — 눌러서 칸을 채우고, 켜 두면
+   *  `LIVE_EVERY_MS` 마다 다시 채운다. 매기는 것은 그대로 `?marks=` 한 길이라
+   *  산술이 두 벌이 되지 않고, 넣은 수가 칸에 **보이므로** 고칠 수도 있다. */
+  const [autoLive, setAutoLive] = useState(false);
+  const [liveAt, setLiveAt] = useState<string>();
+  const [liveWhy, setLiveWhy] = useState<string>();
+
+  /** 장중 레벨을 물을 계기들 — **들고 있는 다리**에서 나온다(차례는 표의 차례).
+   *  마크는 그 칸의 플레이스홀더가 되어 「종가는 이거였다」를 같이 말한다.
+   *  훅보다 **앞에** 둔다 — 지금 시세를 끌어올 때 이 목록이 있어야 「이 북이 쥔
+   *  계기만」 채울 수 있다(첫 판은 칸이 비어 있어 아무것도 안 채워졌다). */
+  const liveKinds = (() => {
+    const seen = new Map<string, { key: string; label: string; mark: number | null }>();
+    for (const l of sheet?.position.legs ?? []) {
+      if (!l.open) continue;
+      const key = `${l.kind}:${l.tenor}`;
+      if (!seen.has(key)) {
+        seen.set(key, { key, label: `${KIND_WORD[l.kind] ?? l.kind} ${l.tenor}`, mark: l.mark });
+      }
+    }
+    return [...seen.values()];
+  })();
+  const liveKeys = liveKinds.map((k) => k.key).join(',');
 
   /* ── 칸 폭은 **옵션 집합의 합집합**에서 [OWNER 2026-09-23] ─────────────────
      진단에서 이 줄의 **열두 칸이 전부** T1(죽은 폭 ≤16px)을 실패했다(21~130px).
@@ -916,6 +945,33 @@ export function PortfolioPage() {
     .map(([k, v]) => `${k}=${Number(v)}`)
     .sort()
     .join(';');
+
+  /** 한 번 끌어와 칸을 채운다 — 값은 **칸에 보이고**, 매기는 것은 `?marks=` 가 한다. */
+  const pullLive = useCallback(async () => {
+    try {
+      const got = await fetchLive();
+      const next: Record<string, string> = {};
+      for (const l of got.levels) next[`${l.kind}:${l.tenor}`] = String(l.level);
+      setLiveLv((prev) => {
+        /* **이 북이 들고 있는 계기만** 채운다 — 안 쥔 만기 칸을 만들면 조건 바가
+           안 쥔 만기를 「장중 레벨」로 늘어놓는다. */
+        const out = { ...prev };
+        for (const k of liveKeys.split(',')) if (k && next[k] !== undefined) out[k] = next[k];
+        return out;
+      });
+      setLiveAt(got.asof ?? undefined);
+      setLiveWhy(got.why ?? got.sources.find((x) => x.why && x.table)?.why ?? undefined);
+    } catch (e: unknown) {
+      setLiveWhy(e instanceof Error ? e.message : String(e));
+    }
+  }, [liveKeys]);
+
+  useEffect(() => {
+    if (!autoLive) return undefined;
+    void pullLive();
+    const id = setInterval(() => { void pullLive(); }, LIVE_EVERY_MS);
+    return () => clearInterval(id);
+  }, [autoLive, pullLive]);
 
   const load = useCallback(() => {
     setError(undefined);
@@ -1015,20 +1071,6 @@ export function PortfolioPage() {
   if (!sheet.available) {
     return <ErrorState what="페이퍼 북" detail={sheet.why ?? '못 세웠어요'} onRetry={load} />;
   }
-
-  /** 장중 레벨을 물을 계기들 — **들고 있는 다리**에서 나온다(차례는 표의 차례).
-   *  마크는 그 칸의 플레이스홀더가 되어 「종가는 이거였다」를 같이 말한다. */
-  const liveKinds = (() => {
-    const seen = new Map<string, { key: string; label: string; mark: number | null }>();
-    for (const l of sheet.position.legs) {
-      if (!l.open) continue;
-      const key = `${l.kind}:${l.tenor}`;
-      if (!seen.has(key)) {
-        seen.set(key, { key, label: `${KIND_WORD[l.kind] ?? l.kind} ${l.tenor}`, mark: l.mark });
-      }
-    }
-    return [...seen.values()];
-  })();
 
   return (
     <VStack gap={1.5} width="100%" flexGrow={1} minHeight={0}>
@@ -1186,6 +1228,28 @@ export function PortfolioPage() {
                   </Field>
                 </Box>
               ))}
+              {/* ★지금 시세 — 켜 두면 초 단위로 들어오는 그 값으로 칸이 다시 찬다.
+                  한 번 눌러 채우고 다시 누르면 멈춘다(켜 둔 채 값을 고쳐도 다음
+                  갱신이 덮으므로, 손으로 칠 때는 꺼 두는 것이 맞다). */}
+              <button type="button" className="sr-pillbtn" data-outline=""
+                disabled={busy}
+                title="인포맥스 IRS·국채선물 장중 시세를 그대로 칸에 넣어요 — 넣는 것뿐이고, 매기는 규칙은 그대로예요."
+                onClick={() => {
+                  if (!autoLive) void pullLive();
+                  setAutoLive((v) => !v);
+                }}>
+                {autoLive ? '지금 시세 따라가는 중 · 멈추기' : '지금 시세 넣기'}
+              </button>
+              {liveAt ? (
+                <Text font="legal" as="span" color="fgMuted" noWrap style={{ alignSelf: 'center' }}>
+                  {`${liveAt} 시세`}
+                </Text>
+              ) : null}
+              {liveWhy ? (
+                <Text font="legal" as="span" color="fgMuted" style={{ alignSelf: 'center' }}>
+                  {`${MINUS} ${liveWhy}`}
+                </Text>
+              ) : null}
             </HStack>
           ) : null}
           <PositionTable

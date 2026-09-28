@@ -3730,6 +3730,29 @@ def paper_reset(body: dict) -> dict:
     return {"ok": True, **out}
 
 
+@router.get("/api/paper/live")
+def paper_live() -> dict:
+    """지금 시세 — **화면에 떠 있는 그 값** [OWNER 2026-09-28 — "장중에 … CRS IRS
+    종합이랑 3년국채, 10년국채선물 떠있는거 보고 바로바로 입력해주면 안되나?"].
+
+    두 표를 읽어 장중 레벨의 낱말로 옮긴다(`paperlive.live_marks`) — IRS 전 만기와
+    3년·10년 국채선물(가격을 리포의 폐형식으로 푼 내재금리). **여기서 장부를 매기지
+    않는다**: 화면이 이 값을 장중 레벨 칸에 넣고, 매기는 것은 `/api/paper?marks=…`
+    의 그 한 길이다 — 산술이 두 벌이 되지 않게, 그리고 트레이더가 넣기 전에 수를
+    보고 고칠 수 있게.
+
+    못 읽거나 오래된 출처는 값을 안 싣고 `sources[i].why` 가 사유를 진다.
+    """
+    from . import paperlive
+
+    try:
+        return {"available": True, **paperlive.live_marks()}
+    except BaseException as exc:                      # noqa: BLE001
+        logging.getLogger("sauron.paper").warning("[paper] 장중 시세를 못 읽었어요: %s", exc)
+        return {"available": False, "levels": [], "sources": [],
+                "why": f"장중 시세를 못 읽었어요 — {exc}"}
+
+
 @router.get("/api/paper/instruments")
 def paper_instruments() -> dict:
     """쓸 수 있는 계기 목록 — **서버가 낸다**.

@@ -216,6 +216,8 @@ export const paperTraceUrl = (ns: readonly number[], marks?: string) =>
   liveUrl("/api/paper/trace", `legs=${ns.join(",")}`
     + (marks ? `&marks=${encodeURIComponent(marks)}` : ""));
 export const paperInstrumentsUrl = () => liveUrl("/api/paper/instruments");
+/** 지금 시세 — 화면에 떠 있는 IRS·국채선물 [OWNER 2026-09-28]. */
+export const paperLiveUrl = () => liveUrl("/api/paper/live");
 /** 그날의 1등 — 계열을 진입일까지의 자료로 격자에 돌린 순위 [OWNER 2026-09-23]. */
 export const paperSuggestUrl = (series: string, entry: string) =>
   liveUrl("/api/paper/suggest",

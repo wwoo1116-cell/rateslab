@@ -22,7 +22,7 @@ import { BacktestUnavailable, type BacktestResult } from '@/lib/api';
 import type { MrSplit } from '@/mr/api';
 import {
   paperCloseUrl, paperEnrollUrl, paperInstrumentsUrl, paperLegCloseUrl,
-  paperLegKnobsUrl, paperLegUrl, paperResetUrl, paperRetireUrl, paperSuggestUrl,
+  paperLegKnobsUrl, paperLegUrl, paperLiveUrl, paperResetUrl, paperRetireUrl, paperSuggestUrl,
   paperTraceUrl, paperTradeUrl, paperUrl,
 } from '@/lib/staticPaths';
 
@@ -631,4 +631,41 @@ export async function fetchTrace(ns: readonly number[], signal?: AbortSignal,
     throw new Error(detail?.detail ?? `trace: HTTP ${r.status}`);
   }
   return r.json() as Promise<PaperTrace>;
+}
+
+/**
+ * 지금 시세 [OWNER 2026-09-28 — "장중에 … CRS IRS 종합이랑 3년국채, 10년국채선물
+ * 떠있는거 보고 바로바로 입력해주면 안되나? 불가능?"].
+ *
+ * 불가능하지 않았다 — 그 화면들이 이미 이 데스크의 DB 로 초 단위로 흘러들고 있고
+ * (`infomax_API.irs_infomax`·`ktbf_live`), 페이퍼 북이 안 보고 있었을 뿐이다.
+ *
+ * ⚠ 이 응답은 **장부를 매기지 않는다.** 화면이 이 값을 장중 레벨 칸에 넣고, 매기는
+ * 것은 `fetchPaper(marks)` 의 그 한 길이다 — 산술이 두 벌이 되지 않게, 그리고
+ * 트레이더가 넣기 전에 수를 보고 고칠 수 있게.
+ */
+export interface PaperLiveLevel {
+  kind: string;
+  tenor: string;
+  level: number;
+  /** 그 값이 찍힌 시각(HH:MM:SS). */
+  at: string;
+  source: string;
+}
+
+export interface PaperLive {
+  available: boolean;
+  levels: PaperLiveLevel[];
+  /** 제일 새 값의 시각. 값이 하나도 없으면 `null`. */
+  asof?: string | null;
+  /** 출처마다의 상태 — 죽었거나 오래된 쪽은 `why` 가 사유를 진다. */
+  sources: { name: string; table: string | null; asof?: string; ageMin?: number | null; why?: string }[];
+  why?: string | null;
+}
+
+export async function fetchLive(): Promise<PaperLive> {
+  const r = await fetch(paperLiveUrl());
+  if (r.status === 404) throw new BacktestUnavailable();
+  if (!r.ok) throw new Error(`live: HTTP ${r.status}`);
+  return r.json() as Promise<PaperLive>;
 }

@@ -368,7 +368,10 @@ class TestPlumbing:
                          "/api/paper/leg/knobs",
                          # 트레이드 추적 [OWNER 2026-09-28] — **읽기**. 다리들을 백테스트
                          # 엔진에 실어 진입일부터 분해한다(`Test트레이드_추적`).
-                         "/api/paper/trace"}
+                         "/api/paper/trace",
+                         # 지금 시세 [OWNER 2026-09-28] — **읽기**. 인포맥스 IRS·국채선물
+                         # 장중을 장중 레벨의 낱말로 옮길 뿐, 여기서 장부를 안 매긴다.
+                         "/api/paper/live"}
 
     def test_지우는_라우트는_없다(self):
         """진 기록을 지우는 것이 생존 편향이 장부에 들어오는 가장 흔한 길이다."""
@@ -1786,6 +1789,25 @@ class Test묶음_소계:
                          ("irs:5Y=사", "숫자가 아니"), ("irs:5Y=99", "범위")):
             with pytest.raises(paper.LegRejected, match=why):
                 paper.parse_marks(bad)
+
+    def test_지금_시세는_낱말을_옮길_뿐이다(self):
+        """★[OWNER 2026-09-28 — "떠있는거 보고 바로바로 입력해주면 안되나?"].
+
+        `paperlive` 는 **읽기와 번역**만 한다 — 값을 어떻게 쓰는지는 `paper` 가 안다.
+        오래된 값을 「지금」이라 안 적는 것이 이 모듈의 하중이라 그것을 잰다.
+        """
+        import datetime as _d
+
+        from app import paperlive as pl
+
+        # 만기 낱말이 다리의 그것과 같다 — 1.5Y 는 이 표에서만 개월(`irs_18m`)이다.
+        assert pl.IRS_COL["1.5Y"] == "irs_18m" and pl.IRS_COL["10Y"] == "irs_10y"
+        assert pl.FUT_CODE["C65"] == ("3Y", 3) and pl.FUT_CODE["C67"] == ("10Y", 10)
+        # 시각은 `TIME` 이라 timedelta 로 온다 — 사람이 읽는 꼴로 옮긴다.
+        assert pl._hhmmss(_d.timedelta(seconds=48648)) == "13:30:48"
+        now = _d.datetime(2026, 9, 28, 13, 40, 0)
+        assert pl._age_min(_d.date(2026, 9, 28), "13:30:00", now) == pytest.approx(10.0)
+        assert pl._age_min(_d.date(2026, 9, 28), "엉망", now) is None
 
     def test_라우트가_장중_레벨을_받는다(self, monkeypatch, tmp_path):
         from fastapi.testclient import TestClient
