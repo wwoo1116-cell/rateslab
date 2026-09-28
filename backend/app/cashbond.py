@@ -1145,7 +1145,11 @@ def book_recon(
         # 쓰고 있는 수다. 이웃이 한쪽뿐인 노드(20Y·30Y)는 그대로 비운다.
         # 포지션을 2.5Y 에 세우지 않는 규율(`ASW_TENORS`)은 그대로다 — 그건
         # 「같은 만기 두 상품」의 전제이고, 여기는 설명 축이다.
-        for t in types:
+        # ⚠ `types` 는 **집합**이라 순회 차례가 실행마다 달라질 수 있다 — 종목군이
+        # 섞인 북(국고+은행채)에서는 그 차례가 「합계 줄이 어느 민평 커브를 축으로
+        # 쓰나」를 정하므로, 정렬해서 **같은 북이면 늘 같은 축**이 되게 한다
+        # [적대 검증 2026-09-28: 같은 북이 PYTHONHASHSEED 에 따라 다른 Δbp 를 냈다].
+        for t in sorted(types):
             if not m.has(t, lb):
                 continue
             if asw and lb not in ASW_TENORS:

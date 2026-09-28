@@ -570,12 +570,19 @@ class TestFsw:
         였다 — 실측 FSW 3Y 100억: Σ행 −4,869만 vs 헤드라인 −1,169만(차 −3,700만),
         FSW 10Y 차 −1.15억. 이제 선물 창이 IRS 다리의 창을 정한다(`since`).
 
-        픽스처: IRS 252일 · 선물 245일(둘 다 첫날부터), IRS 가 날마다 움직인다.
+        픽스처: 같은 창 안에서 **선물만 쉰 날 열흘**이 가운데 흩어져 있다 — IRS 255행
+        대 선물 245행. 여분이 창 **끝**에 있으면 스왑 다리의 청산 캡(위 시험)이 그걸
+        지워 버려 `since=` 가 물 자리가 없어진다 — 적대 검증(2026-09-28)이 그 픽스처
+        구멍을 잡아, `since=` 를 떼도 통과하던 것을 여기서 고쳤다.
         """
-        n_irs, n_fut = 252, 245
+        n_irs, n_fut = 255, 245
         assert n_fut < bt_engine.RECON_MAX_DAYS < n_irs
         dates = _weekdays(dt.date(2025, 1, 6), n_irs)
-        short = dates[:n_fut]
+        # 선물만 쉰 날 열흘 — **가운데**에 흩뿌린다(끝이 아니라).
+        skipped = {dates[i] for i in range(20, 220, 20)}
+        assert len(skipped) == n_irs - n_fut
+        short = [d for d in dates if d not in skipped]
+        assert len(short) == n_fut and short[-1] == dates[-1]
         rates = {n: [FLAT + 0.003 * ((i * 7) % 11) for i in range(n_irs)] for n in NODES}
         ds = Dataset(dates=dates, series=rates, tenor_order=list(NODES), source="test")
         path = [104.0 + 0.05 * ((i * 5) % 9) for i in range(n_fut)]
@@ -596,8 +603,8 @@ class TestFsw:
         assert out["truncated"] is False, "선물 창은 245행이라 안 잘려야 한다"
         body = [r for r in out["rows"] if not r.get("carryover")]
         assert len(body) == n_fut
-        # 첫 닷새의 IRS 행이 살아 있다 — 종전엔 여기가 전부 0 이었다.
-        head = [r["legs"][1]["actual"] or 0 for r in body[1:6]]
+        # 앞머리의 IRS 행이 살아 있다 — 종전엔 창이 잘려 전부 0 이었다.
+        head = [r["legs"][1]["actual"] or 0 for r in body[1:8]]
         assert any(abs(v) > 0 for v in head), f"IRS 다리 앞머리가 비었다: {head}"
         # 표의 합 = 헤드라인 — 마지막 밤의 포워드 세타와 행마다 1원 반올림만큼만
         # 다를 수 있다(모듈 규약). 종전 결함은 이 자리가 수천만원이었다.
@@ -606,6 +613,18 @@ class TestFsw:
         theta = sum((irs_last.get(k) or 0) for k in ("carry", "rolldown", "startup"))
         assert abs(total - rec["pnl"]) <= abs(theta) + len(body), (
             f"Σ행 {total:,.0f} ≠ 헤드라인 {rec['pnl']:,.0f} (허용 {abs(theta) + len(body):,.0f})")
+        # ★`since=` 를 떼면 **깨져야** 한다 — 이 시험이 제 수리를 실제로 재는가.
+        import app.futures as _ft
+        orig = _ft.swap_book_recon
+        try:
+            _ft.swap_book_recon = lambda dataset, pos, **kw: orig(
+                dataset, pos, **{k: v for k, v in kw.items() if k != "since"})
+            broken = ft.book_recon(fut, ds, [pos], with_legs=True)
+        finally:
+            _ft.swap_book_recon = orig
+        cut = [r for r in broken["rows"] if not r.get("carryover")]
+        assert sum(r["actual"] or 0 for r in cut) != pytest.approx(total, abs=len(body)), (
+            "`since=` 를 떼도 같은 수가 나온다 — 이 시험이 제 수리를 안 재고 있다")
 
 
 # ── ④ 선물 대사표 ──────────────────────────────────────────────────────────
