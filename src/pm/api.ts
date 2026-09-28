@@ -572,6 +572,25 @@ export interface PaperTrace {
     | 'funding' | 'cost' | 'paper' | 'residual', number | null>;
   /** `/api/backtest` 응답 그대로 — Backtest 창의 부품이 그대로 읽는다. */
   book: BacktestResult;
+  /** 묶음의 계열 시선(`group_series`) — 창 머리띠의 내 레벨·지금·Δ·z. */
+  group: Pick<PaperPositionGroup,
+    'series' | 'seriesWhy' | 'unit' | 'asof' | 'now' | 'entryT' | 'entryV'
+    | 'myLevel' | 'myBasis' | 'delta' | 'knobs' | 'knobsMixed' | 'track'>;
+  /** 계열의 **경로** [OWNER 2026-09-28 — "추적 … 정교화"] — 진입 앞 몇 봉부터
+   *  오늘까지의 값과 그날그날의 중심선·청산선·손절선(`series_path`, `track_leg` 와
+   *  같은 번역). 밴드가 안 선 봉은 `null` 이라 선이 끊긴다. 못 그리면 `why`. */
+  path: {
+    series: string | null;
+    unit?: string | null;
+    dates?: string[];
+    values?: number[];
+    ma?: (number | null)[];
+    exit?: (number | null)[];
+    stop?: (number | null)[];
+    entryIdx?: number | null;
+    dir?: number | null;
+    why: string | null;
+  };
 }
 
 export async function fetchTrace(ns: readonly number[], signal?: AbortSignal): Promise<PaperTrace> {

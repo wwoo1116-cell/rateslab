@@ -26,3 +26,12 @@ export function knobWord(k: PaperLegKnobs): string {
     .join('/');
   return `${k.lookback}일 · ${z}σ · ${ENTRY_WORD[k.entryMode]}`;
 }
+
+const MINUS = '−';
+
+/** z 한 글자 — 부호는 이 리포의 «−»(U+2212)다. `toFixed` 의 하이픈을 그대로
+ *  쓰면 같은 표 안에서 음수 기호가 두 벌이 된다. 표와 추적 창이 같이 쓴다. */
+export function zWord(v: number | null | undefined): string {
+  if (v == null) return MINUS;
+  return `${v > 0 ? '+' : MINUS}${Math.abs(v).toFixed(2)}σ`;
+}

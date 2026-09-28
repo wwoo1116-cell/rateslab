@@ -1701,6 +1701,33 @@ class Test묶음_소계:
         dead = paper.group_series([{**base, "n": 1, "tenor": "5Y", "series": "IRC-5Y-10Y"}], points_of=boom)
         assert dead["series"] == "IRC-5Y-10Y" and "DB 꺼짐" in dead["seriesWhy"] and dead["now"] is None
 
+    def test_계열_경로는_진입_앞_봉부터_선을_같이_낸다(self):
+        """추적 창의 그림 재료 — 값·중심선·청산선·손절선이 같은 길이로, 진입 자리가
+        어딘지, 선은 `track_leg` 와 같은 번역인지."""
+        dates = _dates(60)
+        vals = [10.0 + (i % 5) * 0.4 for i in range(60)]
+        vals[40] = 2.0                                                # 41번째 급락 → 롱
+        pts = [{"t": d, "v": v} for d, v in zip(dates, vals)]
+        KN = {"lookback": 20, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.0, "entryMode": "level"}
+        p = paper.series_path("IRC-5Y-10Y", dates[40], KN, points_of=lambda _s: pts, lead=10)
+        assert p["why"] is None and p["dir"] == 1 and p["unit"] == "bp"
+        assert p["dates"][0] == dates[30] and p["entryIdx"] == 10
+        assert len(p["dates"]) == len(p["values"]) == len(p["ma"]) == len(p["exit"]) == len(p["stop"]) == 30
+        # 선은 오늘 `track_leg` 가 내는 그 값과 같다(같은 번역)
+        t = paper.track_leg({"entry": dates[40], "knobs": KN, "series": "IRC-5Y-10Y",
+                             "kind": "", "tenor": ""}, points_of=lambda _s: pts)
+        assert p["exit"][-1] == pytest.approx(t["exitLevel"], abs=1e-4)
+        assert p["stop"][-1] == pytest.approx(t["stopLevel"], abs=1e-4)
+        # 롱이면 청산선이 손절선보다 위, 둘 다 중심선 아래
+        assert p["exit"][-1] > p["stop"][-1] and p["ma"][-1] > p["exit"][-1]
+        # 앞머리(창 미달)는 None 이고 값은 그대로 있다 — 선이 끊길 뿐 지어내지 않는다
+        p0 = paper.series_path("IRC-5Y-10Y", dates[40], KN, points_of=lambda _s: pts, lead=45)
+        assert p0["ma"][0] is None and p0["values"][0] == pytest.approx(vals[0])
+        # 못 그리는 경우는 사유로
+        assert "앞서요" in paper.series_path("IRC-5Y-10Y", "2019-01-01", KN, points_of=lambda _s: pts)["why"]
+        assert "조건이" in paper.series_path("IRC-5Y-10Y", dates[40], {"lookback": 20}, points_of=lambda _s: pts)["why"]
+        assert "모르는" in paper.series_path("XXX", dates[40], KN, points_of=lambda _s: pts)["why"]
+
     def test_my_series_level_은_다리마다_하나씩일_때만(self):
         t = paper.series_legs("bss", "BSS-3Y", {"t": "2026-09-23", "v": 4.25, "legs": [4.0375, 3.995]})
         irs = {"kind": "irs", "tenor": "3Y", "level": 4.03}

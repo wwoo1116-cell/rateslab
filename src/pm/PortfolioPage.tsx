@@ -64,7 +64,7 @@ import {
 } from './api';
 import { suggestLine } from './suggestLine';
 import { TraceWindow } from './TraceWindow';
-import { knobWord } from './words';
+import { knobWord, zWord } from './words';
 
 const MINUS = '−';
 
@@ -96,12 +96,7 @@ const NO_SERIES = 'none';
 /* 진입 규칙의 우리말과 얼린 조건 한 줄(`knobWord`)은 `./words` 로 갔다 [2026-09-28]
    — 「그날 1등」 줄이 표와 **같은 꼴**로 조건을 적어야 해서다. */
 
-/** z 한 글자 — 부호는 이 리포의 «−»(U+2212)다. `toFixed` 의 하이픈을 그대로
- *  쓰면 같은 표 안에서 음수 기호가 두 벌이 된다. */
-function zWord(v: number | null | undefined): string {
-  if (v == null) return MINUS;
-  return `${v > 0 ? '+' : MINUS}${Math.abs(v).toFixed(2)}σ`;
-}
+/* `zWord` 도 `./words` 로 갔다 [2026-09-28] — 추적 창의 머리띠가 같은 꼴을 쓴다. */
 
 /**
  * 지금 닿았는가 — 한 칸 [OWNER 2026-09-23].

@@ -36,13 +36,79 @@ import { TimeChart, type TimeLine } from '@/chart/TimeChart';
 import { BacktestUnavailable } from '@/lib/api';
 import { fmtKrw } from '@/lib/krw';
 import { directionClass } from '@/table/tint';
+import { Cond } from '@/ui/Cond';
 import { ErrorState, LoadingState } from '@/ui/DataState';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
 import { ReconStack } from '@/ui/window/ReconStack';
 
 import { fetchTrace, type PaperTrace, type PaperTraceRow } from './api';
+import { zWord } from './words';
 
 const MINUS = '−';
+
+/** 계열 값 한 칸 — 계열의 자기 단위(bp 둘째 자리 · % 셋째 자리). */
+function seriesWord(v: number | null | undefined, unit: string | null | undefined): string {
+  if (v == null) return MINUS;
+  return `${unit === '%' ? v.toFixed(3) : v.toFixed(2)}${unit ?? ''}`;
+}
+
+/**
+ * 계열의 경로 [OWNER 2026-09-28 — "추적 … 정교화"] — 「어디서 들어와 어디까지 왔고,
+ * 선이 어디에 있나」를 한 그림으로. 값은 잉크 주선, 중심선은 흐린 점선, 청산선은
+ * 상승색·손절선은 하락색 점선(둘은 방향이 아니라 **뜻**이다 — 청산은 계획대로 나가는
+ * 것, 손절은 아니다 · 밴드 칸이 쓰는 그 규칙). 밴드가 안 선 봉은 `null` 이라 선이
+ * 끊긴다. 진입 자리는 세로선.
+ */
+function PathChart({ path }: { path: PaperTrace['path'] }) {
+  if (path.why || !path.dates?.length) {
+    return (
+      <Text font="legal" as="span" color="fgMuted">
+        {`${MINUS} ${path.why ?? '계열 경로가 없어요'}`}
+      </Text>
+    );
+  }
+  const dates = path.dates;
+  const unit = path.unit ?? '';
+  const f = (v: number) => (unit === '%' ? v.toFixed(3) : v.toFixed(2));
+  const lines: TimeLine[] = [
+    { id: 'v', values: path.values ?? [], color: (pal) => pal.fg, width: 2, beacon: true,
+      format: (v) => `${f(v)}${unit}` },
+    { id: 'ma', values: path.ma ?? [], color: (pal) => pal.fgMutedSoft, dash: true,
+      format: (v) => `${f(v)}${unit}` },
+    { id: 'exit', values: path.exit ?? [], color: (pal) => pal.up, dash: true,
+      format: (v) => `${f(v)}${unit}` },
+    { id: 'stop', values: path.stop ?? [], color: (pal) => pal.down, dash: true,
+      format: (v) => `${f(v)}${unit}` },
+  ];
+  const markLines = path.entryIdx == null ? [] : [{ index: path.entryIdx, label: '진입' }];
+  return (
+    <VStack gap={0.5} width="100%">
+      <HStack gap={1} alignItems="baseline" flexWrap="wrap">
+        <Text font="label1" as="span" noWrap>{`계열 경로 — ${path.series ?? ''}`}</Text>
+        <Text font="legal" as="span" color="fgMuted" noWrap>
+          잉크 = 계열 값 · 흐린 점선 = 중심선 · 상승색 점선 = 청산선 · 하락색 점선 = 손절선
+        </Text>
+      </HStack>
+      <Box width="100%">
+        <TimeChart
+          dates={dates}
+          lines={lines}
+          markLines={markLines}
+          height={220}
+          precision={unit === '%' ? 3 : 2}
+          accessibilityLabel={`${path.series ?? '계열'} 경로 — 값·중심선·청산선·손절선`}
+          hoverLabel={(i) => {
+            const v = path.values?.[i];
+            const e = path.exit?.[i];
+            const s = path.stop?.[i];
+            return `${dates[i]} 값 ${v == null ? MINUS : f(v)}${unit}`
+              + ` · 청산선 ${e == null ? MINUS : f(e)} · 손절선 ${s == null ? MINUS : f(s)}`;
+          }}
+        />
+      </Box>
+    </VStack>
+  );
+}
 
 /** 돈 한 칸 — 부호 방향색, 못 센 것은 «—». */
 function Money({ v, muted }: { v: number | null | undefined; muted?: boolean }) {
@@ -150,6 +216,31 @@ export function TraceWindow({ ns, title, onClose }: {
           <LoadingState what="트레이드 추적" />
         ) : (
           <>
+            {/* ── 머리띠 — 묶음의 계열 시선(내 레벨 · 지금 · Δ · 밴드 · 계열 선) ──
+                표의 조건 바와 같은 부품(`Cond`)이다. 계열이 없으면 사유 한 줄. */}
+            {data.group.series ? (
+              <HStack className="sr-rv-bar" gap={1.5} alignItems="center" flexWrap="wrap" width="100%">
+                <Cond k="계열" v={data.group.series} strong />
+                <Cond k="내 레벨" v={`${seriesWord(data.group.myLevel, data.group.unit)}${
+                  data.group.myBasis === 'fill' ? ' (내 체결)' : data.group.myBasis === 'close' ? ' (진입일 종가)' : ''}`} />
+                <Cond k="지금" v={`${seriesWord(data.group.now, data.group.unit)}${
+                  data.group.asof ? ` (${data.group.asof})` : ''}`} strong />
+                <Cond k="Δ" v={data.group.delta == null ? MINUS
+                  : `${data.group.delta >= 0 ? '+' : MINUS}${seriesWord(Math.abs(data.group.delta), data.group.unit)}`} strong />
+                <Cond k="밴드" v={data.group.track?.z == null ? MINUS
+                  : `${zWord(data.group.track.z)} (진입 ${zWord(data.group.track.entryZ)})`} />
+                <Cond k="청산 · 손절" v={data.group.track?.exitLevel == null ? MINUS
+                  : `${seriesWord(data.group.track.exitLevel, data.group.unit)} · ${seriesWord(data.group.track.stopLevel, data.group.unit)}`} />
+              </HStack>
+            ) : (
+              <Text font="legal" as="span" color="fgMuted">
+                {`${MINUS} ${data.group.seriesWhy ?? '계열이 없어요'}`}
+              </Text>
+            )}
+
+            {/* ── 계열 경로 — 진입 앞 몇 봉부터 오늘까지, 선과 같이 ── */}
+            <PathChart path={data.path} />
+
             {/* ── 대조 표 — 장부 손익 = 체결 차이 + 엔진 손익 − 비용 + 차이 ── */}
             <VStack gap={0.5} width="100%">
               <div className="sr-rv-scroll">

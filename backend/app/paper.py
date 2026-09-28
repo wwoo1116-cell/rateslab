@@ -929,6 +929,74 @@ def group_series(rows: list[dict], *,
     return out
 
 
+#: 계열 경로가 진입일 **앞**에 두는 봉 수 — 진입이 어디서 일어났는지 보이려면 앞이
+#: 조금 있어야 한다. 룩백만큼 두면 밴드가 서는 첫날부터 보인다.
+PATH_LEAD = 20
+
+
+def series_path(sid: str, entry: str, knobs: dict, *,
+                points_of: Callable[[str], list[dict]] | None = None,
+                lead: int = PATH_LEAD) -> dict[str, Any]:
+    """계열의 **경로** — 진입일 앞 `lead` 봉부터 오늘까지의 값과, 그날그날의 중심선·
+    청산선·손절선 [OWNER 2026-09-28 — "추적 … 정교화"].
+
+    추적 창이 「계열이 어디서 들어와 어디까지 왔고, 선이 어디에 있나」를 한 그림으로
+    그리기 위한 재료다. 선은 `track_leg` 와 **같은 번역**이다 — 방향은 진입일 z 의
+    부호, 청산 = 중심선 − pos·exitZ·σ, 손절 = 중심선 − pos·stopZ·σ. 밴드가 안 선
+    봉(창 미달·σ=0)은 `None` 이고 선이 끊긴다(지어내지 않는다). 못 그리면 `why`.
+    """
+    empty: dict[str, Any] = {"series": sid, "unit": None, "dates": [], "values": [],
+                             "ma": [], "exit": [], "stop": [], "entryIdx": None,
+                             "dir": None, "why": None}
+    kind = {s: k for s, _l, k in mr_mod.SERIES}.get(sid)
+    if kind is None:
+        return {**empty, "why": f"모르는 계열이에요: {sid}"}
+    try:
+        lb = int(knobs["lookback"])
+        ex, sz = float(knobs["exitZ"]), float(knobs["stopZ"])
+    except (KeyError, TypeError, ValueError):
+        return {**empty, "why": "조건이 온전하지 않아요"}
+    unit: str | None = None
+    try:
+        if points_of is not None:
+            pts = points_of(sid)
+        else:
+            body = mr_mod.series_points(sid)
+            pts = body["points"]
+            unit = body.get("unit")
+    except Exception as exc:                      # noqa: BLE001
+        return {**empty, "why": f"계열을 못 읽었어요: {exc}"}
+    dates = [p["t"] for p in pts]
+    vals = [float(p["v"]) for p in pts]
+    at = [i for i, t in enumerate(dates) if t <= entry]
+    if not at:
+        return {**empty, "why": "진입일이 계열 표본보다 앞서요"}
+    i0 = at[-1]
+    roll = mrbt.rolling_series(vals, lb)
+    z0 = roll["z"][i0]
+    if z0 is None or z0 == 0:
+        return {**empty, "why": "진입일에 밴드가 안 서요 (창 미달·σ=0·z=0)"}
+    pos = 1 if z0 < 0 else -1
+    start = max(0, i0 - lead)
+
+    def line(mult: float) -> list[float | None]:
+        return [None if roll["mean"][i] is None else round(roll["mean"][i] - pos * mult * roll["std"][i], 4)
+                for i in range(start, len(vals))]
+
+    return {
+        "series": sid,
+        "unit": unit or ("%" if kind == "fut" else "bp"),
+        "dates": dates[start:],
+        "values": [round(v, 4) for v in vals[start:]],
+        "ma": [None if m is None else round(m, 4) for m in roll["mean"][start:]],
+        "exit": line(ex),
+        "stop": line(sz),
+        "entryIdx": i0 - start,
+        "dir": pos,
+        "why": None,
+    }
+
+
 def group_legs(rows: list[dict], **series_kw: Any) -> list[dict[str, Any]]:
     """다리들을 **묶음(태그)** 으로 모아 소계를 낸다 [OWNER 2026-09-28 — "각 트레이드
     별과 포트폴리오 전체에서의 PnL"].

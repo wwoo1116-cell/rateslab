@@ -3625,6 +3625,16 @@ def paper_trace(legs: str) -> dict:
         vals = [r[key] for r in recon]
         return None if any(v is None for v in vals) else round(sum(vals), 2)
 
+    # ★묶음의 계열 시선과 **계열 경로** [OWNER 2026-09-28 — "추적 … 정교화"]. 창의
+    # 머리띠(내 레벨·지금·Δ·z)와 「계열이 어디서 들어와 어디까지 왔나」 그림의 재료.
+    # 계열이나 조건이 없으면 각자 `why` 를 들고 비어 온다 — 창이 그 사실을 적는다.
+    gview = paper.group_series(picked)
+    path = (paper.series_path(gview["series"], min(str(lg["entry"]) for lg in picked),
+                              gview["knobs"])
+            if gview.get("series") and gview.get("knobs")
+            else {"series": gview.get("series"), "why": gview.get("seriesWhy")
+                  or "조건이 있는 다리가 없어요 — 밴드를 못 그려요"})
+
     return {
         "legs": ns,
         "rows": recon,
@@ -3632,6 +3642,8 @@ def paper_trace(legs: str) -> dict:
                                        "rolldown", "startup", "funding", "cost",
                                        "paper", "residual")},
         "book": book,
+        "group": gview,
+        "path": path,
     }
 
 
