@@ -3429,12 +3429,38 @@ def _paper_sheet(marks: dict | None = None) -> dict:
                                 marks=marks)}
 
 
+#: 질의에서 「지금 시세를 그대로」를 뜻하는 낱말 [OWNER 2026-09-28 — "따로 내가 입력
+#: 안해도 되게 그냥 1년부터 10년까지 자동으로 다 넣어주고"].
+MARKS_LIVE = "live"
+
+
 def _paper_marks(spec: str | None) -> dict:
-    """질의의 장중 레벨 — 사유는 422 다(`paper.parse_marks` 의 그 문)."""
+    """질의의 장중 레벨 — 사유는 422 다(`paper.parse_marks` 의 그 문).
+
+    `live` 라는 낱말이 끼어 있으면 **지금 시세를 통째로 깔고**(IRS 전 만기 + 국채선물)
+    그 위에 손으로 친 값을 덮는다 [OWNER 2026-09-28]. 트레이더가 칸을 채우지 않아도
+    북이 지금 값으로 서고, 한 칸만 달리 보고 싶으면 그 칸만 치면 된다.
+
+    시세를 못 읽거나 오래됐으면 **깔 것이 없을 뿐** 죽지 않는다 — 그때는 종가로 서고
+    화면이 그 사실을 적는다(`paperlive.live_marks` 의 `why`).
+    """
+    parts = [x.strip() for x in (spec or "").split(";") if x.strip()]
+    want_live = any(x.lower() == MARKS_LIVE for x in parts)
+    rest = ";".join(x for x in parts if x.lower() != MARKS_LIVE)
+    out: dict = {}
+    if want_live:
+        from . import paperlive
+        try:
+            for lv in paperlive.live_marks()["levels"]:
+                out[(lv["kind"], lv["tenor"])] = float(lv["level"])
+        except BaseException as exc:                   # noqa: BLE001 — 종가로 산다
+            logging.getLogger("sauron.paper").warning(
+                "[paper] 장중 시세를 못 깔았어요: %s", exc)
     try:
-        return paper.parse_marks(spec)
+        out.update(paper.parse_marks(rest))
     except paper.LegRejected as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return out
 
 
 @router.get("/api/paper")

@@ -1790,6 +1790,33 @@ class Test묶음_소계:
             with pytest.raises(paper.LegRejected, match=why):
                 paper.parse_marks(bad)
 
+    def test_live_한_낱말이_지금_시세를_통째로_깐다(self, monkeypatch):
+        """★[OWNER 2026-09-28 — "따로 내가 입력 안해도 되게 그냥 1년부터 10년까지
+        자동으로 다 넣어주고"]. `marks=live` 는 시세를 깔고, 친 칸이 그 위를 덮는다.
+        시세를 못 읽어도 **죽지 않고** 종가로 선다 — 장 끝난 뒤에도 화면은 선다."""
+        from app import main as M, paperlive
+
+        monkeypatch.setattr(paperlive, "live_marks", lambda: {"levels": [
+            {"kind": "irs", "tenor": "5Y", "level": 4.27, "at": "13:30:48", "source": "IRS"},
+            {"kind": "irs", "tenor": "10Y", "level": 4.3375, "at": "13:30:48", "source": "IRS"},
+            {"kind": "fut", "tenor": "3Y", "level": 4.2648, "at": "13:33", "source": "국채선물"},
+        ], "asof": "13:33", "sources": [], "why": None})
+        assert M._paper_marks("live") == {("irs", "5Y"): 4.27, ("irs", "10Y"): 4.3375,
+                                          ("fut", "3Y"): 4.2648}
+        # 친 칸이 깔린 값을 덮는다 — 한 칸만 달리 보고 싶을 때.
+        got = M._paper_marks("live;irs:5Y=4.50")
+        assert got[("irs", "5Y")] == 4.50 and got[("irs", "10Y")] == 4.3375
+        # 낱말이 없으면 종전 그대로(손으로 친 것만).
+        assert M._paper_marks("irs:5Y=4.50") == {("irs", "5Y"): 4.50}
+        assert M._paper_marks("") == {} and M._paper_marks(None) == {}
+
+        def boom():
+            raise RuntimeError("인포맥스 꺼짐")
+
+        monkeypatch.setattr(paperlive, "live_marks", boom)
+        assert M._paper_marks("live") == {}, "시세를 못 읽으면 종가로 선다 — 안 죽는다"
+        assert M._paper_marks("live;irs:5Y=4.50") == {("irs", "5Y"): 4.50}
+
     def test_지금_시세는_낱말을_옮길_뿐이다(self):
         """★[OWNER 2026-09-28 — "떠있는거 보고 바로바로 입력해주면 안되나?"].
 

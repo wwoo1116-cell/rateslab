@@ -850,9 +850,17 @@ export function PortfolioPage() {
    *  DB 로 초 단위로 들어오고 있다(`/api/paper/live`) — 눌러서 칸을 채우고, 켜 두면
    *  `LIVE_EVERY_MS` 마다 다시 채운다. 매기는 것은 그대로 `?marks=` 한 길이라
    *  산술이 두 벌이 되지 않고, 넣은 수가 칸에 **보이므로** 고칠 수도 있다. */
-  const [autoLive, setAutoLive] = useState(false);
+  /** ★기본이 **장중**이다 [OWNER 2026-09-28 — "따로 내가 입력 안해도 되게 그냥
+   *  1년부터 10년까지 자동으로 다 넣어주고, 지금 들어가고 있다는 거만 명시"].
+   *  서버가 `marks=live` 한 낱말로 IRS 전 만기와 국채선물을 통째로 깔고, 칸에 친
+   *  값이 있으면 그 칸만 덮는다. 시세를 못 읽으면 조용히 종가로 선다. */
+  const [autoLive, setAutoLive] = useState(true);
   const [liveAt, setLiveAt] = useState<string>();
   const [liveWhy, setLiveWhy] = useState<string>();
+  /** 지금 시세 — **칸의 플레이스홀더**로만 쓴다(치는 값을 덮지 않게). */
+  const [liveNow, setLiveNow] = useState<Record<string, number>>({});
+  /** 장중이면 이 수가 올라 장부를 다시 묻는다(시세는 움직이는데 질의는 그대로다). */
+  const [liveTick, setLiveTick] = useState(0);
 
   /** 장중 레벨을 물을 계기들 — **들고 있는 다리**에서 나온다(차례는 표의 차례).
    *  마크는 그 칸의 플레이스홀더가 되어 「종가는 이거였다」를 같이 말한다.
@@ -869,7 +877,6 @@ export function PortfolioPage() {
     }
     return [...seen.values()];
   })();
-  const liveKeys = liveKinds.map((k) => k.key).join(',');
 
   /* ── 칸 폭은 **옵션 집합의 합집합**에서 [OWNER 2026-09-23] ─────────────────
      진단에서 이 줄의 **열두 칸이 전부** T1(죽은 폭 ≤16px)을 실패했다(21~130px).
@@ -940,36 +947,41 @@ export function PortfolioPage() {
   /** 보낼 장중 레벨 — `irs:5Y=4.27;irs:10Y=4.3375`. 빈 칸과 숫자가 아닌 글자는
    *  안 보낸다(서버가 422 로 거절하는 대신 화면이 그 칸만 조용히 종가로 둔다 —
    *  치는 중인 글자마다 붉은 줄이 서면 못 친다). */
-  const marksSpec = Object.entries(liveLv)
+  const typedMarks = Object.entries(liveLv)
     .filter(([, v]) => v.trim() !== '' && Number.isFinite(Number(v)))
     .map(([k, v]) => `${k}=${Number(v)}`)
     .sort()
     .join(';');
+  /** 서버로 가는 것 — `live` 한 낱말이 **지금 시세를 통째로** 깔고, 친 칸이 덮는다. */
+  const marksSpec = [autoLive ? 'live' : '', typedMarks].filter(Boolean).join(';');
 
   /** 한 번 끌어와 칸을 채운다 — 값은 **칸에 보이고**, 매기는 것은 `?marks=` 가 한다. */
   const pullLive = useCallback(async () => {
     try {
       const got = await fetchLive();
-      const next: Record<string, string> = {};
-      for (const l of got.levels) next[`${l.kind}:${l.tenor}`] = String(l.level);
-      setLiveLv((prev) => {
-        /* **이 북이 들고 있는 계기만** 채운다 — 안 쥔 만기 칸을 만들면 조건 바가
-           안 쥔 만기를 「장중 레벨」로 늘어놓는다. */
-        const out = { ...prev };
-        for (const k of liveKeys.split(',')) if (k && next[k] !== undefined) out[k] = next[k];
-        return out;
-      });
+      const next: Record<string, number> = {};
+      for (const l of got.levels) next[`${l.kind}:${l.tenor}`] = l.level;
+      /* 칸을 **채우지 않는다** — 플레이스홀더로만 보여 준다. 채우면 트레이더가
+         치는 중에 10초마다 글자가 덮이고, 그때 친 값이 어디 갔는지 알 수 없다. */
+      setLiveNow(next);
       setLiveAt(got.asof ?? undefined);
       setLiveWhy(got.why ?? got.sources.find((x) => x.why && x.table)?.why ?? undefined);
     } catch (e: unknown) {
       setLiveWhy(e instanceof Error ? e.message : String(e));
     }
-  }, [liveKeys]);
+  }, []);
 
   useEffect(() => {
-    if (!autoLive) return undefined;
+    if (!autoLive) {
+      setLiveAt(undefined);
+      setLiveNow({});
+      return undefined;
+    }
     void pullLive();
-    const id = setInterval(() => { void pullLive(); }, LIVE_EVERY_MS);
+    const id = setInterval(() => {
+      void pullLive();
+      setLiveTick((t) => t + 1);          // 시세가 움직이면 장부도 다시 묻는다
+    }, LIVE_EVERY_MS);
     return () => clearInterval(id);
   }, [autoLive, pullLive]);
 
@@ -986,9 +998,9 @@ export function PortfolioPage() {
 
   useEffect(() => {
     /* 자판이 멈춘 뒤에 묻는다 — 한 글자마다 한 번씩 물으면 서버가 계열을 그만큼 읽는다. */
-    const t = setTimeout(load, marksSpec ? 350 : 0);
+    const t = setTimeout(load, typedMarks ? 350 : 0);
     return () => clearTimeout(t);
-  }, [load, marksSpec]);
+  }, [load, typedMarks, liveTick]);
 
 
   /* 쓰기 한 벌 — 응답이 곧 새 장부라 다시 묻지 않는다. */
@@ -1103,16 +1115,30 @@ export function PortfolioPage() {
           {/* ★장중으로 보고 있으면 **그 사실이 먼저** 선다 [OWNER 2026-09-28] —
               이 수는 종가가 아니고 장부에도 없다. 되돌리는 손잡이가 같이 있어야
               한 번 친 값에 갇히지 않는다. */}
+          {/* ★지금 무엇으로 보고 있는지를 **한 칸으로** 적는다 [OWNER 2026-09-28 —
+              "지금 들어가고 있다는 거만 명시해주기"]. 열아홉 칸을 늘어놓으면 조건
+              바가 시세표가 된다 — 몇 칸이 들어갔는지와 그 시각이면 충분하고,
+              무엇이 들어갔는지는 표의 「지금」 칸이 줄마다 적는다. */}
           {sheet.live?.length ? (
             <>
-              <Cond k="장중 레벨" v={sheet.live.map((m) => `${m.tenor} ${m.level.toFixed(4)}`).join(' · ')} strong />
+              <Cond k="지금 보는 값"
+                v={`장중 ${liveAt ?? ''} 시세 · ${sheet.live.length}칸 들어가는 중`} strong />
               <button type="button" className="sr-pillbtn" data-outline=""
                 disabled={busy}
-                onClick={() => setLiveLv({})}>
-                종가로 되돌리기
+                onClick={() => { setAutoLive(false); setLiveLv({}); }}>
+                종가로 보기
               </button>
             </>
-          ) : null}
+          ) : (
+            <>
+              <Cond k="지금 보는 값" v={`종가 ${sheet.asof ?? ''}`} />
+              <button type="button" className="sr-pillbtn" data-outline=""
+                disabled={busy}
+                onClick={() => setAutoLive(true)}>
+                장중으로 보기
+              </button>
+            </>
+          )}
           <button
             type="button"
             className="sr-pillbtn"
@@ -1211,7 +1237,7 @@ export function PortfolioPage() {
               alignItems="flex-end" flexWrap="wrap">
               <Text font="caption" as="span" color="fgMuted" noWrap
                 style={{ alignSelf: 'center' }}>
-                장중 레벨 (%)
+                {autoLive ? '장중 레벨 (%) — 안 치면 지금 시세' : '장중 레벨 (%)'}
               </Text>
               {liveKinds.map((k) => (
                 <Box key={k.key} width={liveW}>
@@ -1220,7 +1246,12 @@ export function PortfolioPage() {
                     <TextInput size="s" fontSize="legal" height={CONTROL_H}
                       accessibilityLabel={`${k.label} 장중 레벨 (%)`}
                       value={liveLv[k.key] ?? ''}
-                      placeholder={k.mark == null ? '레벨' : k.mark.toFixed(4)}
+                      /* 플레이스홀더가 **지금 들어가고 있는 값**이다 — 장중이면 그
+                         시세, 아니면 그 계기의 종가. 치면 그 칸만 덮는다. */
+                      placeholder={
+                        (autoLive ? liveNow[k.key] : undefined)?.toFixed(4)
+                        ?? (k.mark == null ? '레벨' : k.mark.toFixed(4))
+                      }
                       disabled={busy}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                         setLiveLv((m) => ({ ...m, [k.key]: e.target.value }))}
@@ -1231,18 +1262,9 @@ export function PortfolioPage() {
               {/* ★지금 시세 — 켜 두면 초 단위로 들어오는 그 값으로 칸이 다시 찬다.
                   한 번 눌러 채우고 다시 누르면 멈춘다(켜 둔 채 값을 고쳐도 다음
                   갱신이 덮으므로, 손으로 칠 때는 꺼 두는 것이 맞다). */}
-              <button type="button" className="sr-pillbtn" data-outline=""
-                disabled={busy}
-                title="인포맥스 IRS·국채선물 장중 시세를 그대로 칸에 넣어요 — 넣는 것뿐이고, 매기는 규칙은 그대로예요."
-                onClick={() => {
-                  if (!autoLive) void pullLive();
-                  setAutoLive((v) => !v);
-                }}>
-                {autoLive ? '지금 시세 따라가는 중 · 멈추기' : '지금 시세 넣기'}
-              </button>
-              {liveAt ? (
+              {liveAt && autoLive ? (
                 <Text font="legal" as="span" color="fgMuted" noWrap style={{ alignSelf: 'center' }}>
-                  {`${liveAt} 시세`}
+                  {`인포맥스 ${liveAt} 시세가 ${LIVE_EVERY_MS / 1000}초마다 들어가는 중이에요`}
                 </Text>
               ) : null}
               {liveWhy ? (
