@@ -18,6 +18,15 @@
     포트가 닫혀 있다              → skip. 비교할 것이 없다.
     포트가 열렸고 쪽지가 맞는다   → 진행.
     포트가 열렸는데 쪽지가 없다   → **fail**. 남의 것일 수 있다.
+    쪽지가 **다른 포트**의 것이다 → **fail**, 그리고 사유가 그렇게 말한다.
+
+넷째 줄은 2026-09-30 에 붙었다. 쪽지에는 `port` 칸이 있고 쓰는 쪽은 그것을 왜
+적는지까지 적어 뒀는데(`app/dev_marker.listening_port()`) **읽는 쪽이 안 읽고
+있었다**. 그래서 개발용을 8299 로 띄워 둔 채 :8200 을 보면 8299 쪽지의 PID 를
+8200 의 리스너와 견주고 「유령 쪽지」라고 말했고, 그 틀린 사유 때문에
+`test_static_agreement.py` 가 늘 `--ignore` 로 지나가고 있었다 — 제 docstring 이
+「skip 은 아무것도 증명하지 않는다」고 적은 문이 skip 도 아니고 **무시**였다.
+판정 자체는 `tests/test_live_backend.py` 가 잰다(그때까지 안 재고 있었다).
 
 마지막 줄이 핵심이다. skip 으로 두면 아무도 안 읽고, 언젠가 누가 그 skip 을
 "백엔드 없음" 으로 오해해 조건을 느슨하게 푼다.
@@ -140,6 +149,23 @@ def claim() -> Verdict:
             "**Funnel 로 공개된 라이브 서비스**를 뜻합니다. 포트가 열려 있다는 "
             "사실만으로 진행하지 않습니다. 테스트용으로 띄우려면 "
             "`backend\\serve.ps1 -Local`.",
+        )
+
+    # 쪽지가 **다른 포트**의 것이면 이 판정과 무관하다 — 쓰는 쪽이 `port` 를 왜
+    # 적는지 이미 말해 뒀다(`app/dev_marker.listening_port()`: 「검사 쪽이 base URL
+    # 의 포트와 맞춰 볼 수 있다」). 읽는 쪽이 그 맞춤을 안 해서, 개발용을 8299 로
+    # 띄워 둔 채 :8200 을 보면 8299 쪽지의 PID 를 8200 의 리스너와 견주고 「유령
+    # 쪽지」라고 말했다(실측 2026-09-30). **거절은 그대로다** — 8200 에 있는 것이
+    # 남의 라이브 서비스일 수 있으니까. 바뀌는 것은 사유 문장이다.
+    marker_port = marker.get("port")
+    if port and isinstance(marker_port, int) and marker_port != port:
+        return Verdict(
+            base, False, True,
+            f"개발용 쪽지는 **{marker_port}** 번의 것인데 지금 보고 있는 것은 "
+            f"{port} 번입니다 — 그 쪽지는 이 백엔드를 증명하지 않습니다. "
+            f"{port} 번을 재려면 그 포트로 `backend/serve.ps1 -Local` 을 띄우고, "
+            f"{marker_port} 번을 재려면 `SAURON_TEST_BASE=http://127.0.0.1:"
+            f"{marker_port}` 로 주소를 옮기세요.",
         )
 
     pids = _listening_pids(port) if port else set()
