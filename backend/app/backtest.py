@@ -69,6 +69,38 @@ from .valuation_port import CurveBundle, VanillaSwap, settled_cash_between, valu
 # floating leg every KRW CD-IRS pays. One name for the coupling.
 CD_TENOR = "3M"
 
+#: ★**CD 만기 스왑(3M)은 손익이 0원이다** [2026-09-29, 실측].
+#:
+#: 이 데이터셋의 `3M` 계열은 **CD 91일 고정이면서 par 3M 스왑금리**다
+#: (`CD_TENOR` 가 그것을 말한다). 그래서 3M 스왑은 기간이 하나이고 그 하나의
+#: 변동 쿠폰이 거래일에 이미 확정된다 — 고정 = 변동, 지급일도 같다. 현금흐름이
+#: 상쇄돼 `clean_npv` 가 **항상 0** 이고, 커브가 어떻게 움직여도 안 바뀐다.
+#:
+#: 실측(2026-09-29): 순수 3M 스왑 북 세 진입일 전부 `pnl 0 · valuation 0 ·
+#: carry 0`(6M 은 −199만) · 프라이서 `pv_fixed −67,985,857 / pv_float
+#: +67,985,857` · 3M 자산스왑의 IRS 다리는 59행 전부 0.
+#:
+#: 화면이 이 사실을 **말해야 한다** [OWNER 2026-09-29 — 「화면이 말해주게」]:
+#: 0 은 배관이 끊긴 것처럼 읽히고, `/api/dv01/3M` 은 0.2476 이라는 «범프 감도»를
+#: 내서(확정 전 스케줄을 흔든 값) 리스크가 있는 것처럼 보인다. 그래서 다리마다
+#: 이 쪽지를 싣고, 프런트가 줄과 서랍에 적는다.
+#:
+#: ⚠**「CD 만기 이하」가 아니다** — 조건은 아래 `_is_degenerate` 의 그것이고,
+#: 왜 좁혀졌는지(1D 는 0 이 아니다)가 거기 적혀 있다.
+DEGENERATE_NOTE = "단일 기간 · 변동이 거래일에 확정돼 스왑 손익이 0원이에요"
+
+
+def _is_degenerate(tenor: str) -> bool:
+    """그 만기의 스왑이 **고정 = 변동**으로 상쇄되는가 — CD 만기 **그 자체**뿐이다.
+
+    ⚠첫 판은 `<= TENOR_T[CD_TENOR]` 였고 **그게 틀렸다**: `1D` 도 걸리는데 그
+    북은 0 이 아니다(실측 2026-09-29 · 100억 · 2025-12-01 진입: `pnl 9원 ·
+    valuation −0 · carry 62,466원`). 1D 는 고정이 1D 계열이고 변동은 CD 91일
+    이라 **두 금리가 다르고**, 그 차가 경과로 쌓인다 — 안 움직이는 것은 평가뿐이다.
+    상쇄가 완전한 것은 두 금리가 **같은 계열**일 때, 즉 `tenor == CD_TENOR` 뿐이다.
+    """
+    return tenor == CD_TENOR
+
 # How many points the P&L line is downsampled to before it is served. A
 # ten-year backtest is ~2,600 business days and the chart is ~1,100px wide, so
 # every point beyond this is a number nobody can see (§20).
@@ -535,6 +567,7 @@ def _run_one(
                 "notional": round(leg.notional, 0),
                 "entryRate": round(leg.entry_rate * 100, 4),
                 "dv01": round(leg.dv01, 6),
+                **({"note": DEGENERATE_NOTE} if _is_degenerate(leg.tenor) else {}),
             }
             for leg in legs
         ],

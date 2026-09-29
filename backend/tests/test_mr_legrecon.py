@@ -173,9 +173,24 @@ class TestRealRecon:
         p0 = first["principal"]
         assert abs(p0["krw"] * p0["pv01"] * 1e-4 - n) < 1.0
 
+        # ★**다리가 있는 표에서는 합계 줄이 곱셈으로 닫히지 않는다**
+        # [OWNER 2026-09-29 — 「다리 추정의 합으로」]. 합계 줄의 KRD 는 국고
+        # 다리의 것이고 Δbp 는 «민평 − IRS» 스프레드의 것이라, 그 곱을 추정으로
+        # 적으면 두 다리의 감도가 갈리는 만기에서 잔차가 그만큼 부푼다(3M
+        # 자산스왑은 스왑 다리가 **구조적으로 0원**인데 축은 IRS 움직임을
+        # 적었다 — 느낄 수 없는 것으로 설명을 만들던 자리다). 그래서 합계의
+        # 추정은 **다리 추정의 합**이고, 곱셈은 다리 줄에서 잰다
+        # (`test_each_leg_closes_its_own_multiplication`).
         checked = 0
         for r in first["rows"]:
             krd, dbp, est = r.get("krd") or {}, r.get("dbp") or {}, r.get("est") or {}
+            legs = r.get("legs") or []
+            if legs:
+                if r.get("estTotal") is not None:
+                    assert sum(est.values()) == r["estTotal"], f"{r['t']} 가로합"
+                    assert r["estTotal"] == sum(lg["estTotal"] for lg in legs),                         f"{r['t']} 합계의 추정이 다리 합이 아니다"
+                    checked += 1
+                continue
             for lb, k in krd.items():
                 d = dbp.get(lb)
                 if d is None:
@@ -580,21 +595,31 @@ class TestTwoLegRecon:
         assert s["krd"].get("7Y", 0) < 0, f"{mid['t']}: IRS 7Y 가 음수가 아니다"
 
     def test_the_leg_ruler_beats_the_spread_ruler(self, rec):
-        """**잔차가 줄어야 한다** — 이 변경의 값어치가 그것이다.
+        """**다리의 자가 합계 줄의 자다** [OWNER 2026-09-29 — 「다리 추정의 합으로」].
 
-        종전 잔차는 `평가 − (국고 KRD × Δ스프레드)` 였고, 새 잔차는 두 다리가
-        자기 커브에서 낸 추정의 합을 뺀 것이다. 후자가 크면 자를 잘못 바꾼
-        것이다(실측 2026-09-04: 199만 → 6.4만원, 96.8% 감소).
+        2026-09-04 에 다리를 각자 자기 커브에 세웠고(실측 199만 → 6.4만원, 96.8%
+        감소), 그때는 **합계 줄만** 옛 자를 쓰고 있었다 — 국고 KRD × Δ스프레드.
+        오너가 09-29 에 그 자리를 다리 합으로 바꿨다. 실측 개선(잔차 중앙값 /
+        평가 중앙값 · ASW 열 만기 · 진입 200행 전):
+
+            3M 0.000→0.000 · 6M 0.141→0.000 · 9M 0.172→0.000 · 1Y 0.090→0.000
+            1.5Y 0.049→0.000 · 2Y 0.033→0.001 · 3Y 0.039→0.003 · 5Y 0.064→0.007
+            7Y 0.071→0.010 · 10Y 0.075→0.014
+
+        그래서 이 시험은 이제 **항등식**을 잰다: 합계의 잔차 = 다리 잔차의 합.
+        누가 합계 줄에 스프레드 자를 다시 놓으면 여기가 빨개진다(그 자의 옛
+        잔차는 이 표에서 199만원이었다 — 0 이 아니다).
         """
-        old = new = 0.0
+        rows = 0
         for r in rec["rows"]:
             if r.get("residual") is None:
                 continue
             b, s = r["legs"]
-            old += abs(r["residual"])
-            new += abs(b["residual"] + s["residual"])
-        assert old > 0, "옛 잔차가 전부 0 이라 비교가 안 된다"
-        assert new < old * 0.5, f"잔차가 안 줄었다 — 옛 {old:,.0f} 새 {new:,.0f}"
+            assert r["residual"] == b["residual"] + s["residual"], r["t"]
+            assert r["estTotal"] == b["estTotal"] + s["estTotal"], r["t"]
+            rows += 1
+        # 이 거래는 9봉(2020-03-27 → 04-09)이라 잔차가 서는 행이 열이다.
+        assert rows >= 8, f"잰 행이 {rows}개뿐이다 — 픽스처 창이 바뀌었나?"
 
 
 @pytestmark_live

@@ -53,6 +53,7 @@ import {
   isBondKind,
   isFuturesKind,
   runErrorMessage,
+  type BacktestLeg,
   type BacktestLegParts,
   type BacktestPosition,
   type BacktestResult,
@@ -523,6 +524,41 @@ function LegCells({ row, hasTheta, hasPull, hasFunding }: {
  * 부호가 뜻을 지는 자리(손익·분해)와 크기만 있는 자리를 문법으로 가른다. */
 function mag(v: number): string {
   return fmtKrw(Math.abs(v)).replace(/^\+/, '');
+}
+
+/** 상품 다리 한 줄의 문장 — **세 엔진이 같은 낱말을 쓴다** [2026-09-29].
+ *
+ *  퓨처스왑(선물+IRS)과 자산스왑(채권+IRS)은 같은 모양의 다리 목록을 싣는데
+ *  문장이 두 벌이면 같은 IRS 다리가 두 화면에서 다르게 읽힌다(캐논 규칙 8 —
+ *  「같은 것은 한 번만 만든다」). 없는 칸은 **안 적는다**: 채권 다리에 DV01 을
+ *  «—» 로 세우면 「DV01 이 없는 채권」이라는 다른 말이 된다(공란 정책).
+ */
+function legMachineLine(l: BacktestLeg): string {
+  const notional = mag(l.notional ?? 0);
+  const rate = `진입 ${fmtLevel(l.entryRate, '%')}%`;
+  /* ★쪽지가 붙은 다리는 **DV01 을 안 적는다** [2026-09-29]. 서버가 내는 그
+     수는 확정 전 스케줄을 범프한 «해석적» 감도인데, 이 줄이 말하는 것은 **체결된
+     거래**다 — 그 거래의 손익은 0 이다. 둘을 나란히 적으면 화면이 「25만원/bp
+     인데 0원」이라고 말하게 된다(실측 2026-09-29, 3M 자산스왑). 이유는 쪽지가
+     진다. */
+  const dv01 = l.dv01 == null || l.note
+    ? null
+    : `DV01 ${mag((l.dv01 ?? 0) * (l.notional ?? 0) * 1e-4)}/bp`;
+  if (l.kind === 'fut') {
+    return `선물 ${l.tenor} ${l.side === 'short' ? '매도' : '매수'} · ${notional}`
+      + ` · 진입가 ${l.entryPrice ?? '—'} (내재 ${fmtLevel(l.entryRate, '%')}%)`;
+  }
+  if (l.kind === 'bond') {
+    /* 이름은 **종목군**이다(서버가 싣는다) — 이 서랍 안의 격자가 같은 다리를
+       같은 낱말로 부른다([2026-09-23] 의 그 판례). 그리고 채권 다리는
+       **표면금리**다(진입 수익률 = 표면 — par 발행 규약). */
+    return `${l.name ?? '채권'} ${l.tenor} ${l.side === 'short' ? '매도' : '매수'}`
+      + ` · ${notional} · 표면 ${fmtLevel(l.entryRate, '%')}%`;
+  }
+  return [`IRS ${l.tenor} ${l.side === 'pay' ? '페이' : '리시브'}`, notional, dv01, rate,
+          l.note]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 /** 3분해의 한 항목 — 이름은 muted, 값은 부호색. */
@@ -1379,7 +1415,16 @@ export function BacktestWindow({
                   )}
                   <TextCaption as="span" color="fgMuted" tabularNumbers noWrap>
                     {p.entry} → {p.exit}
-                    {p.matured ? ' (만기)' : p.closed ? ' (청산)' : ''}
+                    {/* ★깎인 줄은 **왜 그 날까지인지** 말한다 [OWNER 2026-09-29].
+                        혼합 북은 두 달력의 교집합 위에 서므로(오너 결정
+                        2026-09-28 — 「북 창으로 깎는다」) 제 달력에서 더 살 수
+                        있었던 줄이 창 끝에서 끊긴다. 그러면 사람이 넣은 청산일과
+                        화면의 날짜가 다른데, 「(청산)」이라 적으면 **안 한 청산을
+                        했다고 말하는 것**이다 — 그 자리를 이 문구가 대신한다.
+                        `clippedTo` 는 깎이기 전 청산일이다(서버가 싣는다). */}
+                    {p.clippedTo
+                      ? ` (북 창으로 깎임 · 원래 ${p.clippedTo})`
+                      : p.matured ? ' (만기)' : p.closed ? ' (청산)' : ''}
                   </TextCaption>
                   {p.kind === 'swap' ? (
                     <TextCaption as="span" color="fgMuted" tabularNumbers noWrap>
@@ -1409,6 +1454,18 @@ export function BacktestWindow({
                   >
                     {fmtKrw(p.pnl)}
                   </TextLabel2>
+                  {/* ★다리 쪽지 [2026-09-29 — OWNER 「화면이 말해주게」]. 다리가
+                      하나인 줄은 「자세히」 서랍이 안 서므로(스왑 아웃라이트·
+                      선물 아웃라이트) 그 사실을 **줄에서** 말한다 — 3M 스왑은
+                      기간이 하나이고 변동이 거래일에 확정돼 손익이 늘 0원인데,
+                      0 만 적혀 있으면 배관이 끊긴 것으로 읽힌다(실측: 순수 3M
+                      스왑 북 세 진입일 전부 0). 다리가 둘 이상인 줄은 서랍의
+                      다리 문장이 같은 쪽지를 지고 있다(`legMachineLine`). */}
+                  {p.legs.length === 1 && p.legs[0].note ? (
+                    <TextCaption as="span" color="fgMuted">
+                      {p.legs[0].note}
+                    </TextCaption>
+                  ) : null}
                   {/* 기계는 접어 둔다 — 두 번째 질문의 답이고, 첫 번째 답 옆에
                       두면 둘 다 안 읽힌다. 스왑은 다리별 노셔널·DV01, 채권은
                       줄의 4분해(가로로 반드시 더해진다 — `splitCashBondKrw`). */}
@@ -1458,9 +1515,7 @@ export function BacktestWindow({
                               tabularNumbers
                               noWrap
                             >
-                              {l.kind === 'fut'
-                                ? `선물 ${l.tenor} ${l.side === 'short' ? '매도' : '매수'} · ${mag(l.notional ?? 0)} · 진입가 ${l.entryPrice ?? '—'} (내재 ${fmtLevel(l.entryRate, '%')}%)`
-                                : `IRS ${l.tenor} ${l.side === 'pay' ? '페이' : '리시브'} · ${mag(l.notional ?? 0)} · DV01 ${mag((l.dv01 ?? 0) * (l.notional ?? 0) * 1e-4)}/bp · 진입 ${fmtLevel(l.entryRate, '%')}%`}
+                              {legMachineLine(l)}
                             </TextCaption>
                           ))}
                           {/* 성분은 split 헬퍼를 거친다(가산성 가드) — 셋의 합이
@@ -1499,12 +1554,27 @@ export function BacktestWindow({
                             </TextCaption>
                           </summary>
                           <VStack gap={0.25} paddingY={0.5}>
+                            {/* 상품 다리 [2026-09-29] — 자산스왑만 둘이다(현금채권은
+                                하나라 여기서 아무 줄도 안 선다: 선물 아웃라이트와
+                                같은 규칙). 종전에는 이 자리에 「스왑 진입금리」 한
+                                줄뿐이었고 IRS 다리의 **명목·DV01** 이 화면에 없었다
+                                — 엔진은 싣고 있었는데 혼합 북 태그가 `legs` 를
+                                비우고 있었다(`mixedbook._tag_bond`). 퓨처스왑이
+                                이미 펴 보이는 그 자리와 같은 문장을 쓴다. */}
+                            {p.legs.length > 1
+                              ? p.legs.map((l, li) => (
+                                  <TextCaption
+                                    key={`${l.kind ?? 'leg'}-${l.tenor}-${li}`}
+                                    as="span"
+                                    color="fgMuted"
+                                    tabularNumbers
+                                    noWrap
+                                  >
+                                    {legMachineLine(l)}
+                                  </TextCaption>
+                                ))
+                              : null}
                             <Decomp head={h} legs={legRows([p], h)} />
-                            {p.kind === 'assetswap' && p.swapEntryRate != null ? (
-                              <TextCaption as="span" color="fgMuted" tabularNumbers noWrap>
-                                스왑 진입금리 {fmtLevel(p.swapEntryRate, '%')}%
-                              </TextCaption>
-                            ) : null}
                           </VStack>
                         </details>
                       );

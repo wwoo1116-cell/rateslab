@@ -162,7 +162,12 @@ def _tag_futures(rec: dict) -> dict:
 
 def _tag_bond(rec: dict) -> dict:
     kind = "assetswap" if rec.get("kind") == cb.KIND_ASW else "cashbond"
-    return {**rec, "kind": kind, "legs": []}
+    # ⚠`legs` 를 **덮어쓰지 않는다** [2026-09-29]. 종전에는 `{**rec, "legs": []}`
+    # 라 엔진이 실은 상품 다리 서술이 여기서 통째로 지워졌고(스왑·선물 태그는
+    # `rec` 가 이기게 두는데 이 함수만 반대였다), 그래서 자산스왑의 IRS 다리가
+    # 화면에 닿을 길이 없었다. 기본값은 앞에 둔다 — 엔진이 안 실었으면 빈 목록,
+    # 실었으면 그것이 이긴다.
+    return {"legs": [], **rec, "kind": kind}
 
 
 def _same_night(
@@ -482,10 +487,10 @@ def _mixed_any(
     #
     # 깎이기 전에 어디까지 살았는지는 **버리지 않는다**: 줄마다 `clippedTo` 로
     # 싣는다 — 값은 **깎이기 전 그 줄의 청산일**이다(이름이 가리키는 목표가
-    # 아니라 출처다). ⚠지금은 **자료에만 있다**: `src/lib/api.ts` 의
-    # `BacktestPosition` 이 이 열을 아직 안 받고 화면도 안 적는다. 화면은 깎인
-    # 청산일(`exit`)만 말하므로 거짓은 아니고, 「원래 어디까지였나」를 적을지는
-    # 오너 판단으로 열려 있다(2026-09-29 확인).
+    # 아니라 출처다). ★화면이 그 줄의 기간 옆에 적는다 [OWNER 2026-09-29 —
+    # 「깎인 줄에 원래 날짜 병기」]: 「(북 창으로 깎임 · 원래 2026-09-28)」.
+    # 종전에는 그 자리에 「(청산)」이 섰는데, 그건 **안 한 청산을 했다고 말하는
+    # 것**이었다(깎인 줄의 `exit` 이 창 끝이라 `closed` 가 참이 된다).
     book_end = window[-1]
     clipped: dict[int, str] = {}
     for n, bp in list(bonds.items()):

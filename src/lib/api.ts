@@ -412,10 +412,19 @@ export interface BacktestLeg {
   entryRate: number; // percent
   /** per unit notional, at the entry curve — 선물 다리에는 없다. */
   dv01?: number;
-  /** 어느 엔진의 다리인가 — 퓨처스왑 기록에만 붙는다 [2026-08-25]. */
-  kind?: "fut" | "irs";
+  /** 다리 이름 — 채권 다리는 **종목군**이다(국고채·은행채 …). 스왑·선물
+   *  다리는 안 싣고 화면이 엔진 이름을 적는다. */
+  name?: string;
+  /** 어느 엔진의 다리인가 — 퓨처스왑과 **자산스왑** 기록에 붙는다
+   *  ([2026-08-25] · 채권 다리는 2026-09-29). 순수 스왑 줄에는 없다. */
+  kind?: "fut" | "irs" | "bond";
   /** 선물 다리의 진입 종가 (KRX 포인트). */
   entryPrice?: number;
+  /** ★이 다리에 대해 **화면이 말해야 하는 사실** [2026-09-29]. 지금은 하나뿐:
+   *  CD 만기 이하 스왑은 기간이 하나이고 변동이 거래일에 확정돼 손익이 0원이다
+   *  (`backtest.DEGENERATE_NOTE`). 0 은 배관이 끊긴 것처럼 읽히므로 서버가
+   *  이유를 실어 보낸다 — 화면은 적기만 한다(§16). */
+  note?: string;
 }
 
 /** 북의 한 줄이 무엇인가 [2026-08-21]. 한 창이 스왑과 채권을 다 그리므로
@@ -454,6 +463,13 @@ export interface BacktestPosition {
    * closed out. A different fact, and the one the period column used to get
    * wrong — a 9M entered in 2020 was reported as held for six years. */
   matured: boolean;
+  /** ★**북 창으로 깎인 줄의 원래 청산일** [OWNER 2026-09-29]. 혼합 북은 두
+   *  달력의 교집합 위에 서므로(`calendar.basis`), 제 달력에서 더 살 수 있었던
+   *  줄은 창 끝에서 끊긴다 — 그 사실을 버리지 않고 여기 싣는다. 값이 있으면
+   *  **깎였다**는 뜻이고, 없으면 제 청산일까지 살았다(0 이 아니라 없음).
+   *  화면은 그 줄의 기간 옆에 적는다 — 사람이 넣은 청산일과 다른 날까지만
+   *  사는 줄이 그 이유를 말해야 하기 때문이다. */
+  clippedTo?: string | null;
   legs: BacktestLeg[];
   entryValue: number | null;
   exitValue: number | null;

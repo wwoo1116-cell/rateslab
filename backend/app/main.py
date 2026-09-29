@@ -1616,6 +1616,21 @@ def _mr_scale_rows(rows: list[dict], scale: float) -> list[dict]:
                 for lg in (bond, swap):
                     if lg.get("estTotal") is not None:
                         lg["residual"] = lg["valuation"] - lg["estTotal"]
+                # ── ★합계 줄의 추정도 **다리 합**이다 [OWNER 2026-09-29] ──────
+                # 위 루프가 이 줄의 `est` 를 «−KRD × Δbp» 로 다시 유도했는데,
+                # 자산스왑에서 그 KRD 는 국고 다리의 것이고 Δbp 는 스프레드의
+                # 것이다 — 섞인 자다(엔진이 같은 날 고친 그 자리,
+                # `cashbond.book_recon` 의 그 절). 다리를 이미 재 놨으므로
+                # 여기서는 **더하기만** 한다. 안 더하고 두면 화면 두 곳이
+                # (백테스트 대사표와 MR 대사표) 같은 행에 다른 추정을 적는다.
+                labels = list(dict.fromkeys(
+                    [lb for lg in scaled for lb in (lg.get("est") or {})]))
+                if labels:
+                    d["est"] = {lb: sum((lg.get("est") or {}).get(lb, 0)
+                                        for lg in scaled)
+                                for lb in labels}
+                    d["estTotal"] = sum(d["est"].values())
+                    d["residual"] = d["valuation"] - d["estTotal"]
             d["legs"] = scaled
         out.append(d)
     return out

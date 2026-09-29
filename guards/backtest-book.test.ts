@@ -351,3 +351,102 @@ describe('차트를 눌러서 들어간다 [v1 계약, OWNER 2026-08-18 복원]'
     expect(pane).toMatch(/구간 전체/);
   });
 });
+
+/* ── 상품 다리 한 줄은 **한 곳에서** 만든다 [2026-09-29] ──────────────────────
+ *
+ * 자산스왑 줄에 다리 서술이 붙었다(종전에는 `mixedbook._tag_bond` 가 `legs` 를
+ * 비워서 IRS 다리의 명목·DV01 이 화면에 닿을 길이 없었다). 붙이면서 문장을 한
+ * 벌 더 쓰면 같은 IRS 다리가 퓨처스왑 서랍과 자산스왑 서랍에서 다르게 읽힌다 —
+ * 캐논 규칙 8(「같은 것은 한 번만 만든다」)이 그것을 금지한다. 그래서 문장은
+ * `legMachineLine` 하나이고, 이 시험은 **두 서랍이 그 함수를 부르는지**와
+ * 채권 다리 이름이 **서버가 싣는 종목군**인지를 잰다(「채권」으로 박으면 같은
+ * 서랍 안에서 격자는 「국고」, 다리 줄은 「채권」이 된다 — 실측 2026-09-29).
+ */
+describe('상품 다리 문장 — 한 곳에서', () => {
+  const src = () =>
+    fs.readFileSync(
+      path.resolve(import.meta.dirname, '../src/backtest/BacktestWindow.tsx'),
+      'utf8',
+    );
+
+  it('문장 만드는 자리가 하나다', () => {
+    const code = src();
+    expect(code, '`legMachineLine` 이 없다').toMatch(/function legMachineLine\(/);
+    /* 부르는 자리는 둘(퓨처스왑·자산스왑), 만드는 자리는 하나. */
+    const calls = code.match(/legMachineLine\(/g) ?? [];
+    expect(calls.length, '다리 문장을 부르는 자리가 둘이 아니다').toBe(3); // 정의 1 + 호출 2
+    /* 「DV01 …/bp」를 적는 자리도 하나 — 두 벌이면 한쪽이 조용히 낡는다. */
+    const dv01 = code.match(/DV01 \$\{/g) ?? [];
+    expect(dv01.length, 'DV01 문장이 두 벌이다').toBe(1);
+  });
+
+  it('채권 다리 이름은 **서버가 싣는 종목군**이다', () => {
+    const code = src();
+    const fn = code.slice(code.indexOf('function legMachineLine('),
+                          code.indexOf('function legMachineLine(') + 1400);
+    expect(fn, '채권 다리 이름을 손으로 박았다').toMatch(/l\.name \?\? '채권'/);
+  });
+});
+
+/* ── 다리 쪽지는 **서버가 쓰고 화면이 적는다** [2026-09-29] ──────────────────
+ *
+ * CD 만기 이하 스왑(이 데이터셋에선 3M)은 기간이 하나이고 변동이 거래일에
+ * 확정돼 손익이 **늘 0원**이다 — 배관 결함이 아니라 상품이다(실측: 순수 3M
+ * 스왑 북 세 진입일 전부 0 · 프라이서 pv_fixed/pv_float 가 정확히 상쇄).
+ * 0 만 적혀 있으면 「서버가 죽었나」로 읽히므로 서버가 이유를 싣고
+ * (`backtest.DEGENERATE_NOTE`) 화면이 두 자리에서 적는다: 다리가 하나인 줄은
+ * **줄에서**, 둘 이상인 줄은 **서랍의 다리 문장**에서.
+ *
+ * 그리고 그 다리의 DV01 은 **안 적는다** — 서버가 내는 값은 확정 전 스케줄을
+ * 범프한 해석적 감도라, 체결된 거래를 말하는 이 줄에 나란히 두면 화면이
+ * 「25만원/bp 인데 0원」이라고 말한다(실측 2026-09-29).
+ */
+describe('다리 쪽지 — 0 을 설명하는 자리', () => {
+  const src = () =>
+    fs.readFileSync(
+      path.resolve(import.meta.dirname, '../src/backtest/BacktestWindow.tsx'),
+      'utf8',
+    );
+
+  it('다리 문장이 쪽지를 싣는다', () => {
+    const code = src();
+    const fn = code.slice(code.indexOf('function legMachineLine('),
+                          code.indexOf('function legMachineLine(') + 1800);
+    expect(fn, '다리 문장이 쪽지를 떨군다').toMatch(/l\.note/);
+    expect(fn, '쪽지가 붙은 다리에 DV01 을 적고 있다')
+      .toMatch(/l\.dv01 == null \|\| l\.note/);
+  });
+
+  it('다리가 하나인 줄은 **줄에서** 말한다', () => {
+    /* 서랍(`details`)은 다리가 둘 이상일 때만 선다 — 스왑 아웃라이트는 그
+       서랍이 없으므로 줄에 쪽지가 서야 한다. */
+    expect(src(), '다리 하나짜리 줄의 쪽지가 없다')
+      .toMatch(/p\.legs\.length === 1 && p\.legs\[0\]\.note/);
+  });
+});
+
+/* ── 깎인 줄은 **왜 그 날까지인지** 말한다 [OWNER 2026-09-29] ────────────────
+ *
+ * 혼합 북은 두 달력의 교집합 위에 서므로(오너 결정 2026-09-28 — 「북 창으로
+ * 깎는다」), 제 달력에서 더 살 수 있었던 줄이 창 끝에서 끊긴다. 그 줄의 `exit`
+ * 은 창 끝이고 `closed` 가 참이 되는데, 거기에 「(청산)」을 적으면 **안 한
+ * 청산을 했다고 말하는 것**이다. 서버가 깎이기 전 청산일을 `clippedTo` 로
+ * 싣고(`mixedbook`), 화면은 그 자리를 「(북 창으로 깎임 · 원래 …)」로 바꾼다.
+ */
+describe('깎인 줄의 기간', () => {
+  it('clippedTo 가 「(청산)」 자리를 **대신** 한다', () => {
+    const code = fs.readFileSync(
+      path.resolve(import.meta.dirname, '../src/backtest/BacktestWindow.tsx'),
+      'utf8',
+    );
+    const at = code.indexOf('{p.entry} → {p.exit}');
+    expect(at, '줄의 기간 문구를 못 찾았다').toBeGreaterThan(0);
+    const block = code.slice(at, at + 1200);
+    expect(block, '깎인 줄에 원래 청산일을 안 적는다').toMatch(/p\.clippedTo/);
+    /* 삼항의 **첫 갈래**가 clippedTo 여야 한다 — 뒤에 두면 깎인 줄이 여전히
+       「(청산)」으로 읽힌다(그 줄은 closed 가 참이다). */
+    const order = block.indexOf('p.clippedTo');
+    const closed = block.indexOf("' (청산)'");
+    expect(order, 'clippedTo 가 (청산) 뒤에 있다').toBeLessThan(closed);
+  });
+});

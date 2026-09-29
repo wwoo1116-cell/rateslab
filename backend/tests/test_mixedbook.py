@@ -143,6 +143,29 @@ class TestAdditivity:
         assert asw["swapPnl"] is not None
         assert out["positions"][1]["kind"] == "swap"
 
+        # ── ★상품 다리 서술도 **살아서 나간다** [2026-09-29] ─────────────────
+        # 종전 태그가 `{**rec, "legs": []}` 라 엔진이 실은 다리 목록을 통째로
+        # 지웠고(스왑·선물 태그는 `rec` 가 이기는데 이 함수만 반대였다), 그래서
+        # 자산스왑의 IRS 다리 명목·DV01 이 화면에 닿을 길이 없었다. 이 단정을
+        # 되돌리면(둘 중 하나만 되돌려도) 빨개진다.
+        kinds = [lg.get("kind") for lg in asw["legs"]]
+        assert kinds == ["bond", "irs"], f"자산스왑 상품 다리가 {kinds} 다"
+        bond_leg, irs_leg = asw["legs"]
+        assert bond_leg["side"] == "long" and irs_leg["side"] == "pay", "par-par 규약"
+        # par-par 는 **같은 명목**이다(DV01 중립이 아니다 — `_swap_leg` 의 그 규약).
+        assert bond_leg["notional"] == irs_leg["notional"] == asw["notional"]
+        # IRS 다리만 DV01 을 진다(채권 다리의 감도는 단일수익률이라 이 칸에
+        # 안 적는다 — 적으면 스왑 PV01 과 같은 자로 읽힌다).
+        assert irs_leg["dv01"] > 0 and "dv01" not in bond_leg
+        # 진입금리는 누적 칸과 **같은 수**다 — 두 곳이 갈리면 화면이 두 답을 말한다.
+        assert irs_leg["entryRate"] == asw["swapEntryRate"]
+
+        # 현금채권은 다리가 **하나**다 — 화면이 그 줄을 안 편다(선물 아웃라이트와
+        # 같은 규칙). 빈 목록이 아니라 한 칸짜리다.
+        cb_out = mb.run_backtest(m, ds, [_pos("CB:KTB:3Y", 1, entry)], SPEC)
+        cb_legs = cb_out["positions"][0]["legs"]
+        assert [lg["kind"] for lg in cb_legs] == ["bond"], cb_legs
+
 
 # ── 2. 한 종류뿐인 북은 종전 그대로 ─────────────────────────────────────────
 

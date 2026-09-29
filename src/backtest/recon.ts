@@ -122,8 +122,18 @@ export function reconNote(recon: BacktestRecon): string | undefined {
  * 여기서 말한다. */
 export function bondReconNote(recon: BacktestRecon): string {
   const carry = '캐리는 조달 차감 전 금액이에요 — 조달은 자기 열에 음수로 서요.';
+  /* ★자산스왑 표에서는 **합계의 추정이 두 다리의 합**이다 [OWNER 2026-09-29].
+     합계 줄의 KRD·Δbp 는 스프레드 축(국고 KRD · 민평−IRS Δ)이라 그 둘을
+     곱하면 추정 칸이 안 나온다 — 종전에는 그 곱을 추정으로 적었고, 두 다리의
+     감도가 갈리는 만기에서 잔차가 그만큼 부풀었다(3M 자산스왑은 스왑 다리가
+     구조적으로 0원인데 축은 IRS 움직임을 적어, 느낄 수 없는 것으로 설명을
+     만들고 있었다). 화면만 보는 사람은 그 규약을 알 길이 없으므로 여기서
+     말한다 — 곱셈이 닫히는 곳은 **다리 줄**이다. */
+  const legSum = recon.legTenors?.length
+    ? ' 합계 줄의 추정은 두 다리의 추정을 더한 값이에요 — KRD×Δbp 가 닫히는 곳은 다리 줄이에요(합계의 KRD·Δbp 는 스프레드 축이라 곱해지지 않아요).'
+    : '';
   const trunc = reconNote(recon);
-  return trunc ? `${trunc} ${carry}` : carry;
+  return (trunc ? `${trunc} ${carry}` : carry) + legSum;
 }
 
 /** 선물 표의 각주 [2026-08-25]. 캐리·롤다운·조달 열이 안 서는 이유(존재하지

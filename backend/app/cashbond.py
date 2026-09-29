@@ -530,6 +530,27 @@ def run_bond_position(
         # 진입일부터 경과이자가 붙으므로 결제 시차의 밤 자체가 없다.
         "startup": 0.0,
         "swapPnl": None,
+        # ── 상품 다리 서술 [2026-09-29] ──────────────────────────────────
+        # `legParts`(돈의 분해)와 **다른 것**이다: 이쪽은 「무엇을 얼마나 어느
+        # 금리에 들고 있나」다(스왑·선물 줄이 이미 쓰고 있는 그 키 —
+        # `futures.py` 의 `legs`, 프런트 `BacktestLeg`).
+        #
+        # 종전에는 채권 줄에 이 칸이 **아예 없었고**, 혼합 북 태그가 `legs: []` 로
+        # 덮어써서 자산스왑의 IRS 다리 서술(명목·DV01·진입금리)이 화면에 닿을
+        # 길이 없었다 — 퓨처스왑은 같은 자리를 이미 펴 보인다. 채권 줄은 다리가
+        # 하나라 화면이 안 펴고(선물 아웃라이트와 같은 규칙), 자산스왑만 둘이 된다.
+        "legs": [{
+            "kind": "bond",
+            # ★이름은 **종목군**이다 [2026-09-23 의 그 판례] — 누적 성분
+            # (`legParts`)·대사표 다리와 **같은 낱말**이어야 한다. 「채권」으로
+            # 박으면 같은 다리가 한 서랍 안에서 두 이름으로 불린다(실측
+            # 2026-09-29: 다리 줄은 「채권 3Y」, 세 줄 밑 격자는 「국고」).
+            "name": CURVE_LABEL.get(pos.bond_type, pos.bond_type),
+            "tenor": pos.tenor,
+            "side": "long",              # 채권 매도는 이 엔진에 없다(decodeBook 가 막는다)
+            "notional": round(pos.notional, 0),
+            "entryRate": round(leg.coupon * 100, 4),
+        }],
         # 다리 하나짜리 성분 [2026-09-23] — 자산스왑이면 바로 아래에서 둘로
         # 덮어쓴다. 혼합 북에서 열이 닫히려면 모든 줄이 같은 꼴을 내야 한다.
         "legParts": [{
@@ -583,6 +604,10 @@ def run_bond_position(
         ]
         for key in ("valuation", "rolldown", "carry", "startup"):
             rec[key] = round(rec[key] + srec[key], 0)
+        # 상품 다리도 둘이 된다 — 퓨처스왑과 **같은 수법**이다(`futures.py` 의
+        # `legs.append({"kind": "irs", **lg})`). 스왑 엔진이 낸 서술을 그대로
+        # 얹으므로 명목·DV01·진입금리가 두 화면에서 같은 수다.
+        rec["legs"] = [*rec["legs"], *({"kind": "irs", **lg} for lg in srec["legs"])]
         rec["swapPnl"] = srec["pnl"]
         rec["swapEntryRate"] = srec["entryRate"]
         # IRS − 채권 [부호 규약 2026-09-22] — `asw_series` 와 같은 축이라야
@@ -1572,12 +1597,79 @@ def book_recon(
                 delta = None if cur is None or prv is None else (cur - prv) * delta_scale
                 dbp[lb] = None if delta is None else round(delta, 2)
                 est[lb] = 0.0 if delta is None else -(axis * prev_krd[lb]) * delta
-            total_est = round(sum(est.values()))
+            total_est: int | None = round(sum(est.values()))
+            est_labels: list[str] = list(labels)
+
+            # ── 다리별 자 [OWNER 2026-09-04] ─────────────────────────────────
+            # 다리마다 **자기 커브의 Δ** 를 곱한다(국고는 민평, IRS 는 스왑 종가).
+            b_dbp: dict[str, float | None] = {}
+            b_est: dict[str, float] = {}
+            s_dbp: dict[str, float | None] = {}
+            s_est: dict[str, float] = {}
+            b_total = s_total = 0
+            if want_legs:
+                for lb in labels:
+                    dl = _leg_delta(bond_node.get(lb), i, i - 1)
+                    b_dbp[lb] = None if dl is None else round(dl, 2)
+                    b_est[lb] = 0.0 if dl is None else -prev_krd[lb] * dl
+                j_now, j_prv = imap.get(i), imap.get(i - 1)
+                for lb in swap_labels:
+                    dl = _leg_delta(swap_node.get(lb), j_now, j_prv)
+                    s_dbp[lb] = None if dl is None else round(dl, 2)
+                    s_est[lb] = 0.0 if dl is None else -prev_krd_s[lb] * dl
+                # ★총계는 **적힌 수의 합**이다 — 칸을 각자 반올림한 뒤 따로
+                # 반올림하면 「가로로 더해도 총계가 안 나오는 표」가 된다
+                # (`main._mr_scale_rows` 의 그 규율과 같은 자). 아래 합계 줄이
+                # 이 둘을 그대로 더하므로, 세로도 원 단위로 닫힌다.
+                b_total = sum(round(v) for v in b_est.values())
+                s_total = sum(round(v) for v in s_est.values())
+
+            # ── ★자산스왑 합계 줄의 추정은 **두 다리의 합**이다 ───────────────
+            # [OWNER 2026-09-29 — 「다리 추정의 합으로」]
+            #
+            # 종전에는 합계 줄만 **섞인 자**를 썼다: 국고 다리의 KRD 에 «민평 −
+            # IRS» 스프레드 Δ 를 곱한 것. par-par 자산스왑의 1차 근사로는 성립
+            # 하지만, 두 다리의 감도가 다른 만기에서 무너진다. 짧은 끝이 그
+            # 극단이다 — **3M 스왑은 구조적으로 0원**이다(`backtest.CD_TENOR`
+            # 가 3M 이라 고정 = 거래일에 확정된 변동, 한 기간이 상쇄된다). 그런데
+            # 스프레드 축에는 그 IRS 움직임이 들어 있어, 포지션이 **느낄 수 없는**
+            # 것으로 설명을 만들고 있었다(실측 2026-09-29, 3M 자산스왑 4행 ·
+            # 598,132원이 설명 없이 남았다).
+            #
+            # 실측 개선(잔차 중앙값 / 평가 중앙값 · 진입 200행 전 · 100억):
+            #   3M 0.000→0.000 · 6M 0.141→0.000 · 9M 0.172→0.000 · 1Y 0.090→0.000
+            #   1.5Y 0.049→0.000 · 2Y 0.033→0.001 · 3Y 0.039→0.003 · 5Y 0.064→0.007
+            #   7Y 0.071→0.010 · 10Y 0.075→0.014  (**열 만기 전부** 내려간다)
+            #
+            # ⚠대가: 합계 줄에서 «추정 = −KRD × Δbp» 가 더는 성립하지 않는다
+            # (KRD·Δbp 는 스프레드 축의 것이고 추정은 다리 합이다). 그 곱셈
+            # 항등식은 **다리 줄에서만** 재고(`test_mr_legrecon` 의 그 시험),
+            # 화면은 각주로 「합계의 추정은 두 다리의 합」이라 적는다.
+            #
+            # ⚠다리를 안 물었으면(`with_legs=False` — 회계 경로는 KRD 범프가
+            # 5.8배라 안 문다) 추정을 **아예 안 싣는다**. 섞인 자를 여기 남기면
+            # 같은 행이 부른 쪽에 따라 다른 추정을 내는데, 그게 이 리포가
+            # claim-vs-behaviour 라 부르는 결함이다. 0 이 아니라 **없음**이다.
+            # ⚠조건은 **`asw`**(북이 전부 자산스왑인가)다 — `has_swap` 은 위
+            # 포지션 루프의 지역값이라 여기서는 «마지막 줄» 의 사실이다. 그리고
+            # 스프레드 자가 서는 것은 자산스왑 북일 때뿐이다(`axis`·`delta_scale`
+            # 이 그때만 뒤집힌다) — 종목군이 섞인 북은 축이 민평 커브라 종전
+            # 그대로 둔다.
+            if asw:
+                if want_legs:
+                    est_labels = list(dict.fromkeys([*labels, *swap_labels]))
+                    # 칸은 **다리 칸의 합**이고(가로로 더해진다), 총계는 그 칸들의
+                    # 합이다 — 그래서 `b_total + s_total` 과도 원 단위로 같다.
+                    est = {lb: float(round(b_est.get(lb, 0.0)) + round(s_est.get(lb, 0.0)))
+                           for lb in est_labels}
+                    total_est = b_total + s_total
+                else:
+                    est, est_labels, total_est = {}, [], None
             row = {
                 "t": on.isoformat(),
                 "krd": {lb: round(axis * prev_krd[lb]) for lb in labels},
                 "dbp": dbp,
-                "est": {lb: round(est[lb]) for lb in labels},
+                "est": {lb: round(est[lb]) for lb in est_labels},
                 "estTotal": total_est,
                 "actual": round(day_val + day_carry + day_roll + day_pull - day_fund),
                 "valuation": round(day_val),
@@ -1586,29 +1678,9 @@ def book_recon(
                 "carry": round(day_carry),
                 # 화면이 빼는 값이라 부호를 여기서 준다 (백테스트 조달 칸과 같은 규약)
                 "funding": round(-day_fund),
-                "residual": round(day_val) - total_est,
+                "residual": None if total_est is None else round(day_val) - total_est,
             }
             if want_legs:
-                # ── 다리별 블록 [OWNER 2026-09-04 — 국고매수와 IRS Pay 를
-                #    별개로] ─────────────────────────────────────────────────
-                # 다리마다 **자기 커브의 Δ** 를 곱한다. 그래서 이 추정은 종전
-                # (국고 KRD × Δ스프레드)보다 잔차가 작다 — 감도와 Δ 가 같은
-                # 커브 위에 서기 때문이다.
-                b_dbp: dict[str, float | None] = {}
-                b_est: dict[str, float] = {}
-                for lb in labels:
-                    dl = _leg_delta(bond_node.get(lb), i, i - 1)
-                    b_dbp[lb] = None if dl is None else round(dl, 2)
-                    b_est[lb] = 0.0 if dl is None else -prev_krd[lb] * dl
-                s_dbp: dict[str, float | None] = {}
-                s_est: dict[str, float] = {}
-                j_now, j_prv = imap.get(i), imap.get(i - 1)
-                for lb in swap_labels:
-                    dl = _leg_delta(swap_node.get(lb), j_now, j_prv)
-                    s_dbp[lb] = None if dl is None else round(dl, 2)
-                    s_est[lb] = 0.0 if dl is None else -prev_krd_s[lb] * dl
-                b_total = round(sum(b_est.values()))
-                s_total = round(sum(s_est.values()))
                 row["legs"] = [
                     {
                         # ★이름은 **종목군**이다 [2026-09-23]. 「국고」로 박혀
