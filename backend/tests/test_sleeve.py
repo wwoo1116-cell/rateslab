@@ -97,6 +97,17 @@ def _lane(*, dv=None, pv=None, asof="2026-09-18", **sm_over):
     return lambda: (_Se(dv=dv, pv=pv, asof=asof), _Sm(**sm_over))
 
 
+#: 밴드가 서는 날 — `sleeve.BAND_FROM` 이후여야 한다(그 전 날짜는 밴드 0).
+BAND_DAY = "2026-09-30"
+
+
+def _lane_band(**over):
+    """밴드가 서는 날짜의 레인 — 수는 기본 픽스처와 **같고** 날짜만 옮긴다."""
+    return _lane(dv={BAND_DAY: {"3Y": -1_422_000.0, "10Y": -1_300_000.0}},
+                 pv={BAND_DAY: {"3Y": 28_205.0, "10Y": 81_858.0}},
+                 asof=BAND_DAY, **over)
+
+
 def _ledger(tmp_path, rows):
     p = tmp_path / "ledger.json"
     p.write_text(json.dumps({"rows": rows}, ensure_ascii=False), encoding="utf-8")
@@ -133,6 +144,62 @@ class TestSheet:
         legs = {l["tenor"]: l for l in out["legs"]}
         assert legs["3Y"]["side"] == 1 and legs["10Y"]["side"] == -1
         assert legs["3Y"]["signedFace"] > 0 and legs["10Y"]["signedFace"] < 0
+
+    # ── ★무거래 밴드 [OWNER 2026-09-29 — 「키고 D로 가자」] ───────────────────
+    #
+    # 사전등록 `research/momentum-refine-lit/PREREG_A_2026-09-29.md`. 이 북의 비용은
+    # 방향 전환이 아니라 **매일의 재조정**에서 나온다(실측: 비용의 85.8%). 밴드는
+    # 그 재조정을 절반으로 깎는다 — 폭은 샤프가 아니라 **회전**으로 정했다.
+    #
+    # ⚠아래 셋을 되돌리면(밴드를 빼면) 전부 빨개진다.
+
+    def _band_of(self, out):
+        """그날 밴드 폭 — 페이로드가 줄마다 싣는다."""
+        return {l["tenor"]: l["band"] for l in out["legs"]}
+
+    def test_밴드_안이면_안_친다(self, tmp_path):
+        """목표와 어제의 차이가 밴드 안이면 **주문이 0**이다 — `delta` 는 0 이 아닌데도.
+
+        종전에는 이 차이를 그대로 쳤고, 그 재조정이 비용의 85.8% 였다.
+        """
+        out0 = sleeve.build_sheet(lane=_lane_band(),
+                                  ledger_path=_ledger(tmp_path, []))
+        band = self._band_of(out0)["3Y"]
+        assert band > 0, "켠 날인데 밴드가 0 이다"
+        target = next(l for l in out0["legs"] if l["tenor"] == "3Y")["signedFace"]
+        # 어제 포지션을 목표에서 밴드의 **절반**만큼 떨어뜨린다 → 안 친다
+        prev = {"date": "x", "legs": {"3Y": {"signed_face": target + band * 0.5},
+                                      "10Y": {"signed_face": 0.0}}}
+        out = sleeve.build_sheet(lane=_lane_band(),
+                                 ledger_path=_ledger(tmp_path, [prev]))
+        leg = next(l for l in out["legs"] if l["tenor"] == "3Y")
+        assert leg["delta"] != 0.0, "전제가 깨졌다 — 차이가 0 이면 잴 것이 없다"
+        assert abs(leg["delta"]) <= leg["band"]
+        assert leg["order"] == 0.0 and leg["trade"] is False
+
+    def test_밴드_밖이면_가장자리까지만_간다(self, tmp_path):
+        """넘으면 **목표까지 가지 않고** 밴드 경계로 간다(비례비용의 반사 정책)."""
+        out0 = sleeve.build_sheet(lane=_lane_band(),
+                                  ledger_path=_ledger(tmp_path, []))
+        band = self._band_of(out0)["3Y"]
+        target = next(l for l in out0["legs"] if l["tenor"] == "3Y")["signedFace"]
+        prev = {"date": "x", "legs": {"3Y": {"signed_face": target + band * 3.0},
+                                      "10Y": {"signed_face": 0.0}}}
+        out = sleeve.build_sheet(lane=_lane_band(),
+                                 ledger_path=_ledger(tmp_path, [prev]))
+        leg = next(l for l in out["legs"] if l["tenor"] == "3Y")
+        # 차이는 −3b, 주문은 −2b (가장자리까지) — 목표까지 가면 −3b 다.
+        assert leg["delta"] == pytest.approx(-band * 3.0, rel=1e-9)
+        assert leg["order"] == pytest.approx(-band * 2.0, rel=1e-9)
+        assert abs(leg["order"]) < abs(leg["delta"]), "가장자리가 아니라 목표까지 갔다"
+
+    def test_켠_날_전에는_밴드가_0이다(self, tmp_path):
+        """과거 주문표는 **안 바뀐다** — 원장이 밴드 없는 규칙으로 남아 있다."""
+        out = sleeve.build_sheet(lane=_lane(asof="2026-09-18"),
+                                 ledger_path=_ledger(tmp_path, []))
+        for l in out["legs"]:
+            assert l["band"] == 0.0
+            assert l["order"] == pytest.approx(l["delta"], rel=1e-12)
 
     def test_1억_미만은_안_친다(self, tmp_path):
         """호가 단위와 수수료를 못 이긴다(`sleeve_daily.MIN_TICKET`)."""

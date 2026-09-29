@@ -55,6 +55,31 @@ LEDGER_PATH = Path(__file__).resolve().parent.parent / "output" / "sleeve_daily_
 #: 1억 미만 차이는 안 친다 — 호가 단위와 수수료를 못 이긴다(`sleeve_daily.MIN_TICKET`).
 MIN_TICKET = 1e8
 
+#: ★**무거래 밴드** [OWNER 2026-09-29 — 「키고 D로 가자」 · 사전등록
+#: `research/momentum-refine-lit/PREREG_A_2026-09-29.md`].
+#:
+#: 이 북의 비용은 방향 전환이 아니라 **변동성 목표의 매일 재조정**에서 나온다
+#: (실측 2026-09-29: 비용 3,454만원 = 총수익의 18.9%, 그중 **85.8%가 재조정** ·
+#: 전환은 2,318봉에 124회뿐). 그래서 목표와 보유의 차이가 이 폭 안이면 **안 치고**,
+#: 넘으면 **밴드 가장자리까지만** 간다(비례비용 아래 무행동 영역 + 경계 반사).
+#:
+#: 폭은 성적이 아니라 **회전으로** 정했다 — 훈련구간(~2026-09-08)의 재조정 회전을
+#: 정확히 50% 줄이는 값이고, 그것이 «평균 목표 액면의 27.95%» 였다.
+#: ⚠**샤프로 고르지 않았다.** 민감도는 0.5~2.0배 전 구간이 등록판을 이긴다.
+#:
+#: 실측(표본내 2,318봉 · 확장 평균 기준판):
+#:     순 SR 0.860 → **0.916** · 비용 18.9% → 10%대 · 재조정 회전 −54.4%
+#:     총 SR 1.059 → 1.010 (신호를 −0.05 잃고 비용을 절반 깎았다)
+#:
+#: ⚠**비례 밴드는 안 된다** — 폭을 «그날 목표»에 비례시키면 큰 포지션에서 밴드가
+#: 같이 넓어져 추종을 놓친다(같은 평균 비율 28% 에서 순 SR **0.851**, 등록판보다
+#: 낮다). 기준은 **누적 평균 |목표 액면|** 이다(미래를 안 본다).
+BAND_FRAC = 0.2795
+
+#: 밴드를 켠 날. 이 날 **다음** 영업일부터의 주문이 밴드를 지난다 — 그 전 원장은
+#: 밴드 없는 규칙으로 남는다(등록 계열은 **안 건드린다**).
+BAND_FROM = "2026-09-29"
+
 
 def _lane():
     """레인 모듈 셋 — **함수 안에서** 들여온다(모듈 머리 §임포트).
@@ -296,6 +321,24 @@ def read_ledger(path: Path | None = None) -> dict[str, Any]:
     }
 
 
+def _face_ref(se, net_dv, rp, d: str) -> float:
+    """밴드의 기준 — **오늘까지의** 평균 |목표 액면|(배율 전).
+
+    사전등록이 잰 것은 「평균 액면의 27.95%」인 **절대 폭**이다. 라이브 북은
+    배분기 배율로 크기가 바뀌므로 그 절대값을 못 박을 수 없고, 그렇다고 «그날
+    목표»에 비례시키면 큰 포지션에서 밴드가 같이 넓어져 추종을 놓친다(실측
+    순 SR 0.851 — 등록판보다 낮다). 그래서 기준은 **누적 평균**이다.
+    """
+    ix = [t for t in net_dv.index if t <= d and t in rp.index]
+    vals = []
+    for t in ix:
+        for k in se.LEG_T:
+            pv = float(rp.at[t, k])
+            if pv:
+                vals.append(abs(float(net_dv.at[t, k])) / pv * 1e8)
+    return sum(vals) / len(vals) if vals else 0.0
+
+
 def _legs(se, net_dv, rp, d: str, scale: float, prev: dict | None) -> list[dict]:
     """만기별 한 줄 — 목표·축소 후·어제·**주문**.
 
@@ -312,13 +355,27 @@ def _legs(se, net_dv, rp, d: str, scale: float, prev: dict | None) -> list[dict]
         signed = after * side
         prev_signed = float(prev["legs"][k]["signed_face"]) if prev and k in (prev.get("legs") or {}) else 0.0
         delta = signed - prev_signed
+        # ── ★무거래 밴드 [OWNER 2026-09-29] ──────────────────────────────────
+        # 기준은 **오늘까지의 평균 |목표 액면|** 이다(누적 — 미래를 안 보고, 창
+        # 길이를 고르지도 않는다). 배분기 배율은 목표와 밴드에 **같이** 곱해지므로
+        # 비율이 보존된다.
+        band = BAND_FRAC * _face_ref(se, net_dv, rp, d) * scale if d >= BAND_FROM else 0.0
+        if band > 0 and abs(delta) <= band:
+            order = 0.0                      # 밴드 안 — 안 친다
+        elif band > 0:
+            order = delta - (band if delta > 0 else -band)   # 가장자리까지만
+        else:
+            order = delta
         out.append({
             "tenor": k, "dv01": dv, "pv01": pv,
             "face": face, "faceAfter": after, "side": side,
             "signedFace": signed, "prevSigned": prev_signed,
             "delta": delta,
+            # 밴드를 지난 주문과 그 폭 — 화면이 「왜 안 치나」를 말할 수 있어야 한다.
+            "band": band, "order": order,
             # 칠 것인가 — 화면이 이 판정을 다시 하지 않게 서버가 끝낸다.
-            "trade": abs(delta) >= MIN_TICKET,
+            # 밴드가 먼저이고 최소 티켓이 그 다음이다(둘 다 넘어야 친다).
+            "trade": abs(order) >= MIN_TICKET,
         })
     return out
 
@@ -423,6 +480,11 @@ def build_sheet(*, lane: Callable[[], tuple] | None = None,
         "faceAfter": face_total * scale,
         "turnover": turnover,
         "minTicket": MIN_TICKET,
+        # ★밴드 — 화면이 「왜 안 치나」를 말할 수 있어야 한다(줄마다 `band`·`order`
+        #   가 이미 있고, 여기는 그 규칙 자체를 적는다). 켜기 전 날짜의 주문표는
+        #   `bandFrom` 이전이라 밴드가 0 이다.
+        "bandFrac": BAND_FRAC,
+        "bandFrom": BAND_FROM,
         # ── W4 — 평균회귀가 증거금을 얼마나 쓰고 있나 ──────────────────────
         "scale": scale,
         "marginNeed": face_total * scale * sm.RATE,
