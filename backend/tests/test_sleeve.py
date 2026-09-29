@@ -193,6 +193,22 @@ class TestSheet:
         assert leg["order"] == pytest.approx(-band * 2.0, rel=1e-9)
         assert abs(leg["order"]) < abs(leg["delta"]), "가장자리가 아니라 목표까지 갔다"
 
+    def test_켠_날_당일은_아직_밴드가_0이다(self, tmp_path):
+        """사전등록은 「이 날 **다음** 주문부터」다(PREREG_A §214) — `BAND_FROM`
+        **당일**은 아직 밴드가 0 이어야 한다.
+
+        경계일이 시험에 안 잡혀 있어 `>=` 로 심겼고, 그래서 밴드가 하루 일찍 섰다
+        (2026-09-30 발견). 시험은 09-30(다음 날)과 09-18(먼 과거)만 잡고 경계일
+        자체를 비워 뒀다 — ★**경계는 양쪽이 아니라 그 칸을 찍어야 잡힌다**.
+        """
+        day = sleeve.BAND_FROM
+        lane = _lane(dv={day: {"3Y": -1_422_000.0, "10Y": -1_300_000.0}},
+                     pv={day: {"3Y": 28_205.0, "10Y": 81_858.0}}, asof=day)
+        out = sleeve.build_sheet(lane=lane, ledger_path=_ledger(tmp_path, []))
+        for l in out["legs"]:
+            assert l["band"] == 0.0, "켠 날 당일인데 밴드가 섰다 — 하루 일찍이다"
+            assert l["order"] == pytest.approx(l["delta"], rel=1e-12)
+
     def test_켠_날_전에는_밴드가_0이다(self, tmp_path):
         """과거 주문표는 **안 바뀐다** — 원장이 밴드 없는 규칙으로 남아 있다."""
         out = sleeve.build_sheet(lane=_lane(asof="2026-09-18"),

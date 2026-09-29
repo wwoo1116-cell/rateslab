@@ -359,7 +359,10 @@ def _legs(se, net_dv, rp, d: str, scale: float, prev: dict | None) -> list[dict]
         # 기준은 **오늘까지의 평균 |목표 액면|** 이다(누적 — 미래를 안 보고, 창
         # 길이를 고르지도 않는다). 배분기 배율은 목표와 밴드에 **같이** 곱해지므로
         # 비율이 보존된다.
-        band = BAND_FRAC * _face_ref(se, net_dv, rp, d) * scale if d >= BAND_FROM else 0.0
+        # ⚠부등호는 **`>`** 다 — 사전등록이 「이 날 **다음** 주문부터」라고 말했고
+        # (PREREG_A §214), `>=` 로 심으면 밴드가 켠 날 당일에 하루 일찍 선다
+        # (2026-09-30 수리 · `test_켠_날_당일은_아직_밴드가_0이다`).
+        band = BAND_FRAC * _face_ref(se, net_dv, rp, d) * scale if d > BAND_FROM else 0.0
         if band > 0 and abs(delta) <= band:
             order = 0.0                      # 밴드 안 — 안 친다
         elif band > 0:
