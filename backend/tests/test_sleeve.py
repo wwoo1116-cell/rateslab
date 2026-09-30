@@ -13,6 +13,7 @@
 레인을 주입해서 돌린다(`lane=`) — 실제 배관은 44초이고 리포 밖 배분기를 읽는다.
 """
 import json
+import sys
 
 import pytest
 
@@ -536,4 +537,105 @@ class TestHeldNotTarget:
         assert leg["order"] == 0.0
         # 페이로드가 **오늘 끝날 보유**를 말해 준다 — 원장이 그것을 적는다.
         assert leg["heldAfter"] == pytest.approx(held + leg["order"], rel=1e-12)
+
+
+# ── ★화면 ↔ 원장 대조 [2026-09-30] ──────────────────────────────────────────
+# 이 리포엔 이미 같은 발상의 이름이 있다 — `test_static_agreement.py`(정적 ↔ 라이브).
+# 이것은 그 둘째 쌍이다: **화면이 보여 주는 주문과 원장이 적는 주문**.
+#
+# 왜 필요한가: 밴드를 `7188e117` 로 켰을 때 **화면의 표에만** 들어갔고 원장을 쓰는
+# `scripts/sleeve_daily.py` 는 몰랐다(`delta` 전액을 적었다). 그 상태로 원장을 켰으면
+# 기록과 화면이 다른 말을 했다. 같은 병이 이 리포에 최소 셋이다 — `_mr_cache_key` 가
+# 다섯 곳에 흩어진 것, 09-29 의 「합계 줄만 옛 자를 쓰던 것」, 그리고 이것.
+#
+# ★**둘을 각자의 입구로 돌린다.** 오늘은 같은 함수를 쓰지만, 누가 한쪽에서 산술을
+# 다시 유도하면(그게 세 번 다 일어난 일이다) 이 시험이 그 순간 빨개진다.
+class TestScreenLedgerAgreement:
+    """같은 자료일에 두 표면이 **한 원까지** 같은 말을 하는가."""
+
+    #: 원장 행의 이름 ↔ 페이로드의 이름. 이 짝이 곧 **계약**이다 — 어느 쪽이 키를
+    #: 바꾸면 여기서 드러난다(조용히 `None` 을 비교하지 않게 존재도 같이 잰다).
+    PAIRS = (
+        ("dv01", "dv01"), ("pv01", "pv01"), ("face", "face"),
+        ("face_after", "faceAfter"), ("side", "side"),
+        ("target_signed", "signedFace"),
+        ("delta", "delta"), ("band", "band"), ("order", "order"),
+        ("signed_face", "heldAfter"),
+    )
+
+    def _daily_row(self, monkeypatch, lane, ledger_path):
+        """`sleeve_daily` 를 주입 레인으로 돌려 **원장에 적힌 행**을 돌려준다."""
+        from scripts import sleeve_daily as sd
+
+        se, sm = lane()
+        monkeypatch.setattr(sd, "se", se)
+        monkeypatch.setattr(sd, "sm", sm)
+        monkeypatch.setattr(sd, "LEDGER", ledger_path)
+        monkeypatch.setattr(sys, "argv", ["sleeve_daily"])
+        assert sd.main() == 0
+        return json.loads(ledger_path.read_text(encoding="utf-8"))["rows"][-1]
+
+    def _both(self, monkeypatch, tmp_path, lane, prev_rows):
+        """같은 «어제» 를 보게 세운 뒤 둘을 돌린다.
+
+        순서가 중요하다 — `sleeve_daily` 는 행을 **덧붙이므로**, 화면 쪽을 먼저 읽어야
+        둘이 같은 `prev` 를 본다.
+        """
+        led = _ledger(tmp_path, list(prev_rows))
+        sheet = sleeve.build_sheet(lane=lane, ledger_path=led)
+        assert sheet.get("available") is True, sheet.get("why")
+        row = self._daily_row(monkeypatch, lane, led)
+        return sheet, row
+
+    @staticmethod
+    def _prev(**held):
+        """실제 원장 행의 꼴 — `date`·`scale` 까지 있다.
+
+        ⚠**같은 파일을 읽는 두 쪽이 요구하는 칸이 다르다**: 화면(`_legs`)은
+        `legs[k].signed_face` 하나로 족한데 `sleeve_daily` 는 `date`·`scale` 도
+        찍는다. 얇은 픽스처로 이 시험을 세우다 `KeyError: 'scale'` 로 밟았다 —
+        제품 결함은 아니지만, 원장 행의 꼴을 **여기서 한 번** 정해 두고 쓴다.
+        """
+        return {"date": "2026-09-26", "scale": 1.0, "scored": True,
+                "legs": {k: {"signed_face": v} for k, v in held.items()}}
+
+    @pytest.mark.parametrize("why, prev_rows", [
+        ("어제가 없다 — 목표 전체가 주문이 된다", []),
+        ("어제 보유가 밴드 밖에 있다 — 가장자리까지만 간다",
+         "밖"),
+        ("어제 보유가 밴드 안에 있다 — 한 다리는 안 친다",
+         "안"),
+    ])
+    def test_두_표면이_같은_주문을_말한다(self, monkeypatch, tmp_path, why, prev_rows):
+        if prev_rows == "밖":
+            prev_rows = [self._prev(**{"3Y": -9.0e9, "10Y": 0.0})]
+        elif prev_rows == "안":
+            prev_rows = [self._prev(**{"3Y": -4.7e9, "10Y": -1.05e9})]
+        sheet, row = self._both(monkeypatch, tmp_path, _lane_band(), prev_rows)
+        assert row["date"] == sheet["asof"], why
+        assert row["scale"] == pytest.approx(sheet["scale"], rel=1e-12), why
+        legs = {l["tenor"]: l for l in sheet["legs"]}
+        assert set(row["legs"]) == set(legs), f"{why} — 다리 목록이 다르다"
+        for k, lrow in row["legs"].items():
+            for ledger_key, payload_key in self.PAIRS:
+                assert ledger_key in lrow, f"{why} — 원장에 {ledger_key} 가 없다"
+                assert payload_key in legs[k], f"{why} — 페이로드에 {payload_key} 가 없다"
+                assert lrow[ledger_key] == pytest.approx(legs[k][payload_key], rel=1e-12), (
+                    f"{why} — {k} 의 {ledger_key} ≠ {payload_key}: "
+                    f"{lrow[ledger_key]:,.0f} 대 {legs[k][payload_key]:,.0f}")
+
+    def test_밴드_켜기_전_날에도_같다(self, monkeypatch, tmp_path):
+        """밴드가 0 인 날에도 대조가 서야 한다 — 그 구간이 대부분의 과거다."""
+        sheet, row = self._both(monkeypatch, tmp_path, _lane(), [])
+        legs = {l["tenor"]: l for l in sheet["legs"]}
+        for k, lrow in row["legs"].items():
+            assert lrow["band"] == 0.0 and legs[k]["band"] == 0.0
+            assert lrow["order"] == pytest.approx(legs[k]["delta"], rel=1e-12)
+            assert lrow["order"] == pytest.approx(legs[k]["order"], rel=1e-12)
+
+    def test_최소_티켓도_한_곳에서_온다(self):
+        """`MIN_TICKET` 이 두 곳에 박혀 있으면 한쪽만 바뀐다 — 같은 객체여야 한다."""
+        from scripts import sleeve_daily as sd
+
+        assert sd.MIN_TICKET is sleeve.MIN_TICKET
 

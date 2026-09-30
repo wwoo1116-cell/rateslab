@@ -38,11 +38,15 @@ from scripts import sleeve_monitor as sm                        # noqa: E402
 #: ★밴드 산술은 **화면의 표와 같은 함수**를 쓴다 [2026-09-30]. 종전에 이 스크립트는
 #:  밴드를 아예 몰랐고 `delta` 전액을 원장에 적었다 — 화면은 깎은 주문을 보여 주는데
 #:  기록은 안 깎인 것을 적는 상태였다(같은 수를 두 곳이 유도한 그 병).
+from app import sleeve as sleeve_mod                             # noqa: E402
 from app.sleeve import BAND_FRAC, BAND_FROM, band_width, clip_to_band  # noqa: E402
 
 LEDGER = BACKEND / "output" / "sleeve_daily_ledger.json"
 RATE = sm.RATE
-MIN_TICKET = 1e8        # 1억 미만 차이는 안 친다 — 호가 단위와 수수료를 못 이긴다
+#: 1억 미만 주문은 안 친다 — 호가 단위와 수수료를 못 이긴다.
+#: ★**여기서 다시 적지 않는다** [2026-09-30]. 같은 수를 두 곳이 들면 한쪽만 바뀐다
+#: (밴드가 화면에만 들어가 있던 그 병과 같은 계급). 대조 시험이 `is` 로 잰다.
+MIN_TICKET = sleeve_mod.MIN_TICKET
 
 
 def _load() -> dict:
