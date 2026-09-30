@@ -193,21 +193,29 @@ class TestSheet:
         assert leg["order"] == pytest.approx(-band * 2.0, rel=1e-9)
         assert abs(leg["order"]) < abs(leg["delta"]), "가장자리가 아니라 목표까지 갔다"
 
-    def test_켠_날_당일은_아직_밴드가_0이다(self, tmp_path):
-        """사전등록은 「이 날 **다음** 주문부터」다(PREREG_A §214) — `BAND_FROM`
-        **당일**은 아직 밴드가 0 이어야 한다.
+    def test_자료일이_켠_날이면_밴드가_이미_선다(self, tmp_path):
+        """`asof == BAND_FROM` 인 표는 **켠 날 다음 영업일에 치는 주문**이므로
+        밴드가 이미 서 있어야 한다.
 
-        경계일이 시험에 안 잡혀 있어 `>=` 로 심겼고, 그래서 밴드가 하루 일찍 섰다
-        (2026-09-30 발견). 시험은 09-30(다음 날)과 09-18(먼 과거)만 잡고 경계일
-        자체를 비워 뒀다 — ★**경계는 양쪽이 아니라 그 칸을 찍어야 잡힌다**.
+        ★이 칸이 시험에 없어서 2026-09-30 에 부등호를 `>` 로 바꿨다가 되돌렸다.
+        사전등록·주석·인계문이 「이 날 **다음** 주문부터」라고 말하는데 코드는
+        `d >= BAND_FROM` 이라, 문서 셋만 읽고 **코드가 틀렸다고 판단했다**. 틀린
+        것은 내 읽기였다 — `d` 는 거래일이 아니라 **자료일**(`asof_for()` 의 마지막
+        자료 날짜 = 전영업일)이고, 그래서 `d == BAND_FROM` 인 표가 곧 「다음 주문」이다.
+
+        ★교훈: **경계를 찍을 때 그 축이 무슨 날인지 먼저 재야 한다.** 부등호만 보고
+        고치면 하루가 밀리고, 그 하루는 산 표에서 「깎이지 않은 재조정 전액」으로
+        나타난다(실측 2026-09-30: 3Y `band=0 · order=−18.8억`).
         """
-        day = sleeve.BAND_FROM
-        lane = _lane(dv={day: {"3Y": -1_422_000.0, "10Y": -1_300_000.0}},
-                     pv={day: {"3Y": 28_205.0, "10Y": 81_858.0}}, asof=day)
+        lane = _lane(dv={sleeve.BAND_FROM: {"3Y": -1_422_000.0, "10Y": -1_300_000.0}},
+                     pv={sleeve.BAND_FROM: {"3Y": 28_205.0, "10Y": 81_858.0}},
+                     asof=sleeve.BAND_FROM)
         out = sleeve.build_sheet(lane=lane, ledger_path=_ledger(tmp_path, []))
+        assert out["asof"] == sleeve.BAND_FROM, "전제가 깨졌다 — 표의 자료일이 켠 날이 아니다"
         for l in out["legs"]:
-            assert l["band"] == 0.0, "켠 날 당일인데 밴드가 섰다 — 하루 일찍이다"
-            assert l["order"] == pytest.approx(l["delta"], rel=1e-12)
+            assert l["band"] > 0, (
+                "자료일이 켠 날인 표는 다음 영업일에 치는 주문이다 — 밴드가 서야 한다"
+            )
 
     def test_켠_날_전에는_밴드가_0이다(self, tmp_path):
         """과거 주문표는 **안 바뀐다** — 원장이 밴드 없는 규칙으로 남아 있다."""
