@@ -345,6 +345,35 @@ def _face_ref(se, net_dv, rp, d: str) -> float:
     return sum(vals) / len(vals) if vals else 0.0
 
 
+def band_width(se, net_dv, rp, d: str, scale: float) -> float:
+    """그날의 무거래 밴드 폭 — **켠 날 이후**에만 선다(0 이면 밴드 없음).
+
+    ★이 함수가 있는 이유 [2026-09-30]: 밴드가 화면의 표(`_legs`)에만 있었고 **원장을
+    쓰는 `scripts/sleeve_daily.py` 에는 없었다**. 그대로 원장을 켜면 기록이 화면과
+    다른 말을 한다(원장은 `delta` 전액을 적는다). 같은 수를 두 곳이 유도하면 한쪽만
+    고치게 된다 — 그래서 **한 곳**이다.
+
+    부등호는 `>=` 다: `d` 는 거래일이 아니라 **자료일(전영업일)** 이므로
+    `d == BAND_FROM` 인 표가 곧 「켠 날 다음 영업일에 치는 주문」이다(상수 주석).
+    """
+    if d < BAND_FROM:
+        return 0.0
+    return BAND_FRAC * _face_ref(se, net_dv, rp, d) * scale
+
+
+def clip_to_band(delta: float, band: float) -> float:
+    """무행동 영역 + 경계 반사 — 밴드 안이면 **0**, 넘으면 **가장자리까지만**.
+
+    비례비용 아래 최적 정책의 꼴이다(사전등록 §3 · Gârleanu–Pedersen). 경계 **자체**는
+    안 친다(`abs(delta) == band` → 0) — 거기서 치면 폭이 0 인 밴드와 같아진다.
+    """
+    if band <= 0:
+        return delta
+    if abs(delta) <= band:
+        return 0.0
+    return delta - (band if delta > 0 else -band)
+
+
 def _legs(se, net_dv, rp, d: str, scale: float, prev: dict | None) -> list[dict]:
     """만기별 한 줄 — 목표·축소 후·어제·**주문**.
 
@@ -362,23 +391,10 @@ def _legs(se, net_dv, rp, d: str, scale: float, prev: dict | None) -> list[dict]
         prev_signed = float(prev["legs"][k]["signed_face"]) if prev and k in (prev.get("legs") or {}) else 0.0
         delta = signed - prev_signed
         # ── ★무거래 밴드 [OWNER 2026-09-29] ──────────────────────────────────
-        # 기준은 **오늘까지의 평균 |목표 액면|** 이다(누적 — 미래를 안 보고, 창
-        # 길이를 고르지도 않는다). 배분기 배율은 목표와 밴드에 **같이** 곱해지므로
-        # 비율이 보존된다.
-        # ⚠부등호는 **`>=`** 다. `d` 는 **자료일(전영업일)** 이고 거래일이 아니다 —
-        # `asof_for()` 가 주는 마지막 자료 날짜다(실측 2026-09-30: 표의 `asof` 가
-        # 09-29). 그래서 `d == BAND_FROM` 인 표가 곧 **켠 날 다음 영업일에 치는
-        # 주문**이고, 사전등록의 「이 날 다음 주문부터」가 정확히 이 부등호다.
-        # ★2026-09-30 에 이것을 `>` 로 바꿨다가 되돌렸다 — 문서 셋이 「다음
-        # 주문부터」라고 말하는 것만 보고 `d` 를 거래일로 읽었다. 산 표를 재 보니
-        # 그날 3Y 가 `band=0 · order=−18.8억`(깎이지 않은 재조정 전액)이었다.
-        band = BAND_FRAC * _face_ref(se, net_dv, rp, d) * scale if d >= BAND_FROM else 0.0
-        if band > 0 and abs(delta) <= band:
-            order = 0.0                      # 밴드 안 — 안 친다
-        elif band > 0:
-            order = delta - (band if delta > 0 else -band)   # 가장자리까지만
-        else:
-            order = delta
+        # 산술은 `band_width`·`clip_to_band` 에 있다 — **원장을 쓰는 쪽과 같은
+        # 함수**여야 한다(그 사정은 그 함수 머리에).
+        band = band_width(se, net_dv, rp, d, scale)
+        order = clip_to_band(delta, band)
         out.append({
             "tenor": k, "dv01": dv, "pv01": pv,
             "face": face, "faceAfter": after, "side": side,
@@ -386,6 +402,11 @@ def _legs(se, net_dv, rp, d: str, scale: float, prev: dict | None) -> list[dict]
             "delta": delta,
             # 밴드를 지난 주문과 그 폭 — 화면이 「왜 안 치나」를 말할 수 있어야 한다.
             "band": band, "order": order,
+            # ★**오늘 끝날 보유** = 어제 보유 + 주문. 원장이 적어야 하는 것이 이것이고
+            # (목표가 아니다), 내일의 「어제」가 이 값이다. 밴드가 없던 동안은 목표와
+            # 같았으므로 구별이 안 보였다 — 밴드가 서면 안 친 만큼 목표에 못 미치고,
+            # 목표를 적으면 그 오차가 매일 누적된다 [2026-09-30].
+            "heldAfter": prev_signed + order,
             # 칠 것인가 — 화면이 이 판정을 다시 하지 않게 서버가 끝낸다.
             # 밴드가 먼저이고 최소 티켓이 그 다음이다(둘 다 넘어야 친다).
             "trade": abs(order) >= MIN_TICKET,

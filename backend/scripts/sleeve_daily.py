@@ -35,6 +35,11 @@ sys.path.insert(0, str(BACKEND))
 from scripts import sleeve_execution as se                      # noqa: E402
 from scripts import sleeve_monitor as sm                        # noqa: E402
 
+#: ★밴드 산술은 **화면의 표와 같은 함수**를 쓴다 [2026-09-30]. 종전에 이 스크립트는
+#:  밴드를 아예 몰랐고 `delta` 전액을 원장에 적었다 — 화면은 깎은 주문을 보여 주는데
+#:  기록은 안 깎인 것을 적는 상태였다(같은 수를 두 곳이 유도한 그 병).
+from app.sleeve import BAND_FRAC, BAND_FROM, band_width, clip_to_band  # noqa: E402
+
 LEDGER = BACKEND / "output" / "sleeve_daily_ledger.json"
 RATE = sm.RATE
 MIN_TICKET = 1e8        # 1억 미만 차이는 안 친다 — 호가 단위와 수수료를 못 이긴다
@@ -83,24 +88,36 @@ def main() -> int:
         print("  직전 기록 없음 — 오늘이 첫 날이다. 목표 전체가 주문이 된다.")
 
     print()
-    print(f"  {'만기':5s} {'순 DV01':>10s} {'목표 액면':>11s} {'축소 후':>11s} {'방향':>6s} {'어제':>11s} {'**주문**':>13s}")
+    band = band_width(se, net_dv, rp, d, scale)
+    print(f"  {'만기':5s} {'순 DV01':>10s} {'목표 액면':>11s} {'축소 후':>11s} {'방향':>6s} {'어제 보유':>11s} {'차이':>11s} {'**주문**':>13s}")
     rows = {}
     order_total = 0.0
     for k in se.LEG_T:
         t = tgt[k]
         after = t["face"] * scale
         signed = after * t["side"]
+        #: ★어제 값은 **보유**다(목표가 아니다) — 밴드가 서면 둘이 갈린다.
         prev_signed = prev["legs"][k]["signed_face"] if prev else 0.0
         delta = signed - prev_signed
-        order_total += abs(delta)
+        #: ★밴드 → 그 다음이 최소 티켓. 순서가 화면의 표와 같아야 한다.
+        order = clip_to_band(delta, band)
+        held = prev_signed + order
+        order_total += abs(order)
         side = "리시브" if t["side"] > 0 else ("페이" if t["side"] < 0 else "없음")
-        act = "—" if abs(delta) < MIN_TICKET else (f"페이 {abs(delta)/1e8:,.1f}억" if delta < 0 else f"리시브 {abs(delta)/1e8:,.1f}억")
+        if abs(order) < MIN_TICKET:
+            act = "—"
+        else:
+            act = (f"페이 {abs(order)/1e8:,.1f}억" if order < 0 else f"리시브 {abs(order)/1e8:,.1f}억")
         print(f"  {k:5s} {t['dv01']/1e4:9,.1f}만 {t['face']/1e8:10,.1f}억 {after/1e8:10,.1f}억 {side:>6s} "
-              f"{prev_signed/1e8:10,.1f}억 {act:>13s}")
+              f"{prev_signed/1e8:10,.1f}억 {delta/1e8:10,.1f}억 {act:>13s}")
         rows[k] = {"dv01": t["dv01"], "pv01": t["pv01"], "face": t["face"],
-                   "face_after": after, "side": t["side"], "signed_face": signed, "delta": delta}
+                   "face_after": after, "side": t["side"],
+                   #: ★`signed_face` = **오늘 끝날 보유**. 내일의 「어제」가 이 값이다.
+                   #:  밴드가 없던 동안은 목표와 같았으므로 목표를 적어도 맞았다.
+                   "signed_face": held, "target_signed": signed,
+                   "delta": delta, "band": band, "order": order}
     print(f"  {'합':5s} {'':10s} {face_total/1e8:10,.1f}억 {face_total*scale/1e8:10,.1f}억 {'':6s} {'':11s} "
-          f"{'회전 ' + format(order_total/1e8, ',.1f') + '억':>13s}")
+          f"{'':11s} {'회전 ' + format(order_total/1e8, ',.1f') + '억':>13s}")
     print()
     src = w4["margin_source"]
     print(f"  증거금 소요 {face_total*scale*RATE/1e8:.2f}억  (평균회귀 {w4['mr_margin']/1e8:.2f}억 · 여력 {w4['headroom']/1e8:.2f}억)")
@@ -118,7 +135,13 @@ def main() -> int:
               + ("  ← **오늘 슬리브는 못 선다**" if w4["scale_no_shrink"] <= 0.0 else "")
               + f"  (위 수는 k_mr={w4['k_mr']:.3f} 축소 **가정** 위에 있다)")
     print(f"  ⚠ 부호: 계열이 −bp 라 DV01 이 양(+)이면 **리시브**다. 표의 「주문」은 어제와의 차이다.")
-    print(f"  ⚠ {MIN_TICKET/1e8:.0f}억 미만 차이는 «—» 로 두고 안 친다.")
+    print(f"  ⚠ {MIN_TICKET/1e8:.0f}억 미만 주문은 «—» 로 두고 안 친다.")
+    if band > 0:
+        print(f"  ★**무거래 밴드 {band/1e8:,.1f}억** (평균 목표 액면의 {BAND_FRAC:.2%} · {BAND_FROM} 부터) — "
+              f"차이가 이 안이면 **안 치고**, 넘으면 **가장자리까지만** 간다.")
+        print(f"     원장의 «어제» 는 목표가 아니라 **보유**다 — 안 친 만큼 목표에 못 미친 채로 적힌다.")
+    else:
+        print(f"  ⚠ 밴드는 {BAND_FROM} 자료일부터 선다 — 이 표(기준일 {d})는 아직 전액을 친다.")
     if not scored:
         print(f"  ⚠ 채점 창은 {sm.FREEZE_DATE} 다음 영업일부터다 — 오늘 기록은 연습이다.")
 

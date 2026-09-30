@@ -470,3 +470,70 @@ class TestPerfReproduces:
         got = sleeve.build_perf()
         ends = {r["days"] for r in got["rows"]}
         assert len(ends) == 1, "다리마다 창이 다르면 역산할 수 있다"
+
+
+# ── ★밴드를 한 곳에서만 만든다 [2026-09-30] ──────────────────────────────────
+# 화면의 표(`app/sleeve.py::_legs`)에는 밴드가 들어갔는데 **원장을 쓰는
+# `scripts/sleeve_daily.py` 에는 없었다** — 그대로 원장을 켜면 기록이 화면과 다른
+# 말을 한다(`delta` 전액을 적는다). 09-29 오후의 그 교훈이 또 섰다: **같은 수를 두
+# 곳이 유도하면 한쪽만 고치게 된다.**
+class TestBandIsOneFunction:
+    def test_밴드_안이면_0_가장자리면_가장자리까지(self):
+        """`clip_to_band` 하나가 그 규칙 전부다."""
+        assert sleeve.clip_to_band(50.0, 100.0) == 0.0          # 안
+        assert sleeve.clip_to_band(-50.0, 100.0) == 0.0         # 안(반대 부호)
+        assert sleeve.clip_to_band(100.0, 100.0) == 0.0         # 경계 자체는 안 친다
+        assert sleeve.clip_to_band(300.0, 100.0) == 200.0       # 가장자리까지
+        assert sleeve.clip_to_band(-300.0, 100.0) == -200.0
+        assert sleeve.clip_to_band(300.0, 0.0) == 300.0         # 밴드 없으면 그대로
+
+    def test_폭은_켠_날부터만_선다(self):
+        """`band_width` 가 `BAND_FROM` 을 본다 — 그 판단도 한 곳이다."""
+        se, _ = _lane_band()()
+        rp = se.real_pv01()
+        _p, net_dv, _m = se.sleeve_dv01_path()
+        assert sleeve.band_width(se, net_dv, rp, BAND_DAY, 1.0) > 0
+        se2, _ = _lane()()
+        rp2 = se2.real_pv01()
+        _p2, net_dv2, _m2 = se2.sleeve_dv01_path()
+        assert sleeve.band_width(se2, net_dv2, rp2, "2026-09-18", 1.0) == 0.0
+
+    def test_화면의_표가_그_두_함수를_쓴다(self, tmp_path):
+        """`_legs` 가 제 산술을 따로 들고 있으면 또 갈린다 — 페이로드의 밴드가
+        `band_width` 와 **한 원까지** 같아야 한다."""
+        se, _ = _lane_band()()
+        rp = se.real_pv01()
+        _p, net_dv, _m = se.sleeve_dv01_path()
+        want = sleeve.band_width(se, net_dv, rp, BAND_DAY, 1.0)
+        out = sleeve.build_sheet(lane=_lane_band(), ledger_path=_ledger(tmp_path, []))
+        for l in out["legs"]:
+            assert l["band"] == pytest.approx(want, rel=1e-12)
+            assert l["order"] == pytest.approx(
+                sleeve.clip_to_band(l["delta"], l["band"]), rel=1e-12)
+
+
+class TestHeldNotTarget:
+    """★원장이 적어야 하는 것은 **목표가 아니라 보유**다.
+
+    `_legs` 는 어제 값을 `prev["legs"][k]["signed_face"]` 로 읽어 **차이**를 낸다.
+    밴드가 없던 동안은 목표 = 보유였으니 목표를 적어도 맞았다. 밴드가 서면 그날
+    **안 친 만큼** 보유가 목표에 못 미치므로, 목표를 적으면 다음 날의 「어제」가
+    실제로 들고 있는 것과 달라진다 — 그 오차가 매일 누적된다.
+    """
+
+    def test_어제_값은_보유고_오늘_끝_보유를_말해_준다(self, tmp_path):
+        out0 = sleeve.build_sheet(lane=_lane_band(),
+                                  ledger_path=_ledger(tmp_path, []))
+        band = {l["tenor"]: l["band"] for l in out0["legs"]}["3Y"]
+        target = next(l for l in out0["legs"] if l["tenor"] == "3Y")["signedFace"]
+        held = target + band * 0.5                      # 어제 «보유»
+        prev = {"date": "x", "legs": {"3Y": {"signed_face": held},
+                                      "10Y": {"signed_face": 0.0}}}
+        out = sleeve.build_sheet(lane=_lane_band(),
+                                 ledger_path=_ledger(tmp_path, [prev]))
+        leg = next(l for l in out["legs"] if l["tenor"] == "3Y")
+        assert leg["prevSigned"] == pytest.approx(held, rel=1e-12)
+        assert leg["order"] == 0.0
+        # 페이로드가 **오늘 끝날 보유**를 말해 준다 — 원장이 그것을 적는다.
+        assert leg["heldAfter"] == pytest.approx(held + leg["order"], rel=1e-12)
+
