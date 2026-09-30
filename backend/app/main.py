@@ -41,11 +41,22 @@ import threading
 logging.config.dictConfig({
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {"default": {"format": "%(levelname)s %(name)s: %(message)s"}},
+    # 시각이 **맨 앞**이다 [2026-09-30]. 없던 탓에 `backend.log` 로는 500 이 언제
+    # 났는지 알 수 없었다(그 사정은 `app/logfmt.py` 머리에 적어 뒀다).
+    "formatters": {"default": {
+        "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        "datefmt": "%Y-%m-%d %H:%M:%S",
+    }},
     "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "default"}},
     "root": {"level": "INFO", "handlers": ["console"]},
     "loggers": {"irs_pricer": {"level": "DEBUG"}},
 })
+
+# uvicorn 의 접근 로그는 **자기 포매터**를 쓴다(위 dictConfig 가 못 덮는다). uvicorn
+# CLI 는 이 모듈을 임포트하기 전에 로깅을 세우므로 여기서 덮을 수 있다.
+from . import logfmt as _logfmt  # noqa: E402  (dictConfig 직후여야 한다)
+
+_logfmt.stamp_handlers()
 
 import datetime as dt
 import os
