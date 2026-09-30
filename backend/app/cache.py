@@ -23,12 +23,81 @@ import hashlib
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Callable
 
 log = logging.getLogger("sauron.cache")
 
+#: 이름바꾸기 재시도 — 읽는 쪽의 핸들은 밀리초다(아래 실측 주석).
+RENAME_TRIES = 4
+RENAME_WAIT_S = 0.05
+
 DEFAULT_CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
+
+#: 코드를 세는 자리 — 페이로드를 **만드는** 파일들.
+_CODE_ROOTS = ("app", "scripts")
+
+
+def _code_fingerprint() -> str:
+    """이 백엔드 코드의 지문 — `app/`·`scripts/` 의 모든 `.py` **내용** 해시.
+
+    ★왜 필요한가 [2026-09-30]: 열쇠가 **자료**만 보고 있었다. 그래서 산출물의
+    «의미» 를 바꾸는 코드 수정이 캐시를 무효화하지 못하고, 재기동해도 옛 페이로드가
+    그대로 나온다. 실측으로 밟았다 — 슬리브 주문표의 밴드 부등호를 바꿨는데
+    `sleeve-sheet.json` 이 그대로라 화면이 `band=0` 짜리 옛 표를 계속 냈고,
+    손으로 지워야 했다.
+
+    `SCHEMA_VERSION` 이 그 자리에 있었지만 그건 **shape** 용이고(이 파일 머리가
+    그렇게 적어 뒀다) **사람이 올려야 한다** — 값의 의미만 바뀐 경우엔 올릴 생각이
+    안 든다. 그 «생각이 안 나는» 자리를 기계로 덮는다.
+
+    **mtime 이 아니라 내용**이다. mtime 을 쓰면 체크아웃이나 `touch` 마다 전부 다시
+    굽는다. 실측 2026-09-30: 111파일 2.0MB → **14ms**, 임포트 때 한 번이라 공짜다.
+
+    **못 잡는 것**: 이 두 나무 밖(설치된 패키지, 리포 밖 배분기)의 변경은 못 본다.
+    그때는 여전히 손으로 `.cache` 를 지우거나 `SCHEMA_VERSION` 을 올려야 한다.
+    """
+    import hashlib
+
+    root = Path(__file__).resolve().parent.parent
+    h = hashlib.sha256()
+    for d in _CODE_ROOTS:
+        for f in sorted((root / d).rglob("*.py")):
+            try:
+                h.update(f.read_bytes())
+            except OSError:            # 읽다 사라진 파일은 그 사실만 남긴다
+                h.update(b"?")
+    return h.hexdigest()[:16]
+
+
+#: **한 번만** 잰다 — 도는 프로세스 안에서 코드는 안 바뀐다(다시 읽는 계기는
+#: 재기동이고, 그게 맞는 계기다).
+CODE_KEY = _code_fingerprint()
+
+
+def _why_stale(stored: object, current_hash: str) -> str:
+    """무엇이 바뀌어 캐시가 무효가 됐나 — **자료인가 코드인가**.
+
+    종전에는 어느 경우든 「source data changed」라고 적었다. 열쇠에 코드를 넣은 뒤
+    (2026-09-30) 그 문장이 **코드가 바뀐 경우엔 거짓**이 됐고, 거짓 사유는 다음 사람을
+    자료로 보낸다 — 타임스탬프를 세운 것과 같은 이유로 갈라 적는다.
+    """
+    want = _full_key(current_hash)
+    if not isinstance(stored, str) or "|code:" not in stored or "|code:" not in want:
+        return "열쇠"
+    s_data, s_code = stored.rsplit("|code:", 1)
+    w_data, w_code = want.rsplit("|code:", 1)
+    if s_data != w_data and s_code != w_code:
+        return "자료와 코드"
+    return "자료" if s_data != w_data else "코드"
+
+
+def _full_key(current_hash: str) -> str:
+    """디스크에 적히는 열쇠 = 자료 열쇠 + **코드 열쇠**. 읽기·쓰기가 같은 함수를
+    지나야 한다 — `peek()` 과 `cached()` 가 각자 만들면 하나만 고치게 된다
+    (`_mr_cache_key` 가 다섯 곳에 흩어져 있던 그 병)."""
+    return f"{current_hash}|code:{CODE_KEY}"
 
 # Bump on ANY change to a cached payload's shape (field renames included).
 # 4 = WTD/QTD dropped from every deltas/values block, and KEY_FORWARDS
@@ -196,7 +265,7 @@ def peek(
         return None
     # `cached()` 와 같은 관용 — JSON 은 맞는데 객체가 아닌 파일(`[1,2,3]`·`null`)
     # 에서 `.get` 이 터지던 자리다.
-    if not isinstance(blob, dict) or blob.get("hash") != current_hash:
+    if not isinstance(blob, dict) or blob.get("hash") != _full_key(current_hash):
         return None
     return blob.get("payload")
 
@@ -213,12 +282,11 @@ def cached(
     if f.exists():
         try:
             blob = json.loads(f.read_text(encoding="utf-8"))
-            if blob.get("hash") == current_hash:
+            if blob.get("hash") == _full_key(current_hash):
                 log.info("[cache] %s: loaded from disk (hash match)", name)
                 return blob["payload"]
-            log.warning(
-                "[cache] %s: STALE — source data changed, recomputing", name
-            )
+            log.warning("[cache] %s: STALE — %s 가 바뀌었어요, 다시 굽습니다",
+                        name, _why_stale(blob.get("hash"), current_hash))
         # AttributeError/TypeError are in here for a reason: a file holding
         # valid JSON that is not an object (`[1,2,3]`, `null`) has no `.get`,
         # and that used to escape as a crash on startup rather than a
@@ -235,9 +303,34 @@ def cached(
     # only after paying the full recompute. os.replace is atomic on both
     # POSIX and Windows, so a killed process leaves either the old file or
     # the new one, never a torn one.
+    #
+    # ⚠**원자성과 «항상 성공» 은 다른 말이다** [2026-09-30]. POSIX 의 rename 은
+    # 대상에 열린 핸들이 있어도 성공하지만 **윈도우는 실패한다**(`WinError 32`).
+    # 이 리포는 테스트 프로세스와 산 :8200 이 같은 `.cache` 를 쓰므로 실제로 났고,
+    # 그 예외가 라우트까지 올라가 `/api/mr/board`·`/api/mr/history` 가 **500** 을
+    # 냈다(실측 로그 여섯 건 · `mr-w60-k1.5/2.0/2.5.json`).
+    #
+    # 캐시에 못 쓴 것은 사고가 아니다 — **값은 이미 맞다**. 그래서 몇 번 다시 해
+    # 보고(읽는 쪽이 핸들을 쥐는 시간은 밀리초다), 그래도 안 되면 시끄럽게 적고
+    # 값을 돌려준다. 다음 요청이 다시 계산하는 대가만 치른다.
     tmp = f.with_suffix(".json.tmp")
     tmp.write_text(
-        json.dumps({"hash": current_hash, "payload": payload}), encoding="utf-8"
+        json.dumps({"hash": _full_key(current_hash), "payload": payload}),
+        encoding="utf-8",
     )
-    os.replace(tmp, f)
+    for attempt in range(RENAME_TRIES):
+        try:
+            os.replace(tmp, f)
+            return payload
+        except PermissionError as exc:
+            if attempt + 1 == RENAME_TRIES:
+                log.warning(
+                    "[cache] %s: 캐시에 못 썼어요 — 값은 맞습니다(%s). "
+                    "다른 프로세스가 그 파일을 쥐고 있어요.", name, exc)
+                break
+            time.sleep(RENAME_WAIT_S)
+    try:
+        tmp.unlink(missing_ok=True)      # 임시 파일을 남기지 않는다
+    except OSError:
+        pass
     return payload
