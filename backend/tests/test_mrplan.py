@@ -534,7 +534,11 @@ class TestPeek:
         cache_mod.cached("k", "h", compute, cache_dir=tmp_path)
         assert len(calls) == 1
         blob = json.loads((tmp_path / "k.json").read_text(encoding="utf-8"))
-        assert blob["hash"] == "h"
+        # 디스크에 적히는 열쇠는 **자료 열쇠 + 코드 열쇠**다 [2026-09-30] — 코드가
+        # 바뀌면 다시 구워야 하는데 종전 열쇠는 자료만 봐서 옛 페이로드가 재기동을
+        # 넘어 계속 서빙됐다(`app/cache.py::_code_fingerprint` 머리에 실측).
+        # 여기서 꼴을 손으로 다시 적지 않는다 — 그 함수를 읽는다.
+        assert blob["hash"] == cache_mod._full_key("h")
 
 
 # ── ⑥ 배관 — 배경 빌더와 라우트 [감사 2026-09-21] ────────────────────────────
