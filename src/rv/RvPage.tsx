@@ -82,6 +82,7 @@ import {
   type RvWindow,
 } from './api';
 import { bp1, sig } from './fmt';
+import { snapCreditBucket } from './pick';
 import { RankingTable } from './RankingTable';
 import { RvScatter } from './RvScatter';
 import { ScoreHeat } from './ScoreHeat';
@@ -103,6 +104,17 @@ const SET_LABEL_W = 88;
 const SET_FIELD_W = 76;
 /** 경로 이름("경로 1") 칸 — 공유 캡션 줄의 왼쪽 빈 자리와 같은 폭. */
 const SET_PATH_W = 56;
+
+/** 종목 지정 Select 의 "미지정" 옵션 값 — 섹터 id 와 안 겹치는 파수꾼.
+ * (상태에서는 '' 이 미지정이지만, 빈 문자열 옵션 값을 피해 Select 를 단순하게
+ * 둔다.) */
+const PICK_NONE = '__none__';
+
+/** 잔존(년) 입력 칸 폭 — SET_FIELD_W(76, 'bp' 짧은 값용)로는 "30.00년"이 'year'
+ * 접미 뒤로 잘린다(실측: "2.47년"도 끝자리가 눌렸다). 13px legal 에서
+ * "30.00"(~36px) + "년"(~13px) + 좌우 패딩(32) + 편집여유 ≈ 95 → 100 으로 둔다
+ * [말줄임·겹침 금지 규칙]. */
+const PICK_TTM_W = 100;
 
 /** 설정 패널의 한 그룹 — 제목 + 줄들. 그룹 사이에만 Divider 를 긋는다. */
 function SetGroup({ title, children }: { title: string; children: React.ReactNode }) {
@@ -452,6 +464,14 @@ export function RvPage() {
      [OWNER — "중요한 정보를 앞으로, 세부는 인터랙션 이후에"]. */
   const [lanesOpen, setLanesOpen] = useState(false);
 
+  /** 종목 지정 — 사려는 유통물의 섹터·잔존으로 「지금 매력도(Score)」를 조회한다
+   * [OWNER 2026-10-01 — "설정 옆에 조건 넣으면 매력도"]. 매핑 규칙은 `pick.ts`
+   * 한 곳에 있다(장기 kbond-live 가 같은 규칙을 재사용). 조작값이지 "어디를
+   * 보는가"가 아니라 URL 에 안 싣는다 — hMonths·mpcOpen 과 같은 살림(useState).
+   * 섹터 '' = 미지정, 잔존 0 = 미입력(둘 다 차야 카드가 선다). */
+  const [pickSector, setPickSector] = useState('');
+  const [pickTtm, setPickTtm] = useState(0);
+
   const load = useCallback(() => {
     setError(undefined);
     setUnavailable(false);
@@ -502,6 +522,36 @@ export function RvPage() {
   const top = useMemo(
     () => data?.credit.items.find((i) => i.rank === 1) ?? null,
     [data],
+  );
+
+  /* 종목 지정의 섹터 선택지 — **credit.items 에서** 뽑는다(data.sectors 는 A/B
+     레인용이라 Score 가 없는 섹터도 섞인다). 중복은 첫 등장만, 라벨은 그대로. */
+  const pickSectors = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const it of data?.credit.items ?? []) {
+      if (!seen.has(it.sector)) seen.set(it.sector, it.sectorLabel);
+    }
+    return Array.from(seen, ([id, label]) => ({ id, label }));
+  }, [data]);
+  const pickOptions = useMemo(
+    () => [
+      { value: PICK_NONE, label: '종목 지정…' },
+      ...pickSectors.map((s) => ({ value: s.id, label: s.label })),
+    ],
+    [pickSectors],
+  );
+  /* 폭은 옵션 **라벨 집합**에서 잰다(fit.tsx 규율) — ctlFont 는 앱 전역 탐지라
+     탐침을 또 렌더할 필요가 없다(fontProbe 는 상세창 하나로 족하다). */
+  const pickSectorW = fitWidth(
+    'select',
+    useMemo(() => pickOptions.map((o) => o.label), [pickOptions]),
+    ctlFont,
+    160,
+  );
+  /* 매핑은 `pick.ts` 한 곳 — 섹터 일치 + 잔존 최근접 테너로 스냅, 상한 밖은 사유. */
+  const pick = useMemo(
+    () => (data ? snapCreditBucket(data.credit.items, pickSector, pickTtm, data.maxYears) : null),
+    [data, pickSector, pickTtm],
   );
 
   /* 실패·대기는 공용 상태 컴포넌트로 — 손 문장 셋이 리포의 ErrorState(재시도
@@ -577,7 +627,37 @@ export function RvPage() {
               갱신 중…
             </TextLegal>
           ) : null}
-          <Box style={{ marginLeft: 'auto' }}>
+          {/* ── 종목 지정 → 지금 매력도 조회 + 설정 [OWNER 2026-10-01] ─────────
+              사려는 유통물의 섹터·잔존을 넣으면 그 버킷의 Score 를 히어로 옆에
+              크게 띄운다(매핑 규칙은 `pick.ts` 한 곳). marginLeft:auto 로 바의
+              오른끝에 붙는다 — 종전 설정 버튼의 그 자리다. */}
+          <HStack gap={1} alignItems="center" flexWrap="wrap" style={{ marginLeft: 'auto' }}>
+            <Text font="label2" as="span" color="fgMuted" noWrap>
+              매력도 조회
+            </Text>
+            <Box width={pickSectorW}>
+              {/* font legal(13) — 컨트롤 값 13px 규칙(popup.ts). */}
+              <Select
+                size="s"
+                font="legal"
+                styles={DROPDOWN_STYLES}
+                accessibilityLabel="종목 지정 — 섹터"
+                value={pickSector || PICK_NONE}
+                onChange={(v) => setPickSector(v && v !== PICK_NONE ? v : '')}
+                options={pickOptions}
+              />
+            </Box>
+            <NumField
+              label="종목 지정 — 잔존(년)"
+              value={pickTtm}
+              suffix="년"
+              width={PICK_TTM_W}
+              min={0}
+              /* 0 은 "미입력"으로 빈칸. 상한은 50 — 손이 미끄러진 2500 을 막되
+                 3년 밖 입력은 그대로 받아 사유를 띄운다(화면 상한은 3년). */
+              format={(v) => (v > 0 ? String(v) : '')}
+              onCommit={(v) => setPickTtm(Math.max(0, Math.min(50, v)))}
+            />
             <button
               type="button"
               className="sr-pillbtn"
@@ -587,7 +667,7 @@ export function RvPage() {
             >
               설정
             </button>
-          </Box>
+          </HStack>
         </HStack>
         {asofSplit ? (
           /* 차단 사항이라 이 문구만은 sticky 에 남는다 — 갈라진 날의 숫자를
@@ -809,33 +889,85 @@ export function RvPage() {
           TextDisplay3 로 선다 [OWNER 2026-08-19 — "한 줄인데 눈에 안 띔"].
           메타(Score·버퍼·순위변동)는 히어로 옆 뮤트 — Main 히어로의 변화
           배지 자리다. */}
-      {top ? (
-        <VStack flexShrink={0} gap={0} width="100%">
-          <TextLabel1 as="span" color="fgMuted" noWrap>
-            지금 가장 매력적이에요
-          </TextLabel1>
-          <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
-            <button
-              type="button"
-              className="sr-rv-linkbtn"
-              aria-label={`${top.sectorLabel} ${top.tenor} 이력 단면 열기`}
-              onClick={() => setDrill(top)}
-            >
-              <TextDisplay3 as="span" noWrap>
-                {top.sectorLabel} {top.tenor}
-              </TextDisplay3>
-            </button>
-            <TextBody as="span" color="fgMuted" tabularNumbers noWrap>
-              Score {top.score?.toFixed(0)} · 한 달 {sig(top.trMonthBp)}bp
-              {top.pctLastWeek != null ? ` · 지난주 ${top.pctLastWeek.toFixed(0)}%` : ''}
-              {top.rankDelta != null
-                ? top.rankDelta === 0
-                  ? ' · 순위변동 없음'
-                  : ` · ${top.rankDelta > 0 ? '▲' : '▼'}${Math.abs(top.rankDelta)}`
-                : ''}
-            </TextBody>
-          </HStack>
-        </VStack>
+      {top || pick ? (
+        /* 히어로(서버 랭크 1위)와 **지정 종목 조회**가 나란히 선다 — 왼쪽은 늘
+           서고, 오른쪽은 바에서 섹터·잔존을 넣었을 때만 선다. 좁아지면 flexWrap
+           으로 접힌다 [OWNER 2026-10-01]. */
+        <HStack gap={3} alignItems="flex-start" flexWrap="wrap" width="100%" flexShrink={0}>
+          {top ? (
+            <VStack flexShrink={0} gap={0}>
+              <TextLabel1 as="span" color="fgMuted" noWrap>
+                지금 가장 매력적이에요
+              </TextLabel1>
+              <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
+                <button
+                  type="button"
+                  className="sr-rv-linkbtn"
+                  aria-label={`${top.sectorLabel} ${top.tenor} 이력 단면 열기`}
+                  onClick={() => setDrill(top)}
+                >
+                  <TextDisplay3 as="span" noWrap>
+                    {top.sectorLabel} {top.tenor}
+                  </TextDisplay3>
+                </button>
+                <TextBody as="span" color="fgMuted" tabularNumbers noWrap>
+                  Score {top.score?.toFixed(0)} · 한 달 {sig(top.trMonthBp)}bp
+                  {top.pctLastWeek != null ? ` · 지난주 ${top.pctLastWeek.toFixed(0)}%` : ''}
+                  {top.rankDelta != null
+                    ? top.rankDelta === 0
+                      ? ' · 순위변동 없음'
+                      : ` · ${top.rankDelta > 0 ? '▲' : '▼'}${Math.abs(top.rankDelta)}`
+                    : ''}
+                </TextBody>
+              </HStack>
+            </VStack>
+          ) : null}
+          {pick ? (
+            /* ★타이포는 **Text font=** 형(CLAUDE.md 규칙 5 — 새 코드는 shorthand
+               컴포넌트를 안 늘린다). 왼쪽 히어로가 아직 shorthand 라 보기엔
+               같지만 렌더는 동일하다. */
+            <VStack flexShrink={0} gap={0}>
+              <Text font="label1" as="span" color="fgMuted" noWrap>
+                지정 종목 — 지금 매력도
+              </Text>
+              {pick.kind === 'hit' ? (
+                <>
+                  <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
+                    <button
+                      type="button"
+                      className="sr-rv-linkbtn"
+                      aria-label={`${pick.item.sectorLabel} ${pick.item.tenor} 이력 단면 열기`}
+                      onClick={() => setDrill(pick.item)}
+                    >
+                      <Text font="display3" as="span" noWrap>
+                        {pick.item.sectorLabel} {pick.item.tenor}
+                      </Text>
+                    </button>
+                    <Text font="body" as="span" color="fgMuted" tabularNumbers noWrap>
+                      {pick.item.score != null ? `Score ${pick.item.score.toFixed(0)}` : 'Score 없음'}
+                      {pick.item.rank != null ? ` · 순위 ${pick.item.rank}위` : ''} · 한 달{' '}
+                      {sig(pick.item.trMonthBp)}bp
+                      {pick.item.pctLastWeek != null
+                        ? ` · 지난주 ${pick.item.pctLastWeek.toFixed(0)}%`
+                        : ''}
+                    </Text>
+                  </HStack>
+                  {/* 입력 잔존 → 스냅된 버킷을 밝힌다(조용한 스냅 금지) + 캐리·롤·버퍼. */}
+                  <Text font="legal" as="span" color="fgMuted">
+                    잔존 {pickTtm}년 → {pick.item.tenor} 버킷 · 캐리 {sig(pick.item.carryBp)}bp · 롤{' '}
+                    {sig(pick.item.rollBp)}bp · 버퍼 {sig(pick.item.bufferBp)}bp
+                    {pick.item.score == null ? ' · 집합이 얕아 Score 미산출' : ''}
+                  </Text>
+                </>
+              ) : (
+                <Text font="body" as="p" color="fgMuted">
+                  이 화면은 잔존 {data.maxYears}년까지만 매겨요 — 입력한 {pickTtm}년은 범위
+                  밖이에요(5Y·10Y 선물은 만기 상한 밖, OWNER 2026-08-20).
+                </Text>
+              )}
+            </VStack>
+          ) : null}
+        </HStack>
       ) : null}
 
       {/* ── 본 화면: [랭킹(주인공) | 사분면(미리보기)] — Backtest 의 표+미리보기

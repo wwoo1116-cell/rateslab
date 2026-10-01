@@ -21,6 +21,7 @@ import { RvScatter } from '../src/rv/RvScatter';
 import { ScoreHeat } from '../src/rv/ScoreHeat';
 import { SectorLane } from '../src/rv/SectorLane';
 import type { RvCreditItem, RvSector } from '../src/rv/api';
+import { snapCreditBucket } from '../src/rv/pick';
 
 afterEach(cleanup);
 
@@ -388,5 +389,49 @@ describe('틴트·재계산 소스 핀', () => {
     expect(rvPage).toContain('sr-rv-asof-split');
     // Cond 의 강조가 .sr-up(방향색)으로 돌아가면 4.1:1 미달이 재발한다.
     expect(rvPage).not.toMatch(/strong \? 'sr-up'/);
+  });
+});
+
+/* ── 종목 지정 → 버킷 매핑 [OWNER 2026-10-01] ────────────────────────────────
+   「사려는 유통물의 지금 매력도」는 (섹터, 잔존)을 v2 섹터×테너 버킷으로 스냅해
+   그 버킷의 Score 를 빌려 온다(`src/rv/pick.ts`). 아래가 그 규칙의 핀이다 —
+   스냅/상한/미지정을 어긋내면 이 시험만 빨개져야 한다(되돌림 가드). */
+describe('종목 지정 — 잔존→버킷 스냅', () => {
+  /* 한 섹터에 테너가 여럿 있어야 최근접 선택이 검정된다 — ITEMS 는 섹터당
+     하나뿐이라 전용 픽스처를 둔다(KDB 2Y/2.5Y/3Y). */
+  const SNAP: RvCreditItem[] = [
+    item({ sector: 'KDB', sectorLabel: '산금채 AAA', tenor: '2Y', years: 2.0, seriesId: 'k2' }),
+    item({ sector: 'KDB', sectorLabel: '산금채 AAA', tenor: '2.5Y', years: 2.5, seriesId: 'k25' }),
+    item({ sector: 'KDB', sectorLabel: '산금채 AAA', tenor: '3Y', years: 3.0, seriesId: 'k3' }),
+  ];
+
+  it('가장 가까운 테너로 스냅한다 — 2.4→2.5Y, 2.8→3Y, 2.2→2Y', () => {
+    const r24 = snapCreditBucket(SNAP, 'KDB', 2.4, 3.0);
+    const r28 = snapCreditBucket(SNAP, 'KDB', 2.8, 3.0);
+    const r22 = snapCreditBucket(SNAP, 'KDB', 2.2, 3.0);
+    expect(r24?.kind === 'hit' && r24.item.tenor).toBe('2.5Y');
+    expect(r28?.kind === 'hit' && r28.item.tenor).toBe('3Y');
+    expect(r22?.kind === 'hit' && r22.item.tenor).toBe('2Y');
+  });
+
+  it('상한(maxYears) 밖은 스냅하지 않고 사유를 돌려준다 — 조용히 3Y 로 안 끌려간다', () => {
+    expect(snapCreditBucket(SNAP, 'KDB', 5.0, 3.0)).toEqual({ kind: 'oob' });
+    // 경계: 3.0 은 3Y 로 적중, 3.01 은 밖.
+    expect(snapCreditBucket(SNAP, 'KDB', 3.0, 3.0)?.kind).toBe('hit');
+    expect(snapCreditBucket(SNAP, 'KDB', 3.01, 3.0)).toEqual({ kind: 'oob' });
+  });
+
+  it('미지정(섹터 공란·잔존 0)은 null — 카드가 서지 않는다', () => {
+    expect(snapCreditBucket(SNAP, '', 2.5, 3.0)).toBeNull();
+    expect(snapCreditBucket(SNAP, 'KDB', 0, 3.0)).toBeNull();
+  });
+
+  it('Score 가 없는 버킷도 적중은 적중이다 — 카드가 "Score 없음"으로 선다', () => {
+    const noScore: RvCreditItem[] = [
+      item({ sector: 'CARD', sectorLabel: '카드채 AA+', tenor: '2Y', years: 2.0, score: null }),
+    ];
+    const r = snapCreditBucket(noScore, 'CARD', 1.9, 3.0);
+    expect(r?.kind).toBe('hit');
+    expect(r?.kind === 'hit' && r.item.score).toBeNull();
   });
 });
