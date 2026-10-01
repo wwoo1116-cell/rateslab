@@ -18,6 +18,13 @@ import { probeTargets } from '@/lib/apiBase';
 
 export const dynamic = 'force-dynamic';
 
+/** ★**어느 리전에서 나가는가** — 2026-10-01 실측이 이걸 범인으로 지목했다.
+ *  기본값에서는 함수가 `iad1`(미국 동부)에서 돌았고, Tailscale 중계는 APAC
+ *  (`103.84.155.x`)이라 **TCP 연결이 10.5초에 타임아웃**했다
+ *  (`UND_ERR_CONNECT_TIMEOUT`). 화면은 `icn1`(서울) 에서 나가는데 함수는 미국이었다.
+ *  여기를 서울로 못박아 「서울에서는 닿나」를 가른다. */
+export const preferredRegion = 'icn1';
+
 export async function GET() {
   const out: unknown[] = [];
   for (const url of probeTargets()) {
