@@ -334,3 +334,58 @@ describe('빌드 산출물', () => {
     expect(appChunksOf(['/x/polyfills.js', '/x/app/page.js'])).toEqual(['/x/app/page.js']);
   });
 });
+
+/* ── 자료는 **같은 출처**로 들어온다 [2026-10-01] ────────────────────────────
+ *
+ * 트레이더 자리에서 자료가 안 왔다. 재 보니 화면 200 · 백엔드(진짜 외부에서)
+ * 200 · CORS 허용이었고, 남는 변수는 **보는 사람의 네트워크**뿐이었다 —
+ * 데스크에서 `*.ts.net` 이 막히면 화면은 열리고 자료만 안 온다.
+ *
+ * 그래서 브라우저는 사이트 자신(`/be/...`)을 부르고 Vercel 이 Funnel 로 넘긴다.
+ * 그 접두사는 **두 파일이 같은 문자열을 알아야** 하고(`apiBase.ts` 와
+ * `next.config.ts`), 갈리면 요청이 사이트 자신에게 가서 **조용히 404** 가 난다
+ * — 이 파일이 이미 적어 둔 2026-08-20 사고와 **같은 증상**이다. 그래서 여기서 묶는다.
+ */
+describe('같은 출처로 들어온다', () => {
+  it('브라우저가 쓰는 값은 외부 주소가 아니다', async () => {
+    const { API_BASE } = await import('../src/lib/apiBase');
+    /* 빈 문자열(정적 모드)이거나 같은 출처 접두사여야 한다. 절대 주소면
+       브라우저가 다시 남의 출처로 나가는 것이고, 그게 고친 바로 그 일이다. */
+    expect(API_BASE === '' || API_BASE.startsWith('/')).toBe(true);
+    expect(findDevOrigins(API_BASE)).toEqual([]);
+  });
+
+  it('★접두사가 두 파일에서 같다 — 갈리면 조용히 404 다', () => {
+    const cfg = read('next.config.ts');
+    const api = read('src/lib/apiBase.ts');
+    const of = (text: string) => {
+      const m = text.match(/PROXY_PREFIX\s*=\s*["'`]([^"'`]+)["'`]/);
+      return m?.[1];
+    };
+    const a = of(api);
+    const c = of(cfg);
+    expect(a, 'apiBase.ts 에 PROXY_PREFIX 가 없다').toBeTruthy();
+    expect(c, 'next.config.ts 에 PROXY_PREFIX 가 없다').toBeTruthy();
+    expect(a).toBe(c);
+    expect(a!.startsWith('/')).toBe(true);
+  });
+
+  it('rewrite 가 그 접두사를 넘긴다', async () => {
+    /* 설정만 읽는 가드가 아무것도 못 본 전례가 이 파일 머리에 적혀 있다 —
+       그래서 **config 를 실제로 불러** rewrite 목록을 본다. */
+    process.env.NEXT_PUBLIC_API_BASE = 'https://example.ts.net/v2';
+    const mod = await import('../next.config');
+    const cfg = (mod as { default: { rewrites?: () => Promise<unknown> } }).default;
+    const got = (await cfg.rewrites?.()) as { source: string; destination: string }[];
+    expect(got).toHaveLength(1);
+    expect(got[0].source).toBe('/be/:path*');
+    expect(got[0].destination).toBe('https://example.ts.net/v2/:path*');
+  });
+
+  it('넘길 곳이 없으면 rewrite 도 없다 — 빈 값은 정적 모드다', async () => {
+    /* `NEXT_PUBLIC_API_BASE=` 는 "같은 출처로만 나간다"는 **명시된 선택**이고
+       그때는 구운 트리를 본다(`staticPaths.ts::IS_STATIC`). 넘길 곳이 없다. */
+    const { normalizeApiBase } = await import('../src/lib/apiBase');
+    expect(normalizeApiBase('')).toBe('');
+  });
+});
