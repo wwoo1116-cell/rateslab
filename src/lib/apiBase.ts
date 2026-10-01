@@ -83,3 +83,59 @@ function resolve(): string {
 
 /** 백엔드의 출처. 빈 문자열이면 같은 출처(=정적/프록시 모드)라는 뜻이다. */
 export const API_BASE = resolve();
+
+/** 첫 자료 적재의 **시한**(ms). 이걸 넘기면 「기다림」이 아니라 「실패」다.
+ *
+ *  무거운 호출(백테스트)에는 걸지 않는다 — 그건 수십 초가 정상이다. 여기 있는
+ *  값은 **화면을 여는 데 필요한 것들**(summary·forwards·vol·universe·health)의
+ *  시한이고, 실측으로 그 다섯은 1~2초다. */
+export const LOAD_DEADLINE_MS = 20_000;
+
+/**
+ * 시한을 넘겼을 때 읽는 사람에게 하는 말 — **어디에 못 닿았는지**를 적는다.
+ *
+ * ## 왜 이 문구가 따로 필요한가 [2026-10-01, 트레이더 자리]
+ *
+ * `ui/DataState` 는 「기다림과 실패는 다르게 보여야 한다」로 쓰인 부품이고, 머리에
+ * v1 의 사고가 적혀 있다 — **모든 실패가 똑같이 영원한 「불러오는 중」이었고 81초에도
+ * 여전히 loading 이었다.** 그런데 그 갈라짐은 fetch 가 **거절할 때만** 듣는다.
+ * 방화벽이 패킷을 조용히 버리면 fetch 는 끝나지 않고, 상태는 `loading` 에 머문다.
+ * 2026-10-01 에 트레이더 자리에서 본 것이 정확히 그것이다(「시장 데이터를 불러오는
+ * 중이에요」만 계속).
+ *
+ * 그리고 `ErrorState` 의 기본 문구는 「백엔드(:8200)가 응답하지 않았어요」인데,
+ * **멀리서 보는 사람에게는 틀린 말**이다 — 그 사람 PC 에는 :8200 이 없다. 그가
+ * 확인할 수 있는 사실은 「이 주소에 못 닿았다」 하나다. 그래서 주소를 적는다.
+ *
+ * ⚠`${API_BASE}` 를 **`lib/` 안에서** 쓴다 — 밖에서 URL 을 다시 조립하는 것을
+ *   `guards/production-env` 가 막는다(그 규칙은 v1 사고에서 왔다). 문구도 같은 규율을
+ *   따른다: 주소를 아는 곳은 이 파일 하나다.
+ */
+export async function withDeadline<T>(
+  work: Promise<T>,
+  ms: number = LOAD_DEADLINE_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(unreachableDetail(ms))), ms);
+      }),
+    ]);
+  } finally {
+    /* 성공했으면 타이머를 걷는다 — 안 걷으면 ms 뒤에 쓸데없이 한 번 더 깨어나고,
+       테스트에서는 그게 「끝나지 않는 테스트」로 보인다. */
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+export function unreachableDetail(ms: number = LOAD_DEADLINE_MS): string {
+  const sec = Math.round(ms / 1000);
+  const where = API_BASE === "" ? "이 사이트" : API_BASE;
+  return (
+    `${where} 에 ${sec}초 안에 못 닿았어요. 백엔드가 꺼져 있거나, ` +
+    `지금 보고 있는 자리의 네트워크·방화벽이 그 주소를 막고 있을 수 있어요 ` +
+    `(화면은 떠 있으니 자료 경로만 막힌 것입니다).`
+  );
+}

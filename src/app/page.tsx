@@ -27,6 +27,7 @@ import { fetchUniverse, toRows, type UniversePayload } from '@/table/universeRow
 import { BottomStrip, useStripCollapsed } from '@/ui/BottomStrip';
 import { ChangeLog } from '@/ui/ChangeLog';
 import { CurveBanner } from '@/ui/CurveBanner';
+import { withDeadline } from '@/lib/apiBase';
 import { ErrorState, FreshnessChip, LoadingState } from '@/ui/DataState';
 import { ErrorBoundary } from '@/ui/ErrorBoundary';
 import { ForwardMatrix, KeyForwardBlock } from '@/ui/ForwardMatrix';
@@ -212,10 +213,22 @@ export default function Home() {
     setError(undefined);
     setRetrying(true);
     try {
-      const [summary, forwards, vol, universe, cashbond, health] = await Promise.all([
-        fetchWallSummary(), fetchForwards(), fetchVolatility(), fetchUniverse(),
-        fetchCashBondInstruments(), fetchHealth(),
-      ]);
+      /* ★**시한을 건다** [2026-10-01, 트레이더 자리에서 「불러오는 중」만 떴다].
+       *
+       * `ui/DataState` 가 기다림과 실패를 갈라 놓았지만 그 갈라짐은 fetch 가
+       * **거절할 때만** 듣는다. 방화벽이 패킷을 조용히 버리면 `Promise.all` 은
+       * 끝나지 않고 `error` 가 서지 않아 **영원히 `LoadingState`** 다 — 그 부품
+       * 머리에 적힌 v1 사고(「81초에도 여전히 loading」)와 같은 자리이고, 원인만
+       * 다르다. 시한이 그 멈춤을 «실패 + 다시 시도» 로 바꾼다.
+       *
+       * ⚠무거운 호출(백테스트)에는 걸지 않는다 — 수십 초가 정상이다. 여기 다섯은
+       *   화면을 여는 데 필요한 것이고 실측 1~2초다. */
+      const [summary, forwards, vol, universe, cashbond, health] = await withDeadline(
+        Promise.all([
+          fetchWallSummary(), fetchForwards(), fetchVolatility(), fetchUniverse(),
+          fetchCashBondInstruments(), fetchHealth(),
+        ]),
+      );
       setData({ summary, forwards, vol, universe, cashbond, health });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
