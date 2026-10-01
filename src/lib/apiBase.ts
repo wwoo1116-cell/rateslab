@@ -140,7 +140,7 @@ export function unreachableDetail(ms: number = LOAD_DEADLINE_MS): string {
   );
 }
 
-/** ⚠**임시 진단**(`app/api/_probe`)이 때릴 주소 — 주소를 아는 곳은 이 파일 하나다
+/** ⚠**임시 진단**(`app/api/probe`)이 때릴 주소 — 주소를 아는 곳은 이 파일 하나다
  *  (`guards/production-env`: 「NEXT_PUBLIC_API_BASE 를 읽는 파일은 하나다」 ·
  *   「lib/ 밖에서 백엔드 URL 을 다시 조립하지 않는다」). 그 규칙이 이 진단 라우트를
  *  **그 자리에서 잡았다** — 라우트가 `process.env` 를 직접 읽고 URL 을 이어 붙였다.
