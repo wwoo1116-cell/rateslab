@@ -295,6 +295,52 @@ function seriesWord(v: number | null | undefined, unit: string | null | undefine
  * 위계의 꼭대기는 한 번만 말해야 하고, 이 앱에서 «여러 사실을 한 줄에 눕히는»
  * 문법은 `.sr-stats` + `StatColumn`/`Stat` 하나다(캐논). 전부 서버가 센 수다(§16).
  */
+/**
+ * 손익 분해 칸 — **마크에 걸리는 항은 평가뿐이다**
+ * [OWNER 2026-10-01 — "캐리랑 롤다운은 전일 종가로 하고, 평가만 시가로 하면 되잖아?"].
+ *
+ * 체결차이·캐리·롤다운·개시·조달은 시간과 진입이 정하므로 종가 계열에서 그대로
+ * 쌓이고, 장중 시선에서는 평가 위에 `liveMove` 만 얹힌다. 그래서
+ * `발생액 + 평가 − 비용 = 장부 손익` 이 1원까지 닫힌다(실측 2026-10-01).
+ *
+ * ★수를 여기서 더하지 않는다 — `position.split` 이 서버가 센 것이다(§16).
+ * ★못 잰 항은 «—» 다. 0 으로 적으면 「캐리가 0 원이었다」는 딴 사실이 되고,
+ *   조달은 IRS 만 있는 북에서 **없는 항**이라 늘 «—» 로 선다.
+ * ★분해가 **일부 다리만** 됐으면 합계를 적지 않는다 — 카드 합계(전체 다리)와 다른
+ *   수라 나란히 두면 분해가 합계를 설명하는 것처럼 보인다(서버가 `total` 을 비운다).
+ */
+function PnlSplit({ p }: { p: PaperSheet['position'] }) {
+  const sp = p.split;
+  if (!sp) {
+    return (
+      <StatColumn title="손익 분해">
+        <Stat label="분해" value={MINUS}
+          note="엔진이 아직 안 돌았어요 — 손익은 평가만의 수예요" />
+      </StatColumn>
+    );
+  }
+  const won = (v: number | null) => (v == null ? MINUS : fmtKrw(v));
+  const tone = (v: number | null) => (v == null ? undefined : v >= 0 ? 'up' : 'down');
+  const part = (sp.folded === sp.legs
+    ? undefined
+    : `${sp.folded}/${sp.legs}다리만 분해됐어요`);
+  return (
+    <StatColumn title="손익 분해">
+      <Stat label="평가" value={won(sp.valuation)} tone={tone(sp.valuation)}
+        note={sp.liveMove == null ? undefined : `장중 이동 ${fmtKrw(sp.liveMove)} 포함`} />
+      <Stat label="캐리" value={won(sp.carry)} tone={tone(sp.carry)} note={part} />
+      <Stat label="롤다운" value={won(sp.rolldown)} tone={tone(sp.rolldown)} />
+      <Stat label="개시" value={won(sp.startup)} tone={tone(sp.startup)} />
+      <Stat label="체결 차이" value={won(sp.exec)} tone={tone(sp.exec)}
+        note="내 레벨과 그날 종가의 차" />
+      <Stat label="조달" value={won(sp.funding)} tone={tone(sp.funding)}
+        note={sp.funding == null ? 'IRS 만 있는 북이라 안 매겨요' : undefined} />
+      <Stat label="비용" value={won(sp.cost == null ? null : -sp.cost)}
+        tone={sp.cost == null ? undefined : 'down'} />
+    </StatColumn>
+  );
+}
+
 function PortfolioStrip({ p }: { p: PaperSheet['position'] }) {
   const won = (v: number) => fmtKrw(v);
   const near = p.nearest;
@@ -309,6 +355,12 @@ function PortfolioStrip({ p }: { p: PaperSheet['position'] }) {
             note={`${p.scored}/${p.scored + p.pending}다리 · 나머지는 아직이에요`} />
         )}
       </StatColumn>
+      {/* ★손익 분해 [OWNER 2026-10-01 — "캐리랑 롤다운은 전일 종가로 하고, 평가만
+          시가로 하면 되잖아?"]. 2026-10-01 까지 카드는 **평가 − 비용**만 셌고 캐리·
+          롤다운·개시·체결차이가 통째로 빠져 있었다 — 추적은 그 전부를 세고 있었으므로
+          한 화면이 두 수를 말했고, 산 장부에서 합계의 **부호가 뒤집혔다**(−500만 ↔ +781만).
+          수는 전부 서버가 센다(§16 — `position.split`). 못 잰 항은 «—» 다. */}
+      <PnlSplit p={p} />
       <StatColumn title="들고 있는 것">
         <Stat label="트레이드" value={`${p.tradesOpen ?? 0} / ${p.trades ?? 0}`} />
         <Stat label="다리" value={`${p.open} / ${p.open + p.closed}`} />

@@ -3461,7 +3461,87 @@ def _paper_sheet(marks: dict | None = None) -> dict:
     return {"available": True,
             **paper.build_sheet(leg_of=_paper_leg, account_of=_paper_account,
                                 mark_of=lambda k, t: _paper_mark(k, t, memo),
-                                marks=marks)}
+                                marks=marks, accrual_of=_position_accrual)}
+
+
+#: 포지션 다리의 엔진 분해 — (장부 지문, 끊는 날들) 로 한 번만 굽는다.
+#: 왜 캐시: 엔진 한 패스가 **950ms** 다(실측 2026-10-01). 시트는 화면이 10초마다
+#: 받아 가고 쓰기 라우트 다섯도 시트를 다시 굽는다 — 그때마다 돌리면 1초가 붙는다.
+#: 열쇠에 **끊는 날**(`markT`)이 들어가는 이유: 종가가 하루 들어오면 분해가 달라진다.
+_POS_ACCRUAL: dict[tuple, dict[int, dict]] = {}
+
+
+def _legs_fingerprint(legs: list[dict]) -> tuple:
+    """장부 다리의 지문 — 분해를 바꿀 수 있는 칸만 넣는다(이름·꼬리표는 안 넣는다)."""
+    return tuple(sorted(
+        (int(lg.get("n", 0)), str(lg.get("kind")), str(lg.get("tenor")),
+         str(lg.get("entry")), str(lg.get("exit")), float(lg.get("level") or 0.0),
+         float(lg.get("dv01") or 0.0), int(lg.get("rateSign") or 0),
+         float(lg.get("exitLevel") or 0.0) if lg.get("exitLevel") is not None else None)
+        for lg in legs))
+
+
+def _position_engine_book(pos_legs: list[dict]) -> dict:
+    """포지션 다리를 **백테스트 엔진에 실어** 줄을 받는다 — `/api/paper/trace` 와 **한 곳**.
+
+    ★두 자리가 각자 엔진을 부르면 카드의 분해와 추적의 분해가 같은 다리에 다른 수를
+      말할 자리가 생긴다(`_book_result` 머리의 그 문단과 같은 이유).
+    ★엔진은 **장부의 시계**까지만 돈다 — 들고 있는 다리는 그 계기의 마지막 종가
+      (`markT`)에서 끊는다. 안 끊으면 스왑 달력이 역외 프린트까지 가서 「차이」에
+      이틀치 시장이 섞인다(종전 `paper_trace` 의 그 ⚠ 문단 그대로).
+    """
+    st = paper.load()
+    by_n = {int(lg["n"]): lg for lg in st.get("legs", [])}
+    picked = [by_n[int(r["n"])] for r in pos_legs if int(r["n"]) in by_n]
+    if not picked:
+        return []
+    cut = {int(r["n"]): r.get("markT") for r in pos_legs}
+    specs = paper.trace_positions(picked)
+    parsed = []
+    for s in specs:
+        exit_s = s.get("exit")
+        if not exit_s:
+            mt = cut.get(int(s["n"]))
+            if mt and mt >= s["entry"]:
+                exit_s = mt
+        parsed.append(mixedbook.MixedPosition(
+            series_id=s["id"], direction=int(s["direction"]), notional=float(s["notional"]),
+            entry=dt.date.fromisoformat(s["entry"]),
+            exit=dt.date.fromisoformat(exit_s) if exit_s else None,
+        ))
+    book = _book_result(parsed, _funding_spec(funding.DEFAULT_BASIS,
+                                              funding.DEFAULT_SPREAD_BP))
+    return book
+
+
+def _position_accrual(pos_legs: list[dict]) -> dict[int, dict]:
+    """다리 번호 → 발생액 + 엔진 평가. `paper.fold_accrual` 이 읽는 꼴로 낸다.
+
+    ⚠한 다리라도 엔진이 줄을 안 내면 **그 다리만** 비운다 — 전체를 버리면 카드가
+      통째로 평가만의 수로 돌아가고, 그 사실이 조용해진다.
+    """
+    st = paper.load()
+    by_n = {int(lg["n"]): lg for lg in st.get("legs", [])}
+    key = (_legs_fingerprint(st.get("legs") or []),
+           tuple(sorted((int(r["n"]), r.get("markT")) for r in pos_legs)))
+    got = _POS_ACCRUAL.get(key)
+    if got is not None:
+        return got
+    rows = (_position_engine_book(pos_legs).get("positions") or [])
+    picked = [by_n[int(r["n"])] for r in pos_legs if int(r["n"]) in by_n]
+    out: dict[int, dict] = {}
+    if len(rows) == len(picked):
+        for lg, row in zip(picked, rows):
+            # 체결 차이는 `reconcile_leg` 와 **같은 식**으로 잰다 — 거기 하나뿐이게.
+            rec = paper.reconcile_leg(lg, row, paper_pnl=None, cost=None)
+            out[int(lg["n"])] = {
+                "exec": rec["exec"], "carry": rec["carry"], "rolldown": rec["rolldown"],
+                "startup": rec["startup"], "funding": rec["funding"],
+                "valuation": rec["valuation"],
+            }
+    _POS_ACCRUAL.clear()           # 지문이 바뀌면 옛것을 들고 있을 이유가 없다
+    _POS_ACCRUAL[key] = out
+    return out
 
 
 #: 질의에서 「지금 시세를 그대로」를 뜻하는 낱말 [OWNER 2026-09-28 — "따로 내가 입력
@@ -3665,29 +3745,21 @@ def paper_trace(legs: str, marks: str = "") -> dict:
         raise HTTPException(status_code=422,
                             detail=f"없는 다리예요: {', '.join(str(n) for n in missing)}")
     picked = [by_n[n] for n in ns]
+    # ★여기서 한 번 **검증만** 한다 — 사유가 있는 거절을 422 로 돌려주려고.
+    #   `_position_engine_book` 안에서 터지면 500 이 되고 「왜 못 추적하나」를 못 적는다.
+    #   줄은 그 함수가 낸다(여기서 안 쓴다).
     try:
-        specs = paper.trace_positions(picked)
+        paper.trace_positions(picked)
     except paper.LegRejected as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    # 화면의 그 줄(`score_leg`)을 그대로 대조한다 — 여기서 다시 안 센다.
-    sheet_rows = {int(r["n"]): r for r in _paper_sheet()["position"]["legs"]}
-    # ★엔진은 **장부의 시계**까지만 돈다. 장부의 마크는 그 계기의 마지막 종가
-    # (`markT`, 국고·선물이 쉰 연휴엔 09-23)인데 스왑 엔진의 달력은 IRS 라 역외
-    # 프린트(09-24·25)까지 간다 — 그대로 두면 「차이」 열에 이틀치 시장이 섞여
-    # 선형 대 재평가의 몫이라 말할 수 없다. 들고 있는 다리는 마크 날에 끊는다.
-    parsed = []
-    for s in specs:
-        exit_s = s.get("exit")
-        if not exit_s:
-            mt = sheet_rows.get(int(s["n"]), {}).get("markT")
-            if mt and mt >= s["entry"]:
-                exit_s = mt
-        parsed.append(mixedbook.MixedPosition(
-            series_id=s["id"], direction=int(s["direction"]), notional=float(s["notional"]),
-            entry=dt.date.fromisoformat(s["entry"]),
-            exit=dt.date.fromisoformat(exit_s) if exit_s else None,
-        ))
-    book = _book_result(parsed, _funding_spec(funding.DEFAULT_BASIS, funding.DEFAULT_SPREAD_BP))
+    # 화면의 그 줄을 그대로 대조한다 — 여기서 다시 안 센다.
+    sheet_all = _paper_sheet()["position"]["legs"]
+    sheet_rows = {int(r["n"]): r for r in sheet_all}
+    # ★★엔진은 **한 곳**에서 부른다(`_position_engine_book`) — 카드도 그 함수로
+    #   분해를 받는다. 두 자리가 각자 부르면 같은 다리에 다른 수를 말할 자리가 생기고,
+    #   2026-10-01 까지 실제로 그랬다(카드는 평가만, 추적은 전부 → 「차이」 −1,017만원).
+    #   끊는 날(`markT`)·조달·엔진 모두 그 함수 안에 한 벌로 있다.
+    book = _position_engine_book([r for r in sheet_all if int(r["n"]) in set(ns)])
     rows = book.get("positions") or []
     if len(rows) != len(picked):
         raise HTTPException(status_code=500, detail="엔진이 낸 줄 수가 다리 수와 달라요")

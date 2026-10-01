@@ -132,6 +132,14 @@ export interface PaperSheet {
    *  차이 그래프가 거짓말을 한다. */
   position: {
     legs: PaperPositionLeg[];
+    /** ★손익 분해 합 — **서버가 센다**(§16). [OWNER 2026-10-01 「캐리랑 롤다운은
+     *  전일 종가로 하고, 평가만 시가로 하면 되잖아?」]
+     *
+     *  2026-10-01 까지 카드는 **평가 − 비용**만 셌고 캐리·롤다운·개시·체결차이가
+     *  통째로 빠져 있었다 — 산 장부에서 합계의 **부호가 뒤집혔다**(−500만 ↔ +781만).
+     *  규율은 `rule`·`manual` 의 `split` 과 같다: 한 다리라도 못 잰 항은 `None`,
+     *  한 다리라도 안 접혔으면 `total` 이 `None`(그때는 `foldedTotal` 이 말한다). */
+    split: PositionSplit | null;
     open: number;
     closed: number;
     /** 한 다리라도 못 매겼으면 **`null`** 이다(0 이 아니다). 오늘 체결한 다리가
@@ -169,6 +177,33 @@ export interface PaperSheet {
   /** 이 화면이 실제로 묻는 물음 — 내 판단이 규칙보다 나은가. */
   diff: { today: number; cum: number };
   failed: { id: string; why: string }[];
+}
+
+/** 포지션 북의 손익 분해 — `backend/app/paper.py::position_split`.
+ *
+ *  마크에 걸리는 항은 **평가뿐**이다. 체결차이·캐리·롤다운·개시·조달은 시간과 진입이
+ *  정하므로 종가 계열에서 그대로 쌓이고, 장중 시선에서는 평가 위에 `liveMove` 만 얹힌다.
+ *  그래서 `발생액 + 평가 − 비용 = total` 이 1원까지 닫힌다(실측 2026-10-01). */
+export interface PositionSplit {
+  exec: number | null;
+  carry: number | null;
+  rolldown: number | null;
+  startup: number | null;
+  /** IRS 만 있는 북에서는 `null` 이다 — 없는 항이고 못 잰 항이 아니다. */
+  funding: number | null;
+  /** 카드가 **실제로 쓴** 평가(장중이면 이동까지 얹힌 것). */
+  valuation: number | null;
+  /** 엔진의 **종가** 재평가. `valuation` 과 섞지 않는다. */
+  engineValuation: number | null;
+  /** 종가 재평가 위에 얹은 장중 이동(원). 종가 시선이면 `null`. */
+  liveMove: number | null;
+  cost: number | null;
+  /** 전부 접혔을 때만 수다 — 아니면 `null`(카드 합계와 다른 수라 섞을 수 없다). */
+  total: number | null;
+  /** 접힌 다리만의 소계. */
+  foldedTotal: number | null;
+  folded: number;
+  legs: number;
 }
 
 /** 묶음(트레이드) 하나의 소계 — `backend/app/paper.py::sum_legs`. 규율은 합계와
@@ -360,7 +395,30 @@ export interface PaperPositionLeg {
   bp: number | null;
   gross: number | null;
   cost: number | null;
+  /** ★**장부 손익** — 발생액까지 접은 수 [OWNER 2026-10-01].
+   *
+   *  2026-10-01 까지 이 칸은 `mtm`(평가 − 비용)과 같은 수였고, 그래서 캐리·롤다운·
+   *  개시·체결차이가 카드에서 통째로 빠졌다. 추적(`/api/paper/trace`)은 그 전부를
+   *  세고 있었으므로 **한 화면이 두 수를 말했다**(실측 차이 −1,017만원). 지금은
+   *  둘이 1원까지 같다. */
   pnl: number | null;
+  /** 평가만의 수(`gross − cost`) — **장중 시선**이 이것을 쓴다. `pnl` 과 다른 칸이다. */
+  mtm?: number | null;
+  /** 발생액을 접었는가. **거짓이면 `pnl` 은 평가만의 수**이고 화면이 그 사실을 적는다
+   *  — 0 으로 채우면 「캐리가 0 원이었다」는 딴 사실이 된다(공란 정책). */
+  accrued?: boolean;
+  /** 접은 발생액의 성분. 안 접혔으면 `null`. */
+  accrual?: {
+    exec: number | null;
+    carry: number | null;
+    rolldown: number | null;
+    startup: number | null;
+    funding: number | null;
+  } | null;
+  /** 엔진의 **종가** 재평가(원). */
+  engineValuation?: number | null;
+  /** 종가 재평가 위에 얹은 장중 이동(원). 종가 시선이면 `null`. */
+  liveMove?: number | null;
   why: string | null;
 }
 

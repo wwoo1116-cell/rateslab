@@ -1316,8 +1316,121 @@ def score_leg(leg: dict, mark: float | None, cost_bp: float = COST_BP,
     bp = (float(end) - float(leg["level"])) * 100.0
     gross = leg["rateSign"] * bp * float(leg["dv01"])
     cost = cost_bp * float(leg["dv01"]) * (1.0 if out["open"] else 2.0)
-    return {**out, "bp": bp, "gross": gross, "cost": cost, "pnl": gross - cost,
-            "why": None}
+    # ★`mtm` 은 **평가만**의 수다(`gross − cost`). 2026-10-01 까지 이것이 곧 `pnl`
+    #   이었고, 그래서 캐리·롤다운·개시·체결차이가 카드에서 통째로 빠져 있었다
+    #   (`fold_accrual` 머리의 실측). `pnl` 은 발생액을 접은 뒤 그 함수가 다시 적는다.
+    return {**out, "bp": bp, "gross": gross, "cost": cost,
+            "mtm": gross - cost, "pnl": gross - cost, "why": None}
+
+
+#: 발생액의 성분 — **마크에 안 걸리는** 것들. 시간과 진입이 정한다.
+#: [OWNER 2026-10-01] 「캐리랑 롤다운은 전일 종가로 하고, 평가만 시가로 하면 되잖아?」
+ACCRUAL_KEYS = ("exec", "carry", "rolldown", "startup", "funding")
+
+
+def position_split(rows: list[dict]) -> dict[str, float | None] | None:
+    """포지션 다리들의 손익 분해 합 — **서버가 센다**(§16).
+
+    `rule`·`manual` 의 `merge_split` 과 같은 규율이다: **한 다리라도 못 잰 항이 있으면
+    그 항은 `None`** 이다. 섞어서 더하면 「엔진 셋 + 평가만 하나」의 합이 엔진 것처럼
+    보인다. 아무 다리도 안 접혔으면 통째로 `None` — 화면이 «—» 를 적는다.
+
+    `valuation` 은 **카드가 실제로 쓴 평가**다(장중이면 이동까지 얹힌 것) — 그래서
+    `total` 이 `pnl` 의 합과 1원까지 닫힌다. 엔진의 종가 평가는 `engineValuation` 에
+    따로 있다(둘을 섞지 않는다).
+    """
+    folded = [r for r in rows if r.get("accrued")]
+    if not folded:
+        return None
+    out: dict[str, float | None] = {}
+    for k in ACCRUAL_KEYS:
+        vals = [(r.get("accrual") or {}).get(k) for r in folded]
+        out[k] = (None if any(v is None for v in vals)
+                  else round(sum(float(v) for v in vals), 2))
+    # 카드가 쓴 평가 = pnl − 발생액 + 비용. 되짚을 수 있게 그 자리를 적는다.
+    known = [sum(float(v) for v in ((r.get("accrual") or {}).values()) if v is not None)
+             for r in folded]
+    out["valuation"] = round(sum(r["pnl"] for r in folded) - sum(known)
+                             + sum(r["cost"] for r in folded), 2)
+    out["engineValuation"] = (
+        None if any(r.get("engineValuation") is None for r in folded)
+        else round(sum(float(r["engineValuation"]) for r in folded), 2))
+    out["liveMove"] = (None if all(r.get("liveMove") is None for r in folded)
+                       else round(sum(float(r.get("liveMove") or 0.0) for r in folded), 2))
+    out["cost"] = round(sum(r["cost"] for r in folded), 2)
+    # ★`total` 은 **접힌 다리만**의 합이다 — 하나라도 안 접혔으면 카드 합계(`pnl`,
+    #   전체 다리)와 **다른 수**이고, 그 둘을 같은 줄에 적으면 분해가 합계를 설명하는
+    #   것처럼 보인다. 그때는 `total` 을 `None` 으로 두고 `folded/legs` 로 말한다
+    #   (이 리포의 「섞어서 더하지 않는다」 — `merge_split` 과 같은 규율).
+    out["total"] = (round(sum(r["pnl"] for r in folded), 2)
+                    if len(folded) == len(rows) else None)
+    #: 접힌 다리만의 소계 — 합계가 `None` 일 때도 카드가 말할 것이 있게.
+    out["foldedTotal"] = round(sum(r["pnl"] for r in folded), 2)
+    #: 접힌 다리 수 / 전체 — 화면이 「넷 중 셋만 분해됐어요」를 적는다.
+    out["folded"] = len(folded)
+    out["legs"] = len(rows)
+    return out
+
+
+def fold_accrual(row: dict, acc: dict | None, *, close_mark: float | None = None) -> dict:
+    """한 다리의 손익에 **발생액**을 접는다 — 카드가 추적과 같은 수를 말하게.
+
+    ## 왜 [OWNER 2026-10-01 「캐리랑 롤다운은 전일 종가로 … 평가만 시가로」]
+
+    `score_leg` 가 내는 것은 **평가 − 비용**뿐이었다. 그래서 같은 다리를 두고
+    카드와 추적(`/api/paper/trace`)이 **다른 수**를 말했다 — 실측(자료일 2026-09-30 ·
+    2026-09-22 진입 · DV01 1,000만원/bp):
+
+        1st Trade (5Y-10Y)   카드 +500만   추적 +763만   차이 −263만
+        2nd Trader (2Y-10Y)  카드 −1,000만 추적 +17만    차이 **−1,017만**
+        합계                 카드 −500만   추적 +781만   ★**부호가 뒤집힌다**
+
+    빠진 돈은 캐리(+173만·+534만) · 롤다운(+15만·+197만) · 개시 · 체결차이였고,
+    엔진은 그 격차를 이미 계산해 `residual`(차이)이라 적고 있었다 — 즉 시스템이
+    알면서 카드에만 안 넣고 있었다.
+
+    ## 식 — 마크에 걸리는 항은 **평가뿐**이다
+
+        손익 = 체결차이 + 캐리 + 롤다운 + 개시 + 조달      ← 종가 · 자료일까지
+             + 평가                                       ← 종가 재평가 (+ 장중 이동)
+             − 비용
+
+    캐리·롤다운·개시·체결차이는 **시간과 진입**이 정하므로 지금 레벨과 무관하다.
+    그래서 종가 계열에서 그대로 쌓고, 장중 시선에서는 **평가만** 움직인다:
+    엔진의 종가 재평가 위에 `(장중 − 종가) × 100bp × DV01 × rateSign` 을 얹는다.
+    장중 이동이 0 이면 카드가 추적과 **1원까지 같다**(실측 −1원, 반올림).
+
+    ⚠`acc` 가 없으면 **접지 않는다** — `pnl` 은 평가만의 수로 남고 `accrued=False` 가
+      실린다. 0 으로 적으면 「캐리가 0 원이었다」는 딴 사실이 되고 화면의 «—» 가
+      사라진다(이 리포의 그 규약). 화면이 그 사실을 적는다.
+    """
+    if not acc:
+        return {**row, "accrued": False, "accrual": None,
+                "engineValuation": None, "liveMove": None}
+    parts = {k: acc.get(k) for k in ACCRUAL_KEYS}
+    # 조달은 IRS 만 있는 북에서 `None` 이다 — 없는 것은 0 이 아니라 없는 것이고,
+    # 합에서는 0 으로 **세지** 않고 「못 잰 항」으로 남긴다(공란 정책).
+    known = [v for v in parts.values() if v is not None]
+    if any(v is None for k, v in parts.items() if k != "funding") or acc.get("valuation") is None:
+        # 평가나 발생액의 중심 성분을 못 받았으면 접지 않는다 — 반만 접으면
+        # 「장부 손익」이 무엇의 합인지 말할 수 없다.
+        return {**row, "accrued": False, "accrual": None,
+                "engineValuation": None, "liveMove": None}
+    val = float(acc["valuation"])
+    move = None
+    if row.get("live") and close_mark is not None and row.get("mark") is not None:
+        move = (float(row["mark"]) - float(close_mark)) * 100.0 \
+            * float(row["dv01"]) * int(row["rateSign"])
+        val += move
+    pnl = sum(float(v) for v in known) + val - float(row["cost"])
+    return {**row,
+            "accrued": True,
+            "accrual": {k: (None if v is None else round(float(v), 2))
+                        for k, v in parts.items()},
+            "engineValuation": round(float(acc["valuation"]), 2),
+            #: 장중 시선에서 종가 재평가 위에 얹은 이동(원). 종가 시선이면 `None`.
+            "liveMove": None if move is None else round(move, 2),
+            "pnl": round(pnl, 2)}
 
 
 # ── 저장 ────────────────────────────────────────────────────────────────────
@@ -1612,7 +1725,8 @@ def build_sheet(*, leg_of: Callable[..., dict],
                 mark_of: Callable[[str, str], tuple[str | None, float | None]] | None = None,
                 store: dict[str, Any] | None = None,
                 cost_bp: float = COST_BP,
-                marks: dict[tuple[str, str], float] | None = None) -> dict[str, Any]:
+                marks: dict[tuple[str, str], float] | None = None,
+                accrual_of: Callable[[list[dict]], dict[int, dict]] | None = None) -> dict[str, Any]:
     """페이퍼 북 한 장 — 규칙 북 · 수동 북 · 둘의 차이.
 
     한 다리가 죽어도 나머지는 선다(`why` 에 사유가 남는다). 25계열을 도는 물건이
@@ -1669,6 +1783,7 @@ def build_sheet(*, leg_of: Callable[..., dict],
         # 장중 레벨이 이 계기를 덮으면 **그 값으로** 매긴다 — 날은 오늘이고,
         # 종가가 아니라는 사실은 `live` 가 진다(장부엔 안 적힌다).
         live_lv = (marks or {}).get((lg["kind"], lg["tenor"]))
+        close_mark = mark
         if live_lv is not None:
             mark, mark_t = live_lv, _dt.date.today().isoformat()
         row = score_leg(lg, mark, cost_bp=cost_bp, mark_t=mark_t)
@@ -1677,7 +1792,31 @@ def build_sheet(*, leg_of: Callable[..., dict],
         # 닫힌 다리에 「청산 닿음」을 적는 것은 지난 일을 오늘 일처럼 적는 것이다.
         # 계열이나 조건이 없으면 `None` 이고, 화면이 그 사실을 그대로 적는다.
         row["track"] = track_leg(lg, marks=marks) if row["open"] else None
+        # 장중으로 덮었어도 **종가 마크를 버리지 않는다** — 발생액을 접을 때
+        # 「종가 재평가 위의 이동」을 그 값에서 재야 한다(`fold_accrual`).
+        row["closeMark"] = close_mark
         pos_legs.append(row)
+
+    # ── 발생액 접기 [OWNER 2026-10-01] ─────────────────────────────────────
+    #
+    # ★**두 패스다.** 위에서 평가만으로 한 번 세우는 이유는 `markT`(그 계기의 마지막
+    #   종가 날)가 여기서 나오고, 엔진을 **그 날까지만** 돌려야 하기 때문이다. 한 패스로
+    #   하려면 엔진이 시트를 알아야 하고 시트가 엔진을 알아야 해서 순환이 생긴다
+    #   (`/api/paper/trace` 가 `_paper_sheet()` 를 부르는 그 자리와 같은 매듭).
+    # ★엔진은 **한 번만** 돈다 — `accrual_of` 가 다리 전부를 받아 한 번에 낸다(실측:
+    #   다리 둘 추적 983ms, 넷 954ms — 북 전체가 한 패스다).
+    if accrual_of is not None and pos_legs:
+        try:
+            accs = accrual_of(pos_legs) or {}
+        except BaseException as exc:                      # noqa: BLE001
+            # 엔진이 죽어도 카드는 선다 — 평가만의 수로 남고 그 사실이 실린다.
+            failed.append({"id": "position/accrual", "why": str(exc)})
+            accs = {}
+        pos_legs = [fold_accrual(r, accs.get(int(r["n"])),
+                                 close_mark=r.get("closeMark"))
+                    for r in pos_legs]
+    else:
+        pos_legs = [fold_accrual(r, None) for r in pos_legs]
 
     rule_daily = merge_daily(rule_legs)
     man_daily = merge_daily(man_legs)
@@ -1727,6 +1866,9 @@ def build_sheet(*, leg_of: Callable[..., dict],
         #: 손으로 쌓은 다리 — 묶음(tag)은 사람이 부르는 이름이고 산술에 안 쓴다.
         "position": {
             "legs": pos_legs,
+            # ★분해 합계는 **서버가 센다**(§16 — 브라우저는 계산하지 않는다).
+            #   `rule`·`manual` 의 `split` 과 같은 자리이고 같은 규율이다(못 잰 항은 `None`).
+            "split": position_split(pos_legs),
             "open": sum(1 for l in pos_legs if l["open"]),
             "closed": sum(1 for l in pos_legs if not l["open"]),
             # 하나라도 못 매기면 합계는 **`None`** 이다 — 이 리포의 「0 으로

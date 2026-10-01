@@ -2030,3 +2030,191 @@ class Test묶음_소계:
         assert len(pos["groups"]) == 1 and pos["groups"][0]["legs"] == [1, 2]
         assert pos["groups"][0]["pnl"] == pos["pnl"]
         assert pos["trades"] == 1 and pos["tradesOpen"] == 1
+
+
+class Test발생액접기:
+    """★[OWNER 2026-10-01] 「캐리랑 롤다운은 전일 종가로 하고, 평가만 시가로」
+
+    왜 이 묶음이 있는가: 카드(`score_leg`)는 **평가 − 비용**만 세고 추적
+    (`/api/paper/trace`)은 체결차이+캐리+롤다운+개시+조달까지 셌다. 같은 다리를 두고
+    **한 화면이 두 수를 말했고**, 산 장부 실측(자료일 2026-09-30 · 09-22 진입)에서
+    합계의 **부호가 뒤집혔다**: 카드 −500만 ↔ 추적 +781만. 빠진 돈의 대부분이
+    캐리(+534만)와 롤다운(+197만)이었다.
+
+    엔진은 그 격차를 이미 계산해 `residual`(차이)이라 적고 있었다 — 즉 **시스템이
+    알면서 카드에만 안 넣고 있었다.** 그걸 말로 두지 않고 여기 박는다.
+    """
+
+    @staticmethod
+    def _leg(n=1, **over):
+        o = {"n": n, "kind": "irs", "tenor": "5Y", "side": "pay", "rateSign": 1,
+             "entry": "2026-09-22", "level": 4.0, "notional": 1e10,
+             "dv01": 10_000_000.0, "exit": None, "exitLevel": None}
+        o.update(over)
+        return o
+
+    @staticmethod
+    def _acc(**over):
+        a = {"exec": 1_000_000.0, "carry": 2_000_000.0, "rolldown": 500_000.0,
+             "startup": 100_000.0, "funding": None, "valuation": 7_000_000.0}
+        a.update(over)
+        return a
+
+    def test_평가만의_수를_mtm_으로_남긴다(self):
+        """`pnl` 의 뜻이 바뀌었으니 옛 수가 사라지면 안 된다 — 장중 시선이 그것을 쓴다."""
+        row = paper.score_leg(self._leg(), 4.1, mark_t="2026-09-30")
+        assert row["mtm"] == row["gross"] - row["cost"]
+        assert row["pnl"] == row["mtm"]        # 접기 전에는 같다
+
+    def test_발생액을_접으면_손익이_그_합이다(self):
+        row = paper.score_leg(self._leg(), 4.1, mark_t="2026-09-30")
+        got = paper.fold_accrual(row, self._acc())
+        assert got["accrued"] is True
+        # 체결차이 + 캐리 + 롤다운 + 개시 + 엔진평가 − 비용
+        want = 1e6 + 2e6 + 5e5 + 1e5 + 7e6 - row["cost"]
+        assert got["pnl"] == pytest.approx(round(want, 2))
+
+    def test_발생액이_없으면_접지_않고_그_사실을_싣는다(self):
+        """★0 으로 적으면 「캐리가 0 원이었다」는 **딴 사실**이 되고 화면의 «—» 가
+        사라진다. 2026-10-01 에 `json` 임포트 하나가 빠져 엔진이 조용히 죽었는데,
+        이 규약 덕에 `accrued=False` 로 **드러났다**(0 이었으면 못 봤다)."""
+        row = paper.score_leg(self._leg(), 4.1, mark_t="2026-09-30")
+        got = paper.fold_accrual(row, None)
+        assert got["accrued"] is False and got["accrual"] is None
+        assert got["pnl"] == row["mtm"]        # 평가만의 수로 남는다
+
+    def test_반쪽_발생액은_접지_않는다(self):
+        """캐리는 왔는데 평가가 없으면 「장부 손익」이 무엇의 합인지 말할 수 없다."""
+        row = paper.score_leg(self._leg(), 4.1, mark_t="2026-09-30")
+        assert paper.fold_accrual(row, self._acc(valuation=None))["accrued"] is False
+        assert paper.fold_accrual(row, self._acc(carry=None))["accrued"] is False
+
+    def test_조달이_없는_것은_반쪽이_아니다(self):
+        """IRS 만 있는 북에서 조달은 `None` 이다 — 없는 항이고 못 잰 항이 아니다.
+        합에서 0 으로 **세지 않고** 그 칸만 비운다(공란 정책)."""
+        row = paper.score_leg(self._leg(), 4.1, mark_t="2026-09-30")
+        got = paper.fold_accrual(row, self._acc(funding=None))
+        assert got["accrued"] is True and got["accrual"]["funding"] is None
+
+    def test_마크에_걸리는_항은_평가뿐이다(self):
+        """★[OWNER] 의 그 식. 캐리·롤다운·개시·체결차이는 **시간과 진입**이 정하므로
+        지금 레벨과 무관하다 — 장중 시선에서 움직이는 것은 평가 하나다."""
+        base = paper.score_leg(self._leg(), 4.1, mark_t="2026-09-30")
+        base["live"], base["closeMark"] = True, 4.1
+        same = paper.fold_accrual(base, self._acc(), close_mark=4.1)
+        assert same["liveMove"] == 0.0
+        moved = dict(base)
+        moved["mark"] = 4.11                       # 장중에 1bp 움직였다
+        got = paper.fold_accrual(moved, self._acc(), close_mark=4.1)
+        # 1bp × DV01 1,000만원 × rateSign +1 = +1,000만원
+        assert got["liveMove"] == pytest.approx(10_000_000.0)
+        assert got["pnl"] - same["pnl"] == pytest.approx(10_000_000.0)
+        # 발생액은 **안 움직인다**
+        assert got["accrual"] == same["accrual"]
+
+    def test_종가_시선에서는_이동이_없다(self):
+        row = paper.score_leg(self._leg(), 4.1, mark_t="2026-09-30")
+        row["live"] = False
+        got = paper.fold_accrual(row, self._acc(), close_mark=4.0)
+        assert got["liveMove"] is None
+
+    def test_엔진이_죽어도_카드가_선다(self):
+        """`accrual_of` 가 터지면 사유가 `failed` 에 남고 카드는 평가만의 수로 선다."""
+        leg_of, _d, _v = _leg_of(120)
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2020-03-02",
+                      level=3.0, notional=1e10, dv01=1_900_000.0)
+
+        def boom(_rows):
+            raise RuntimeError("엔진이 죽었어요")
+
+        sheet = paper.build_sheet(leg_of=leg_of, store=st,
+                                  mark_of=lambda k, t: ("2020-03-03", 3.05),
+                                  accrual_of=boom)
+        assert any(f["id"] == "position/accrual" for f in sheet["failed"])
+        assert sheet["position"]["legs"][0]["accrued"] is False
+
+    def test_합계가_접힌_수의_합이다(self):
+        """★«대조» — 묶음 소계와 전체 합이 **접힌 뒤의** 수를 센다. 접기를 합계보다
+        늦게 하면 카드 머리와 줄이 다른 수를 말한다."""
+        leg_of, _d, _v = _leg_of(120)
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2020-03-02",
+                      level=3.0, notional=1e10, dv01=1_900_000.0, tag="T")
+        acc = {1: {"exec": 1e6, "carry": 2e6, "rolldown": 5e5, "startup": 1e5,
+                   "funding": None, "valuation": 7e6}}
+        sheet = paper.build_sheet(leg_of=leg_of, store=st,
+                                 mark_of=lambda k, t: ("2020-03-03", 3.05),
+                                 accrual_of=lambda rows: acc)
+        pos = sheet["position"]
+        leg = pos["legs"][0]
+        assert leg["accrued"] is True
+        assert pos["pnl"] == pytest.approx(leg["pnl"])
+        assert pos["groups"][0]["pnl"] == pytest.approx(leg["pnl"])
+        assert leg["pnl"] != leg["mtm"]        # 접혔다는 것이 수에 드러난다
+
+
+class Test카드와추적이같은수를말한다:
+    """★★«대조 문» — 이 묶음이 없어서 결함이 한 달 가까이 살았다.
+
+    카드(`position.legs[*].pnl`)와 추적(`/api/paper/trace` 의 `exec + engine − cost`)이
+    같은 다리에 다른 수를 말하고 있었고, 엔진은 그 격차를 `residual` 로 **적고 있었는데도**
+    아무것도 빨개지지 않았다. 둘이 같은 함수(`_position_engine_book`)를 쓰는 것과
+    `residual` 이 0 으로 닫히는 것을 여기서 묶는다.
+
+    ⚠산 백엔드를 안 쓴다 — 엔진 줄을 손으로 주입해 **대조의 산술만** 잰다.
+      산 엔진까지 태우는 것은 `/api/paper/trace` 라우트 시험이 진다.
+    """
+
+    @staticmethod
+    def _engine_row(**over):
+        r = {"id": "5Y", "label": "5Y", "entry": "2020-03-02", "exit": None,
+             # ★열쇠는 `entryValue` 다(`entry_close_of`) — 스왑·선물의 호가값.
+             # 처음 `entryClose` 로 적었더니 체결차이가 `None` 이 되어 대조가 통째로
+             # `None` 이었다. **`None` 은 0 이 아니고, 0 으로 닫힌 것도 아니다.**
+             "entryValue": 3.02, "valuation": 7_000_000.0, "carry": 2_000_000.0,
+             "rolldown": 500_000.0, "startup": 100_000.0, "funding": None,
+             "pnl": 9_600_000.0}
+        r.update(over)
+        return r
+
+    def test_차이가_0_으로_닫힌다(self):
+        """`reconcile_leg` 의 `residual` 은 「장부 손익 − (체결차이 + 엔진 − 비용)」이다.
+        카드가 발생액을 접으면 그 수가 **0** 이어야 한다 — 0 이 아니면 둘이 다른 것을
+        세고 있다는 뜻이고, 2026-10-01 까지 그 값이 −1,017만원이었다."""
+        leg = Test발생액접기._leg(level=3.0, dv01=10_000_000.0, rateSign=1)
+        row = self._engine_row()
+        # 카드가 보는 발생액 — `main._position_accrual` 과 같은 길(같은 `reconcile_leg`)
+        rec = paper.reconcile_leg(leg, row, paper_pnl=None, cost=None)
+        acc = {k: rec[k] for k in paper.ACCRUAL_KEYS}
+        acc["valuation"] = rec["valuation"]
+        scored = paper.score_leg(leg, 3.05, mark_t="2026-09-30")
+        card = paper.fold_accrual(scored, acc)
+        # 그 수로 다시 대조하면 차이가 사라진다
+        again = paper.reconcile_leg(leg, row, paper_pnl=card["pnl"], cost=card["cost"])
+        assert again["residual"] == pytest.approx(0.0, abs=1.0)
+
+    def test_접기_전에는_차이가_남는다(self):
+        """★이 시험이 위의 0 을 **뜻있게** 만든다 — 접지 않으면 차이가 선다."""
+        leg = Test발생액접기._leg(level=3.0, dv01=10_000_000.0, rateSign=1)
+        row = self._engine_row()
+        scored = paper.score_leg(leg, 3.05, mark_t="2026-09-30")
+        plain = paper.fold_accrual(scored, None)          # 종전 동작
+        rec = paper.reconcile_leg(leg, row, paper_pnl=plain["pnl"], cost=plain["cost"])
+        assert rec["residual"] is not None and abs(rec["residual"]) > 1.0
+
+    def test_엔진을_부르는_자리가_하나다(self):
+        """★카드와 추적이 각자 엔진을 부르면 또 갈린다. 부르는 곳이 하나임을 박는다
+        (끊는 날·조달·엔진이 그 함수 안에 한 벌로 있다)."""
+        import inspect
+
+        from app import main as M
+
+        src = inspect.getsource(M)
+        assert "def _position_engine_book(" in src
+        # `_book_result` 를 포지션 쪽에서 직접 부르는 자리가 그 함수 말고 없어야 한다
+        pos = src.index("def _position_engine_book(")
+        after = src[pos:]
+        body = after[: after.index("\ndef _position_accrual(")]
+        assert "_book_result(" in body
+        assert src.count("_position_engine_book(") >= 3   # 정의 1 + 부르는 곳 2
