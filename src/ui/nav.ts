@@ -198,7 +198,7 @@ export function tabForSection(s: SectionId, lastGroup: Group): TabId {
  *
  * 세입자는 **탭이 아니라 URL 상태**다(`?g=lab&lab=scenario`). 탭을 늘리면
  * `sectionOf()` 가 드는 «섹션은 유도값» 규칙에 두 번째 상태가 끼어든다. */
-export type LabId = 'surface' | 'issuance' | 'model';
+export type LabId = 'surface' | 'issuance' | 'model' | 'irs';
 
 /** 내려간 세입자. 공유된 링크가 죽지 않게 갈 곳을 적어 둔다. */
 export const RETIRED_LAB: Record<string, LabId> = { scenario: 'model' };
@@ -215,10 +215,15 @@ export const LAB_ITEMS: { id: LabId; label: string; desc: string; glyph: string 
      셈 모듈(`lab/scenario/combine.ts` 등)은 **그대로 산다** — 「전략」이 같은
      산술을 쓰기 때문이고, 가드 40개가 계속 그 산술을 잠근다. */
   { id: 'model', label: '모형', desc: '경로 하나로 데스크 노트까지, 그리고 그 숫자가 어디서 왔는지', glyph: '⌗' },
+  /* 실시간 IRS [OWNER 2026-10-01 — 「Lab 탭에서 실시간 IRS 볼 수 있을지」].
+     자료는 이미 와 있었다(`infomax_API.irs_infomax`, 초 단위) — 백엔드가 페이퍼
+     북 장중 평가로 벌써 읽고 `/api/paper/live` 로 내고 있었고, 없던 것은 화면뿐.
+     Lab 에 두는 이유: 이 수로 무엇을 할지(문턱·신호)를 아직 안 정했다. */
+  { id: 'irs', label: '실시간 IRS', desc: '지금 커브가 종가에서 얼마나 움직였나', glyph: '◷' },
 ];
 
 export function isLabId(v: string | undefined): v is LabId {
-  return v === 'surface' || v === 'issuance' || v === 'model';
+  return v === 'surface' || v === 'issuance' || v === 'model' || v === 'irs';
 }
 
 /* ── Strategy 의 세입자들 [OWNER 2026-08-24] ─────────────────────────────────

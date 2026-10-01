@@ -65,6 +65,7 @@ import {
 } from '@/ui/nav';
 import { Surface3D } from '@/ui/Surface3D';
 import { IssuancePage } from '@/lab/IssuancePage';
+import { LiveIrsPage } from '@/lab/irs/LiveIrsPage';
 import { ModelSpace } from '@/lab/model/ModelSpace';
 
 /** Swap groups first (v1's), then the Cash Bond pair (2026-08-18).
@@ -672,11 +673,17 @@ const BANNER_H = 34;
                 ? '발행 캘린더를 그리지 못했어요.'
                 : lab === 'model'
                   ? '모형 화면을 그리지 못했어요.'
-                  : '커브 표면을 그리지 못했어요.'
+                  : lab === 'irs'
+                    ? '실시간 IRS 를 그리지 못했어요.'
+                    : '커브 표면을 그리지 못했어요.'
             }
           >
             {lab === 'issuance' ? (
               <IssuancePage />
+            ) : lab === 'irs' ? (
+              /* 라이브 전용이다 — 제 fetch 로 선다(Strategy 세입자들과 같은 자세).
+                 `data`(종가 묶음)를 기다리지 않는다. */
+              <LiveIrsPage />
             ) : lab === 'model' ? (
               /* 세션 1 이 세운 껍데기. 세 면의 내용은 다음 두 세션이 각자
                  자기 슬롯 안에만 넣는다 — 이 분기와 셸은 안 건드린다. */
