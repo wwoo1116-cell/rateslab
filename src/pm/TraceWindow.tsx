@@ -111,12 +111,16 @@ function PathChart({ path }: { path: PaperTrace['path'] }) {
 }
 
 /** 돈 한 칸 — 부호 방향색, 못 센 것은 «—». */
-function Money({ v, muted }: { v: number | null | undefined; muted?: boolean }) {
+function Money({ v, muted, strong }: {
+  v: number | null | undefined; muted?: boolean;
+  /** 합계 줄 — 한 단계 무겁게. 뮤트 칸(비용·차이)은 뮤트를 유지한다. */
+  strong?: boolean;
+}) {
   if (typeof v !== 'number') {
     return <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>{MINUS}</Text>;
   }
   return (
-    <Text font={muted ? 'legal' : 'label2'} as="span" tabularNumbers noWrap
+    <Text font={muted ? 'legal' : strong ? 'label1' : 'label2'} as="span" tabularNumbers noWrap
       color={muted ? 'fgMuted' : undefined}
       className={muted ? undefined : directionClass(v)}>
       {fmtKrw(v)}
@@ -124,23 +128,37 @@ function Money({ v, muted }: { v: number | null | undefined; muted?: boolean }) 
   );
 }
 
-const COLS: { key: keyof PaperTraceRow; label: string; help?: string }[] = [
-  { key: 'exec', label: '체결 차이' },
-  { key: 'valuation', label: '평가' },
-  { key: 'carry', label: '캐리' },
-  { key: 'rolldown', label: '롤다운' },
-  { key: 'startup', label: '개시' },
-  { key: 'funding', label: '조달' },
-  { key: 'cost', label: '비용' },
-  { key: 'engine', label: '엔진 합' },
-  { key: 'paper', label: '장부 손익' },
-  { key: 'residual', label: '차이' },
+/* 열은 **두 묶음**이다 [OWNER 2026-10-01 — 추적 손질]. 열둘이 한 줄로 서면 어디까지가
+   재료이고 어디부터가 결과인지 읽는 사람이 세어야 했다. 묶음 머리가 그 선을 긋는다.
+   ⚠`group` 이 **이어진 것끼리만** 묶이므로 목록의 차례가 곧 묶음의 경계다. */
+const COLS: { key: keyof PaperTraceRow; label: string; group: '성분' | '합계' }[] = [
+  { key: 'exec', label: '체결 차이', group: '성분' },
+  { key: 'valuation', label: '평가', group: '성분' },
+  { key: 'carry', label: '캐리', group: '성분' },
+  { key: 'rolldown', label: '롤다운', group: '성분' },
+  { key: 'startup', label: '개시', group: '성분' },
+  { key: 'funding', label: '조달', group: '성분' },
+  { key: 'cost', label: '비용', group: '성분' },
+  { key: 'engine', label: '엔진 합', group: '합계' },
+  { key: 'paper', label: '장부 손익', group: '합계' },
+  { key: 'residual', label: '차이', group: '합계' },
 ];
 
-function Th({ children, num }: { children: React.ReactNode; num?: boolean }) {
+/** 묶음 머리의 칸 수 — `COLS` 에서 **유도한다**(손으로 세지 않는다). */
+const COL_GROUPS = COLS.reduce<{ label: string; span: number }[]>((out, c) => {
+  const last = out[out.length - 1];
+  if (last && last.label === c.group) last.span += 1;
+  else out.push({ label: c.group, span: 1 });
+  return out;
+}, []);
+
+function Th({ children, num, colSpan, center }: {
+  children?: React.ReactNode; num?: boolean; colSpan?: number; center?: boolean;
+}) {
   return (
-    <TableCell as="th" scope="col" className={num ? 'sr-num' : undefined}
-      justifyContent={num ? 'flex-end' : undefined}>
+    <TableCell as="th" scope="col" colSpan={colSpan}
+      className={num ? 'sr-num' : undefined}
+      justifyContent={center ? 'center' : num ? 'flex-end' : undefined}>
       <Text font="caption" as="span" color="fgMuted" noWrap>{children}</Text>
     </TableCell>
   );
@@ -191,6 +209,13 @@ export function TraceWindow({ ns, title, onClose }: {
   const entryIdx = [...new Set((data?.rows ?? []).map((r) => r.entry).filter(Boolean))]
     .map((d) => dates.indexOf(d as string)).filter((i) => i >= 0);
   const markLines = entryIdx.map((index) => ({ index, label: '진입' }));
+  /* 머리띠 ①의 재료 — **가장 이른 진입일**과 거기부터 엔진 마지막 날까지의 날수.
+     달력 날수다(영업일 아님) — 「며칠째 들고 있나」는 사람이 달력으로 센다. */
+  const entryT = [...(data?.rows ?? [])].map((r) => r.entry).filter(Boolean).sort()[0];
+  const heldDays = (entryT && book)
+    ? Math.max(0, Math.round(
+        (Date.parse(book.to) - Date.parse(entryT)) / 86_400_000))
+    : null;
   const pair = book ? reconPair(book.recon) : undefined;
   const blocks = pair ? [pair.swap, pair.bond, pair.futures].filter(Boolean).length : 0;
 
@@ -216,7 +241,20 @@ export function TraceWindow({ ns, title, onClose }: {
           <LoadingState what="트레이드 추적" />
         ) : (
           <>
-            {/* ── 머리띠 — 묶음의 계열 시선(내 레벨 · 지금 · Δ · 밴드 · 계열 선) ──
+            {/* ── 머리띠 ① **지금 무엇을 보고 있나** [OWNER 2026-10-01 — 추적 손질].
+                종전에는 창을 열면 바로 «계열 밴드»가 나와서, 이 창이 어느 트레이드의
+                어느 구간을 말하는지는 제목과 부제에 흩어져 있었다. 트레이드를 읽는
+                사람이 먼저 묻는 것은 «언제 들어가 며칠째이고 지금 얼마인가»다. */}
+            <HStack className="sr-rv-bar" gap={1.5} alignItems="center" flexWrap="wrap" width="100%">
+              <Cond k="진입" v={entryT ?? MINUS} />
+              <Cond k="보유" v={heldDays == null ? MINUS : `${heldDays}일`} />
+              <Cond k="다리" v={`${data.rows.length}개`} />
+              <Cond k="장부 손익"
+                v={data.total.paper == null ? MINUS : fmtKrw(data.total.paper)} strong />
+              <Cond k="기준" v={data.basis?.head === 'live' ? '머리띠·그림 장중 · 표 종가' : '종가'} />
+            </HStack>
+
+            {/* ── 머리띠 ② 묶음의 계열 시선(내 레벨 · 지금 · Δ · 밴드 · 계열 선) ──
                 표의 조건 바와 같은 부품(`Cond`)이다. 계열이 없으면 사유 한 줄. */}
             {data.group.series ? (
               <HStack className="sr-rv-bar" gap={1.5} alignItems="center" flexWrap="wrap" width="100%">
@@ -238,14 +276,50 @@ export function TraceWindow({ ns, title, onClose }: {
               </Text>
             )}
 
-            {/* ── 계열 경로 — 진입 앞 몇 봉부터 오늘까지, 선과 같이 ── */}
-            <PathChart path={data.path} />
+            {/* ── 그림 둘은 **나란히** [OWNER 2026-10-01 — 추적 손질] ──────────
+                계열 경로(220)와 누적 손익(200)이 세로로 쌓여 있어 표를 보려면 그림
+                둘을 지나야 했고, 창이 한 화면에 안 들었다. 둘은 **같은 기간의 두
+                얼굴**(계열이 어디 있나 / 돈이 얼마가 됐나)이라 나란히 두면 눈이
+                한 번에 읽는다. 좁아지면 `flexWrap` 이 도로 세로로 세운다. */}
+            <HStack gap={2} width="100%" alignItems="stretch" flexWrap="wrap">
+              <VStack flexGrow={1} flexShrink={1} flexBasis={520} minWidth={420}>
+                <PathChart path={data.path} />
+              </VStack>
+              <VStack gap={0.5} flexGrow={1} flexShrink={1} flexBasis={520} minWidth={420}>
+                <HStack gap={1} alignItems="baseline" flexWrap="wrap">
+                  <Text font="label1" as="span" noWrap>누적 손익 (엔진, 종가 진입)</Text>
+                  <Text font="legal" as="span" color="fgMuted" noWrap>
+                    {`총 ${fmtKrw(book.pnl)} · 최대 ${fmtKrw(book.maxProfit)} · 최저 ${fmtKrw(book.maxLoss)}`}
+                  </Text>
+                </HStack>
+                <Box width="100%">
+                  <TimeChart
+                    dates={dates}
+                    lines={lines}
+                    markLines={markLines}
+                    priceLines={[{ value: 0, color: (pal) => pal.line }]}
+                    height={220}
+                    precision={0}
+                    accessibilityLabel="트레이드 누적 손익"
+                    hoverLabel={(i) => `${dates[i]} 누적 ${fmtKrw(book.points[i]?.pnl ?? 0)}`}
+                  />
+                </Box>
+              </VStack>
+            </HStack>
 
             {/* ── 대조 표 — 장부 손익 = 체결 차이 + 엔진 손익 − 비용 + 차이 ── */}
             <VStack gap={0.5} width="100%">
               <div className="sr-rv-scroll">
                 <Table bordered={false}>
                   <TableHeader>
+                    {/* 묶음 머리 — 어디까지가 재료이고 어디부터가 결과인가. */}
+                    <TableRow>
+                      <Th />
+                      <Th />
+                      {COL_GROUPS.map((g) => (
+                        <Th key={g.label} colSpan={g.span} center>{g.label}</Th>
+                      ))}
+                    </TableRow>
                     <TableRow>
                       <Th>다리</Th>
                       <Th num>내 레벨 → 종가</Th>
@@ -285,8 +359,10 @@ export function TraceWindow({ ns, title, onClose }: {
                         </TableCell>
                         {COLS.map((c) => (
                           <TableCell key={c.key} className="sr-num" justifyContent="flex-end">
+                            {/* 합계 줄의 수는 다리 줄보다 **무겁다** — 종전에는
+                                같은 활자라 어디가 결론인지 눈이 안 멈췄다. */}
                             <Money v={data.total[c.key as keyof PaperTrace['total']]}
-                              muted={c.key === 'cost' || c.key === 'residual'} />
+                              muted={c.key === 'cost' || c.key === 'residual'} strong />
                           </TableCell>
                         ))}
                       </TableRow>
@@ -313,27 +389,6 @@ export function TraceWindow({ ns, title, onClose }: {
               ) : null}
             </VStack>
 
-            {/* ── 누적 손익 — 진입일부터, 엔진의 하루 단위 ── */}
-            <VStack gap={0.5} width="100%">
-              <HStack gap={1} alignItems="baseline">
-                <Text font="label1" as="span" noWrap>누적 손익 (엔진, 종가 진입)</Text>
-                <Text font="legal" as="span" color="fgMuted" noWrap>
-                  {`총 ${fmtKrw(book.pnl)} · 최대 ${fmtKrw(book.maxProfit)} · 최저 ${fmtKrw(book.maxLoss)}`}
-                </Text>
-              </HStack>
-              <Box width="100%">
-                <TimeChart
-                  dates={dates}
-                  lines={lines}
-                  markLines={markLines}
-                  priceLines={[{ value: 0, color: (pal) => pal.line }]}
-                  height={200}
-                  precision={0}
-                  accessibilityLabel="트레이드 누적 손익"
-                  hoverLabel={(i) => `${dates[i]} 누적 ${fmtKrw(book.points[i]?.pnl ?? 0)}`}
-                />
-              </Box>
-            </VStack>
 
             {/* ── 일별 대사 — Backtest 창의 그 스택, 표마다 자기 달력 ── */}
             {pair?.swap ? (

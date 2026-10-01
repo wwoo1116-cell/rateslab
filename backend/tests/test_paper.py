@@ -2153,6 +2153,65 @@ class Test발생액접기:
         assert pos["groups"][0]["pnl"] == pytest.approx(leg["pnl"])
         assert leg["pnl"] != leg["mtm"]        # 접혔다는 것이 수에 드러난다
 
+    def test_묶음마다_분해가_있고_합이_전체와_닫힌다(self):
+        """★[OWNER 2026-10-01 — 「합계랑 분해랑 각각을 트레이드별로」].
+
+        묶음의 분해는 전체(`position.split`)와 **같은 함수**(`position_split`)가
+        센다. 두 벌의 산술로 갈리면 화면이 트레이드를 펼칠 때와 접을 때 다른 수를
+        말한다 — 그래서 여기서 재는 것은 「칸이 있다」가 아니라 **1원까지 닫힌다**다.
+        """
+        leg_of, _d, _v = _leg_of(120)
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2020-03-02",
+                      level=3.0, notional=1e10, dv01=1_900_000.0, tag="1st")
+        paper.add_leg(st, kind="irs", tenor="5Y", side="receive", entry="2020-03-02",
+                      level=3.5, notional=1e10, dv01=4_300_000.0, tag="2nd")
+        acc = {1: {"exec": 1e6, "carry": 2e6, "rolldown": 5e5, "startup": 1e5,
+                   "funding": None, "valuation": 7e6},
+               2: {"exec": -3e5, "carry": 4e6, "rolldown": -2e5, "startup": 5e4,
+                   "funding": None, "valuation": -1.5e6}}
+        sheet = paper.build_sheet(leg_of=leg_of, store=st,
+                                 mark_of=lambda k, t: ("2020-03-03", 3.05),
+                                 accrual_of=lambda rows: acc)
+        pos = sheet["position"]
+        groups = pos["groups"]
+        assert [g["label"] for g in groups] == ["1st", "2nd"]
+        whole = pos["split"]
+        for g in groups:
+            assert g["split"], "묶음마다 분해가 있다"
+            assert g["split"]["legs"] == 1 and g["split"]["folded"] == 1
+        # ★성분도 합계도 1원까지 닫힌다 — 반올림 두 번이 끼어들 자리가 없다.
+        for k in (*paper.ACCRUAL_KEYS, "valuation", "engineValuation", "cost",
+                  "total", "foldedTotal"):
+            parts = [g["split"][k] for g in groups]
+            if whole[k] is None:
+                assert all(v is None for v in parts), k
+                continue
+            assert sum(parts) == pytest.approx(whole[k], abs=1.0), k
+        assert whole["legs"] == 2 and whole["folded"] == 2
+        # 기여의 합 = 카드 머리의 합계. 화면이 퍼센트를 여기서 센다.
+        assert (groups[0]["split"]["foldedTotal"] + groups[1]["split"]["foldedTotal"]
+                == pytest.approx(pos["pnl"], abs=1.0))
+
+    def test_못_접은_다리가_있는_묶음은_합계를_비운다(self):
+        """★분해가 합계를 설명하는 것처럼 보이면 안 된다 — 그 묶음의 `total` 은
+        `None` 이고 `foldedTotal`/`folded` 로 말한다(전체와 같은 규율)."""
+        leg_of, _d, _v = _leg_of(120)
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2020-03-02",
+                      level=3.0, notional=1e10, dv01=1_900_000.0, tag="T")
+        paper.add_leg(st, kind="irs", tenor="5Y", side="receive", entry="2020-03-02",
+                      level=3.5, notional=1e10, dv01=4_300_000.0, tag="T")
+        acc = {1: {"exec": 1e6, "carry": 2e6, "rolldown": 5e5, "startup": 1e5,
+                   "funding": None, "valuation": 7e6}}       # 2번은 엔진이 못 셌다
+        sheet = paper.build_sheet(leg_of=leg_of, store=st,
+                                 mark_of=lambda k, t: ("2020-03-03", 3.05),
+                                 accrual_of=lambda rows: acc)
+        sp = sheet["position"]["groups"][0]["split"]
+        assert sp["total"] is None, "하나라도 안 접혔으면 합계는 비운다"
+        assert sp["folded"] == 1 and sp["legs"] == 2
+        assert sp["foldedTotal"] is not None
+
 
 class Test카드와추적이같은수를말한다:
     """★★«대조 문» — 이 묶음이 없어서 결함이 한 달 가까이 살았다.

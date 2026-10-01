@@ -71,7 +71,12 @@ export type WindowKey =
   | "mrbook"
   /* 페이퍼 북의 트레이드 추적 [OWNER 2026-09-28] — 다리들을 백테스트 엔진에 실어
      진입일부터 분해한 창. 백테스트 창과 **다른 열쇠**다(둘이 같이 열릴 수 있다). */
-  | "papertrace";
+  | "papertrace"
+  /* 포지션(다리) 담기 [OWNER 2026-10-01 — 「포지션 추가할때는 다른탭에서 백테스트
+     확인하듯이 새 창 띄워서」]. 추적 창(`papertrace`)과 **다른 열쇠**다 — 추적을
+     열어 두고 다음 다리를 담는 일이 있고, 그때 한쪽을 옮기면 다른 쪽이 따라가면
+     안 된다. */
+  | "paperadd";
 
 const remembered = new Map<WindowKey, WinPos>();
 

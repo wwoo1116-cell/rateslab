@@ -220,6 +220,11 @@ export interface PaperPositionGroup {
   scoredPnl: number | null;
   scored: number;
   pending: number;
+  /** ★이 묶음의 **손익 분해** [OWNER 2026-10-01 — 「합계랑 분해랑 각각을 트레이드별로」].
+   *  전체(`position.split`)와 **같은 함수**가 센다(`paper.py::position_split`) — 화면이
+   *  다시 더하지 않고(§16), 전체와 트레이드가 두 벌의 산술로 갈리지 않는다.
+   *  못 접힌 다리가 있으면 그 묶음의 항도 `null` 이다(합계와 같은 규율). */
+  split?: PositionSplit | null;
   netDv01: number;
   grossDv01: number;
   openNotional: number;
@@ -419,6 +424,10 @@ export interface PaperPositionLeg {
   engineValuation?: number | null;
   /** 종가 재평가 위에 얹은 장중 이동(원). 종가 시선이면 `null`. */
   liveMove?: number | null;
+  /** ★카드가 **실제로 쓴** 평가 = `engineValuation + liveMove` [2026-10-01].
+   *  종전에는 `position_split` 이 이 수를 `pnl − 발생액 + 비용` 으로 역산했다 —
+   *  접는 자리가 이미 아는 값을 밖에서 거꾸로 짚을 이유가 없어 서버가 적어 준다. */
+  cardValuation?: number | null;
   why: string | null;
 }
 

@@ -30,7 +30,7 @@
  * 없다 — 새 탭이라고 새 문법을 쓰면 「사이트 전체에 얼라인이 없다」가 된다.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useState } from 'react';
 
 import { Select } from '@coinbase/cds-web/alpha/select';
 import { Box, HStack, VStack } from '@coinbase/cds-web/layout';
@@ -52,6 +52,7 @@ import { GAP } from '@/ui/gaps';
 import { ErrorState, LoadingState } from '@/ui/DataState';
 import { Stat, StatColumn } from '@/ui/Stat';
 import { ThHelp } from '@/ui/ThHelp';
+import { FloatingWindow } from '@/ui/window/FloatingWindow';
 import { DROPDOWN_STYLES } from '@/ui/window/popup';
 
 /* 쓰기는 지금 **다리 둘뿐**이다. `addTrade`·`closeTrade`·`enrollSeries`·
@@ -62,8 +63,17 @@ import {
   knobsComplete, resetBook,
   type PaperInstruments, type PaperLegTrack,
   type PaperPositionGroup, type PaperPositionLeg,
-  type PaperSheet, type PaperSuggest,
+  type PaperSheet, type PaperSuggest, type PositionSplit,
 } from './api';
+
+/** 포지션 표의 **열 개수** — `TradeSplitRow` 가 한 칸으로 가로지를 폭이다.
+ *
+ * ⚠손으로 센 수는 **칸이 늘어난 날 조용히 틀린다**. 이 리포가 이미 밟은 자리다:
+ * 백테스트 분해 격자가 `repeat(cols, …)` 의 `cols` 를 손으로 세고 있었는데 칸을
+ * 하나 더 그리면서 그 셈을 안 늘려 **헤드라인이 줄을 넘고 글자가 홈통 밖으로**
+ * 나갔다(2026-09-29). 그래서 `guards/portfolio-split-row` 가 헤더의 `as="th"` 를
+ * 세어 이 수와 맞는지 잰다 — 틀리면 시험이 먼저 빨개진다. */
+const POS_COLS = 11;
 import { suggestLine } from './suggestLine';
 import { TraceWindow } from './TraceWindow';
 import { knobWord, zWord } from './words';
@@ -309,6 +319,50 @@ function seriesWord(v: number | null | undefined, unit: string | null | undefine
  * ★분해가 **일부 다리만** 됐으면 합계를 적지 않는다 — 카드 합계(전체 다리)와 다른
  *   수라 나란히 두면 분해가 합계를 설명하는 것처럼 보인다(서버가 `total` 을 비운다).
  */
+/**
+ * 분해 칸들 — **전체 스트립과 트레이드 줄이 같은 부품을 쓴다**
+ * [OWNER 2026-10-01 — 「합계랑 분해랑 각각을 트레이드별로」].
+ *
+ * 두 자리가 같은 사실을 적으므로 부품도 하나다(캐논 §8 「같은 것은 한 번만 만든다」).
+ * 전체는 `position.split`, 트레이드는 `group.split` 이고 **같은 서버 함수**가 센 것이라
+ * 칸의 뜻이 두 층에서 어긋나지 않는다.
+ *
+ * ★**개시와 체결 차이는 딴 물건이다** [OWNER 2026-10-01 — 「개시랑 체결 차이가 무슨
+ * 차이인지 설명해주고」]. 둘 다 «진입 때 생긴다»는 것만 같아서 헷갈리는데:
+ *
+ *     체결 차이 = 내가 체결한 레벨 − 진입일 **종가**        → **가격**의 차
+ *                 (rateSign × Δ × 100 × DV01. 엔진은 종가로 치고 장부는 내 체결이라
+ *                  그 틈이 이 칸이다 — `TraceWindow` 머리의 그 대조)
+ *     개시      = 거래일 → **발효일** 사이 한 밤                → **시간**의 몫
+ *                 (스팟 시작 스왑은 그 밤에 경과이자가 없어 캐리가 구조적으로 0 이고,
+ *                  그 밤의 세타가 전부 롤다운으로 떨어지던 것을 네 번째 칸으로 뺐다)
+ *
+ * 한 줄로: **체결 차이는 「얼마에 샀나」, 개시는 「하룻밤이 얼마였나」.**
+ */
+function SplitStats({ sp }: { sp: PositionSplit }) {
+  const won = (v: number | null) => (v == null ? MINUS : fmtKrw(v));
+  const tone = (v: number | null) => (v == null ? undefined : v >= 0 ? 'up' : 'down');
+  const part = (sp.folded === sp.legs
+    ? undefined
+    : `${sp.folded}/${sp.legs}다리만 분해됐어요`);
+  return (
+    <>
+      <Stat label="평가" value={won(sp.valuation)} tone={tone(sp.valuation)}
+        note={sp.liveMove == null ? undefined : `장중 이동 ${fmtKrw(sp.liveMove)} 포함`} />
+      <Stat label="캐리" value={won(sp.carry)} tone={tone(sp.carry)} note={part} />
+      <Stat label="롤다운" value={won(sp.rolldown)} tone={tone(sp.rolldown)} />
+      <Stat label="개시" value={won(sp.startup)} tone={tone(sp.startup)}
+        note="거래일→발효일 한 밤 — 시간의 몫이에요" />
+      <Stat label="체결 차이" value={won(sp.exec)} tone={tone(sp.exec)}
+        note="내 레벨 − 진입일 종가 — 가격의 차예요" />
+      <Stat label="조달" value={won(sp.funding)} tone={tone(sp.funding)}
+        note={sp.funding == null ? 'IRS 만 있는 북이라 안 매겨요' : undefined} />
+      <Stat label="비용" value={won(sp.cost == null ? null : -sp.cost)}
+        tone={sp.cost == null ? undefined : 'down'} />
+    </>
+  );
+}
+
 function PnlSplit({ p }: { p: PaperSheet['position'] }) {
   const sp = p.split;
   if (!sp) {
@@ -319,31 +373,77 @@ function PnlSplit({ p }: { p: PaperSheet['position'] }) {
       </StatColumn>
     );
   }
-  const won = (v: number | null) => (v == null ? MINUS : fmtKrw(v));
-  const tone = (v: number | null) => (v == null ? undefined : v >= 0 ? 'up' : 'down');
-  const part = (sp.folded === sp.legs
-    ? undefined
-    : `${sp.folded}/${sp.legs}다리만 분해됐어요`);
   return (
     <StatColumn title="손익 분해">
-      <Stat label="평가" value={won(sp.valuation)} tone={tone(sp.valuation)}
-        note={sp.liveMove == null ? undefined : `장중 이동 ${fmtKrw(sp.liveMove)} 포함`} />
-      <Stat label="캐리" value={won(sp.carry)} tone={tone(sp.carry)} note={part} />
-      <Stat label="롤다운" value={won(sp.rolldown)} tone={tone(sp.rolldown)} />
-      <Stat label="개시" value={won(sp.startup)} tone={tone(sp.startup)} />
-      <Stat label="체결 차이" value={won(sp.exec)} tone={tone(sp.exec)}
-        note="내 레벨과 그날 종가의 차" />
-      <Stat label="조달" value={won(sp.funding)} tone={tone(sp.funding)}
-        note={sp.funding == null ? 'IRS 만 있는 북이라 안 매겨요' : undefined} />
-      <Stat label="비용" value={won(sp.cost == null ? null : -sp.cost)}
-        tone={sp.cost == null ? undefined : 'down'} />
+      <SplitStats sp={sp} />
     </StatColumn>
+  );
+}
+
+/**
+ * 트레이드 한 줄의 **분해** — 소계 줄을 펼치면 그 아래에 선다
+ * [OWNER 2026-10-01, 선택지 확인: 「소계 줄을 펼치면 그 자리에」].
+ *
+ * 전체 스트립과 **같은 칸·같은 부품**(`SplitStats`)이라 두 층을 같은 눈으로 읽는다.
+ * 분해가 없는 묶음(엔진이 아직 안 돈 다리뿐)은 줄을 아예 안 세운다 — 빈 줄은 사실이
+ * 아니라 잡음이다.
+ */
+function TradeSplitRow({ group: g, cols }: { group: PaperPositionGroup; cols: number }) {
+  const sp = g.split;
+  if (!sp) return null;
+  return (
+    <TableRow data-sr-tradesplit="">
+      <TableCell colSpan={cols}>
+        {/* 머리 글자 하나가 이 줄의 소속을 말한다 — 없으면 수들이 표 위에 떠
+            보이고, 위 트레이드의 것인지 아래 다리의 것인지 읽는 사람이 센다.
+            들여쓰기는 다리 줄과 같은 `paddingStart={2}`(그 위계의 자리). */}
+        <HStack gap={3} flexWrap="wrap" paddingStart={2} paddingY={1} alignItems="flex-start">
+          <VStack gap={0.25} minWidth={0}>
+            <Text as="span" font="label2" color="fgMuted" noWrap>분해</Text>
+            <Text as="span" font="legal" color="fgMuted" noWrap>
+              {`${sp.folded}/${sp.legs}다리`}
+            </Text>
+          </VStack>
+          <SplitStats sp={sp} />
+        </HStack>
+      </TableCell>
+    </TableRow>
+  );
+}
+
+/**
+ * 트레이드 하나의 **기여** — 이름 / 금액 / 비중.
+ *
+ * ⚠`Stat` 을 안 쓴다 [판례 2026-09-28, 이 파일의 「제일 가까운 문」 칸]. `Stat.label`
+ * 은 `font="caption"` 이고 그 활자에 **대문자 변환**이 걸려 있어 「2nd Trader」가
+ * 「2ND TRADER」로 렌더된다. 이 칸의 키는 **사람이 지은 이름**이라 그 변환을 맞으면
+ * 안 된다. 그래서 키만 `label2` 로 적고 나머지(값 tabular·tone·뮤트 각주)는 `Stat`
+ * 의 꼴을 그대로 따른다 — 스트립 문법(`StatColumn` + 헤어라인)은 유지한다.
+ */
+function Contrib({ name, amount, share }: {
+  name: string; amount: string; share: string | undefined;
+}) {
+  const tone = amount.startsWith(MINUS) ? 'sr-down' : 'sr-up';
+  return (
+    <VStack gap={0.25} minWidth={0}>
+      <Text as="span" font="label2" color="fgMuted" noWrap>{name}</Text>
+      <Text as="span" font="body" tabularNumbers noWrap className={tone}>{amount}</Text>
+      {share ? (
+        <Text as="span" font="legal" color="fgMuted" noWrap>{share}</Text>
+      ) : null}
+    </VStack>
   );
 }
 
 function PortfolioStrip({ p }: { p: PaperSheet['position'] }) {
   const won = (v: number) => fmtKrw(v);
   const near = p.nearest;
+  /* ★**전체 손익이 어느 트레이드에서 왔나** [OWNER 2026-10-01 — 「전체수익이 5000
+     이라고만 나와있는데, 1st Trade는 3000 2nd Trade는 2000 이런식으로」].
+     수는 서버가 센 묶음 소계 그대로다(§16) — 화면이 다시 더하지 않는다. 묶음이
+     하나뿐이면 기여가 늘 100% 라 칸을 안 세운다(「필요한 정보만」). */
+  const groups = (p.groups ?? []).filter((g) => !g.total);
+  const showContrib = groups.length > 1;
   return (
     <HStack className="sr-stats" width="100%" flexWrap="wrap">
       <StatColumn title="손익">
@@ -355,6 +455,21 @@ function PortfolioStrip({ p }: { p: PaperSheet['position'] }) {
             note={`${p.scored}/${p.scored + p.pending}다리 · 나머지는 아직이에요`} />
         )}
       </StatColumn>
+      {showContrib ? (
+        <StatColumn title="트레이드별 기여">
+          {groups.map((g) => (
+            <Contrib key={g.key} name={g.label}
+              amount={g.pnl == null ? MINUS : won(g.pnl)}
+              /* 비중은 **전체가 0 이 아닐 때만**. 부호가 섞이면 100% 를 넘을 수
+                 있는데 그게 기여의 참값이다 — 자르지 않고 그대로 적는다. */
+              share={g.pnl == null
+                ? `${g.scored}/${g.scored + g.pending}다리만 매겨졌어요`
+                : p.pnl != null && p.pnl !== 0
+                  ? `${Math.round((g.pnl / p.pnl) * 100)}%`
+                  : undefined} />
+          ))}
+        </StatColumn>
+      ) : null}
       {/* ★손익 분해 [OWNER 2026-10-01 — "캐리랑 롤다운은 전일 종가로 하고, 평가만
           시가로 하면 되잖아?"]. 2026-10-01 까지 카드는 **평가 − 비용**만 셌고 캐리·
           롤다운·개시·체결차이가 통째로 빠져 있었다 — 추적은 그 전부를 세고 있었으므로
@@ -552,7 +667,7 @@ function PositionTable({
   exitDateW: number;
   exitLevelW: number;
   onClose: (n: number, exit: string, level: number) => void;
-  /** 조건 없는 다리에 **아래 담는 줄에 친 조건**을 붙일 수 있는가(다섯이 다
+  /** 조건 없는 다리에 **담기 창에 친 조건**을 붙일 수 있는가(다섯이 다
    *  찼는가). 새 컨트롤을 표 안에 만들지 않고 이미 있는 다섯 칸을 쓴다 —
    *  같은 것은 한 번만 만든다(CLAUDE.md 얼라인 8). */
   canAttach: boolean;
@@ -583,7 +698,7 @@ function PositionTable({
     return (
       <Box paddingX={2} paddingBottom={2}>
         <Text font="legal" as="span" color="fgMuted">
-          아직 쌓은 다리가 없어요 — 아래에서 하나씩 담으면 여기 쌓여요.
+          아직 쌓은 다리가 없어요 — 「다리 추가」로 하나씩 담으면 여기 쌓여요.
         </Text>
       </Box>
     );
@@ -649,11 +764,17 @@ function PositionTable({
         <TableBody>
           {groupRows(legs, groups, collapsed).map((item) => {
             if (item.kind === 'sum') {
+              const open = !collapsed.has(item.group.key);
+              /* 펼치면 소계 줄 **바로 아래**에 그 트레이드의 분해가 선다. 접으면
+                 같이 접힌다 — 트레이드만 훑을 때 분해가 끼어들면 안 된다. */
               return (
-                <SubtotalRow key={`sum-${item.group.key}`} group={item.group} busy={busy}
-                  collapsed={collapsed.has(item.group.key)}
-                  onToggle={() => toggle(item.group.key)}
-                  onTrace={onTrace} />
+                <Fragment key={`sum-${item.group.key}`}>
+                  <SubtotalRow group={item.group} busy={busy}
+                    collapsed={!open}
+                    onToggle={() => toggle(item.group.key)}
+                    onTrace={onTrace} />
+                  {open ? <TradeSplitRow group={item.group} cols={POS_COLS} /> : null}
+                </Fragment>
               );
             }
             const l = item.leg;
@@ -681,14 +802,14 @@ function PositionTable({
                   /* ★조건 없는 다리 [OWNER 2026-09-28 — "어디간거임?"]. 09-23 전에
                      담은 다리들은 조건 칸이 없던 때의 것이라 청산선·손절선이 영영
                      못 선다. 「다시 고르기」가 아니라 **빈 칸 적기**라 허용하되,
-                     새 입력을 표 안에 만들지 않고 아래 담는 줄의 다섯 칸(과 계열)을
+                     새 입력을 표 안에 만들지 않고 담기 창의 다섯 칸(과 계열)을
                      그대로 붙인다. 붙인 날은 서버가 적는다(`knobsAt`). */
                   <VStack as="span" className="sr-name-stack">
                     <button type="button" className="sr-pillbtn" data-outline=""
                       disabled={busy || !canAttach}
                       title={canAttach
-                        ? '아래 담는 줄에 친 조건 다섯(과 계열)을 이 다리에 붙여요'
-                        : '아래 담는 줄의 조건 다섯을 먼저 채워요'}
+                        ? '담기 창에 친 조건 다섯(과 계열)을 이 다리에 붙여요'
+                        : '담기 창에서 조건 다섯을 먼저 채워요'}
                       onClick={() => onAttach(l.n)}>
                       조건 붙이기
                     </button>
@@ -792,7 +913,7 @@ function PositionTable({
                 {l.open ? (
                   <HStack className="sr-numctl" gap={0.5}
                     alignItems="center" justifyContent="flex-end">
-                    {/* 날이 먼저다 — 「언제 · 얼마에」 차례로 읽힌다. 담는 줄의
+                    {/* 날이 먼저다 — 「언제 · 얼마에」 차례로 읽힌다. 담기 창의
                         체결일과 **같은 문법**이다(맨 텍스트 칸 + 오늘이 힌트):
                         이 화면은 날짜를 어디서나 ISO 로 치므로 둘이 달라지면
                         같은 일을 두 벌로 배우게 된다. */}
@@ -900,6 +1021,13 @@ export function PortfolioPage() {
   const [resetArm, setResetArm] = useState(false);
   /** 열린 추적 창 — 묶음(트레이드) 하나의 다리 번호들 [OWNER 2026-09-28]. */
   const [trace, setTrace] = useState<{ ns: number[]; title: string }>();
+  /** 담기 창이 열려 있나 [OWNER 2026-10-01 — 「포지션 추가할때는 … 백테스트
+   *  확인하듯이 새 창 띄워서」]. 종전에는 칸 열넷이 표 아래에 늘 깔려 있어서
+   *  장부를 보러 온 사람이 매번 그것을 지나야 했다 — 담기는 **가끔 하는 일**이고
+   *  보기는 **늘 하는 일**이라 위계가 뒤집혀 있었다.
+   *  ⚠담은 뒤에도 **안 닫는다**: 이 북의 트레이드는 다리 둘짜리 스프레드가
+   *  보통이라(BSS·커브) 연달아 담는 것이 기본 동작이다. */
+  const [addOpen, setAddOpen] = useState(false);
   /** ★**장중 레벨** [OWNER 2026-09-28 — "지금 2년은 4.06, 5년은 4.27, 10년은 4.3375"].
    *  이 장부의 마크는 종가인데 데스크는 장중에 산다 — 연휴 뒤 첫날처럼 종가가 아직
    *  없는 날 장부는 사흘 전 수에 묶인다. 지금 보는 금리를 치면 **서버가** 그 값으로
@@ -1282,6 +1410,17 @@ export function PortfolioPage() {
                 포트폴리오 → 트레이드 → 다리 차례예요 — 트레이드 이름을 누르면 다리를 접어요.
               </Text>
             </HStack>
+            {/* 담기는 창이 진다 [OWNER 2026-10-01]. 카드 머리의 컨트롤은 Main
+                pill 크기(32px) — 「상세 분석」·「추적」이 선 그 자리다. */}
+            <button
+              type="button"
+              className="sr-pillbtn"
+              data-on={addOpen || undefined}
+              aria-expanded={addOpen}
+              onClick={() => setAddOpen((v) => !v)}
+            >
+              다리 추가
+            </button>
           </HStack>
           {/* ★위계의 꼭대기 — 포트폴리오 전체는 **표 위 한 줄**이다 [OWNER
               2026-09-28]. 종전에는 이 카드 머리와 표 맨 아래 「전체」 줄에 같은
@@ -1355,267 +1494,292 @@ export function PortfolioPage() {
               write(() => closeLeg(n, exit, level),
                     `${n}번 다리를 ${exit} 에 닫았어요.`)}
           />
-          {/* 담는 줄 — 얼라인 캐논 그대로(라벨 위 · 32px 등고 · 바닥 정렬 ·
-              폭은 감싸는 Box 가 준다). */}
-          {/* ★접히는 단위는 **묶음**이다 [OWNER 2026-09-23 · T4]. 칸이 열넷이라
-              1440 에서도 접히는데, 평평한 목록이면 끝의 요소 하나가 혼자 선다
-              (Playwright 가드가 그것을 잡았다). 넷으로 묶는다 —
-              무엇을(계기·만기·방향) / 얼마에·얼마나(체결금리·크기기준·명목) /
-              언제·무엇으로(체결일·묶음) / 그날의 조건(다섯 + 담기).
-              담기 버튼은 **마지막 묶음 안**이다: 혼자 두면 그 버튼이 또 혼자 선다.
-              ⚠ 틈은 안 바꾼다 — 묶음 사이도 12px(09-02 의 그 결정). */}
-          <HStack gap={GAP.field} alignItems="flex-end" paddingX={2} paddingBottom={0.5}
-            flexWrap="wrap">
-            <HStack gap={GAP.field} alignItems="flex-end">
-            <Box width={kindW}>
-              {fontProbe}
-              <Field label="계기">
-                <Select size="s" font="legal" styles={DROPDOWN_STYLES}
-                  accessibilityLabel="계기"
-                  value={legKind}
-                  onChange={(v: unknown) => {
-                    const k = String(v ?? 'irs') as 'irs' | 'bond' | 'fut';
-                    setLegKind(k);
-                    {/* 계기를 바꾸면 만기·방향이 그 계기의 것으로 **따라간다** —
-                        안 따라가면 「선물 2Y 페이」 같은 조합이 폼에 남는다. */}
-                    const found = inst?.kinds.find((x) => x.kind === k);
-                    if (found) {
-                      if (!found.tenors.includes(legTenor)) setLegTenor(found.tenors[0] ?? '');
-                      if (!found.sides.some((sd) => sd.v === legSide)) {
-                        setLegSide(found.sides[0]?.v ?? '');
-                      }
-                    }
-                  }}
-                  options={(inst?.kinds ?? []).map((k) => ({ value: k.kind, label: k.label }))}
-                />
-              </Field>
-            </Box>
-            <Box width={tenorW}>
-              <Field label="만기">
-                <Select size="s" font="legal" styles={DROPDOWN_STYLES}
-                  accessibilityLabel="만기"
-                  value={legTenor}
-                  onChange={(v: unknown) => setLegTenor(String(v ?? ''))}
-                  options={(inst?.kinds.find((k) => k.kind === legKind)?.tenors ?? [])
-                    .map((t) => ({ value: t, label: t }))}
-                />
-              </Field>
-            </Box>
-            <Box width={sideW}>
-              <Field label="방향"
-                help="부호는 낱말이 아니라 「금리가 오르면 버는가」로 저장돼요 — 페이와 선물 매도가 같은 쪽이에요.">
-                <Select size="s" font="legal" styles={DROPDOWN_STYLES}
-                  accessibilityLabel="방향"
-                  value={legSide}
-                  onChange={(v: unknown) => setLegSide(String(v ?? ''))}
-                  options={(inst?.kinds.find((k) => k.kind === legKind)?.sides ?? [])
-                    .map((sd) => ({ value: sd.v, label: sd.label }))}
-                />
-              </Field>
-            </Box>
-            </HStack>
-            <HStack gap={GAP.field} alignItems="flex-end">
-            <Box width={rateW}>
-              <Field label="체결 금리(%)"
-                help="내가 실제로 받은 레벨이에요. 종가가 아니라 이걸 적는 게 이 표의 존재 이유예요.">
-                <TextInput size="s" fontSize="legal" height={CONTROL_H}
-                  accessibilityLabel="체결 금리 (%)"
-                  value={legLevel}
-                  placeholder="3.970"
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegLevel(e.target.value)}
-                />
-              </Field>
-            </Box>
-            {/* ⚠ 이 칸은 **유도로 안 옮긴다** [실측 2026-09-23]. 죽은 폭이 27.5px
-                (T1 초과)인 건 맞지만, `Segmented` 의 알약은 `.sr-ctlfont`
-                (14px/600)를 쓰고 컨트롤 **값**은 13px/400 이다 — 값 폰트로 재서
-                상자를 121 로 좁혔더니 알약 합(122.5)이 **상자를 1.5px 넘었다**.
-                제대로 하려면 알약용 탐침이 하나 더 있어야 하고, 그건 이 회차의
-                범위 밖이다. 150 을 그대로 둔다(넘치는 것보다 남는 게 낫다). */}
-            <Box width={150}>
-              <Field label="크기 기준"
-                help="하나만 쳐요 — 나머지는 진입일 커브로 서버가 채워요. 둘 다 받으면 안 맞는 쌍이 장부에 남아요.">
-                <Segmented
-                  value={sizeMode}
-                  onChange={setSizeMode}
-                  label="크기 기준"
-                  options={[
-                    { value: 'notional', label: '명목', title: '억 단위' },
-                    { value: 'dv01', label: 'DV01', title: '만원/bp' },
-                  ]}
-                />
-              </Field>
-            </Box>
-            <Box width={sizeW}>
-              <Field label={sizeMode === 'notional' ? '명목(억)' : 'DV01(만원/bp)'}>
-                <TextInput size="s" fontSize="legal" height={CONTROL_H}
-                  accessibilityLabel={sizeMode === 'notional' ? '명목 (억)' : 'DV01 (만원/bp)'}
-                  value={sizeVal}
-                  placeholder={sizeMode === 'notional' ? '100' : '295'}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSizeVal(e.target.value)}
-                />
-              </Field>
-            </Box>
-            </HStack>
-            <HStack gap={GAP.field} alignItems="flex-end">
-            <Box width={dateW}>
-              <Field label="체결일">
-                <TextInput size="s" fontSize="legal" height={CONTROL_H}
-                  accessibilityLabel="체결일 (YYYY-MM-DD)"
-                  value={legEntry}
-                  /* ★`asof`(자료의 날)가 아니라 **오늘**이다 — 종전에는 이 기본값
-                     때문에 오늘 장중에 한 거래가 어제 날짜로 장부에 들어갔다.
-                     하드코딩돼 있던 '2026-09-21' 폴백도 같이 없앤다(서버가 늘
-                     오늘을 실어 준다). */
-                  placeholder={sheet.today}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegEntry(e.target.value)}
-                />
-              </Field>
-            </Box>
-            <Box width={tagW}>
-              <Field label="묶음"
-                help="다리들을 부르는 이름이에요(예 「BSS 2Y」). 산술에는 안 써요 — 묶음이 산술을 지면 화면이 BSS 를 다시 정의하게 돼요.">
-                <TextInput size="s" fontSize="legal" height={CONTROL_H}
-                  accessibilityLabel="묶음 이름"
-                  value={legTag}
-                  placeholder="BSS 2Y"
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegTag(e.target.value)}
-                />
-              </Field>
-            </Box>
-            {/* ★그날의 조건 다섯 [트레이더 2026-09-23]. 이 줄은 `flexWrap` 이라
-                좁으면 둘째 줄로 접힌다 — 칸이 열둘이 되는 자리고, 접히는 것이
-                줄이는 것보다 낫다(「낱말 중간 줄바꿈 금지」 5 와 같은 규율).
-                라벨 위 · 32px 등고 · 바닥 정렬은 형제와 같다. */}
-            </HStack>
-            <HStack gap={GAP.field} alignItems="flex-end">
-            <Box width={seriesW}>
-              <Field label="계열"
-                help="이 다리가 속한 계열이에요. 고르면 얼린 조건으로 청산·손절이 닿았는지 화면이 말해요 — 안 고르면 조건만 적히고 추적은 안 해요.">
-                <Select size="s" font="legal" styles={DROPDOWN_STYLES}
-                  accessibilityLabel="계열"
-                  value={legSeries || NO_SERIES}
-                  onChange={(v: unknown) => {
-                    const id = String(v ?? NO_SERIES);
-                    setLegSeries(id === NO_SERIES ? '' : id);
-                  }}
-                  options={[
-                    { value: NO_SERIES, label: '안 함' },
-                    ...(inst?.series ?? []).map((x) => ({ value: x.id, label: x.label })),
-                  ]}
-                />
-              </Field>
-            </Box>
-            <Box width={lbW}>
-              <Field label="룩백 (일)"
-                help="이 다리를 담을 때의 조건이에요. 다섯을 다 채우면 같이 얼고, 하나라도 비면 조건 없는 다리로 담겨요.">
-                <TextInput size="s" fontSize="legal" height={CONTROL_H}
-                  accessibilityLabel="룩백 (일)"
-                  value={knobLb} placeholder="120"
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobLb(e.target.value)}
-                />
-              </Field>
-            </Box>
-            <Box width={zW}>
-              <Field label="진입 σ">
-                <TextInput size="s" fontSize="legal" height={CONTROL_H}
-                  accessibilityLabel="진입 σ"
-                  value={knobEntryZ} placeholder="2.5"
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobEntryZ(e.target.value)}
-                />
-              </Field>
-            </Box>
-            <Box width={zW}>
-              <Field label="청산 σ">
-                <TextInput size="s" fontSize="legal" height={CONTROL_H}
-                  accessibilityLabel="청산 σ"
-                  value={knobExitZ} placeholder="0.5"
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobExitZ(e.target.value)}
-                />
-              </Field>
-            </Box>
-            <Box width={zW}>
-              <Field label="손절 σ">
-                <TextInput size="s" fontSize="legal" height={CONTROL_H}
-                  accessibilityLabel="손절 σ"
-                  value={knobStopZ} placeholder="3"
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobStopZ(e.target.value)}
-                />
-              </Field>
-            </Box>
-            <Box width={modeW}>
-              <Field label="진입 규칙">
-                {/* 낱말은 MR 화면의 그것이다 — 두 화면이 같은 규칙을 다르게
-                    부르면 어제 다리와 오늘 노브를 못 잇는다. */}
-                <Select size="s" font="legal" styles={DROPDOWN_STYLES}
-                  accessibilityLabel="진입 규칙"
-                  value={knobMode}
-                  onChange={(v: unknown) =>
-                    setKnobMode(String(v ?? 'level') as 'level' | 'touch')}
-                  options={[
-                    { value: 'level', label: '이탈 즉시' },
-                    { value: 'touch', label: '밴드 복귀' },
-                  ]}
-                />
-              </Field>
-            </Box>
-            <button
-              type="button"
-              className="sr-pillbtn"
-              /* 카드(흰/짙은 카드색) 위라 캐논의 «액션 pill» 채움이 보인다 —
-                 쓰는 버튼은 사실 칩과 구별돼야 한다 [트레이더 2026-09-22]. */
-              data-fill=""
-              disabled={busy || !inst || !legTenor || !legSide || !legLevel || !sizeVal}
-              onClick={() => {
-                const size = Number(sizeVal);
-                const level = Number(legLevel);
-                write(
-                  () => addLeg({
-                    kind: legKind,
-                    tenor: legTenor,
-                    side: legSide,
-                    entry: legEntry || sheet.today,
-                    level,
-                    ...(sizeMode === 'notional'
-                      ? { notional: size * 1e8 }
-                      : { dv01: size * 1e4 }),
-                    tag: legTag,
-                    ...(knobs ? { knobs } : {}),
-                    ...(legSeries ? { series: legSeries } : {}),
-                  }),
-                  `${KIND_WORD[legKind]} ${legTenor} ${SIDE_WORD[legSide] ?? legSide}${
-                    eul(SIDE_WORD[legSide] ?? legSide)} 담았어요.`);
-              }}
+          {/* ── 담기 창 [OWNER 2026-10-01 — 「포지션 추가할때는 다른탭에서
+              백테스트 확인하듯이 새 창 띄워서」] ─────────────────────────────
+              종전에는 이 칸 열넷이 표 **아래에 늘** 깔려 있었다. 담기는 «가끔 하는
+              일»이고 보기는 «늘 하는 일»이라 위계가 뒤집혀 있었다 — 장부를 보러 온
+              사람이 매번 폼을 지나야 했다.
+              백테스트·추적과 **같은 부품**(`FloatingWindow` · 제 열쇠로 자리를
+              기억한다)을 쓴다 — 새 탭이라고 새 문법을 만들지 않는다(캐논).
+              ⚠칸과 클로저는 **그대로** 옮겼다: 이 폼이 페이지 상태 스물몇 개를
+              쥐고 있어 별 컴포넌트로 떼면 prop 이 스물몇 개가 된다. */}
+          {addOpen ? (
+            <FloatingWindow
+              windowKey="paperadd"
+              title="다리 담기"
+              /* 칸이 네 묶음이라 1240 이면 두 묶음씩 서고, 좁아지면 묶음째 접힌다
+                 (`flexWrap` 이 이미 그 일을 한다 — 09-23 T4 의 그 결정). */
+              width={1240}
+              aside={
+                <Text font="caption" as="span" color="fgMuted" noWrap>
+                  담아도 창은 열린 채예요 — 스프레드는 다리가 둘이니까요
+                </Text>
+              }
+              onClose={() => setAddOpen(false)}
             >
-              다리 담기
-            </button>
+            {/* 담는 줄 — 얼라인 캐논 그대로(라벨 위 · 32px 등고 · 바닥 정렬 ·
+                폭은 감싸는 Box 가 준다). */}
+            {/* ★접히는 단위는 **묶음**이다 [OWNER 2026-09-23 · T4]. 칸이 열넷이라
+                1440 에서도 접히는데, 평평한 목록이면 끝의 요소 하나가 혼자 선다
+                (Playwright 가드가 그것을 잡았다). 넷으로 묶는다 —
+                무엇을(계기·만기·방향) / 얼마에·얼마나(체결금리·크기기준·명목) /
+                언제·무엇으로(체결일·묶음) / 그날의 조건(다섯 + 담기).
+                담기 버튼은 **마지막 묶음 안**이다: 혼자 두면 그 버튼이 또 혼자 선다.
+                ⚠ 틈은 안 바꾼다 — 묶음 사이도 12px(09-02 의 그 결정). */}
+            <HStack gap={GAP.field} alignItems="flex-end" paddingX={2} paddingBottom={0.5}
+              flexWrap="wrap">
+              <HStack gap={GAP.field} alignItems="flex-end">
+              <Box width={kindW}>
+                {fontProbe}
+                <Field label="계기">
+                  <Select size="s" font="legal" styles={DROPDOWN_STYLES}
+                    accessibilityLabel="계기"
+                    value={legKind}
+                    onChange={(v: unknown) => {
+                      const k = String(v ?? 'irs') as 'irs' | 'bond' | 'fut';
+                      setLegKind(k);
+                      {/* 계기를 바꾸면 만기·방향이 그 계기의 것으로 **따라간다** —
+                          안 따라가면 「선물 2Y 페이」 같은 조합이 폼에 남는다. */}
+                      const found = inst?.kinds.find((x) => x.kind === k);
+                      if (found) {
+                        if (!found.tenors.includes(legTenor)) setLegTenor(found.tenors[0] ?? '');
+                        if (!found.sides.some((sd) => sd.v === legSide)) {
+                          setLegSide(found.sides[0]?.v ?? '');
+                        }
+                      }
+                    }}
+                    options={(inst?.kinds ?? []).map((k) => ({ value: k.kind, label: k.label }))}
+                  />
+                </Field>
+              </Box>
+              <Box width={tenorW}>
+                <Field label="만기">
+                  <Select size="s" font="legal" styles={DROPDOWN_STYLES}
+                    accessibilityLabel="만기"
+                    value={legTenor}
+                    onChange={(v: unknown) => setLegTenor(String(v ?? ''))}
+                    options={(inst?.kinds.find((k) => k.kind === legKind)?.tenors ?? [])
+                      .map((t) => ({ value: t, label: t }))}
+                  />
+                </Field>
+              </Box>
+              <Box width={sideW}>
+                <Field label="방향"
+                  help="부호는 낱말이 아니라 「금리가 오르면 버는가」로 저장돼요 — 페이와 선물 매도가 같은 쪽이에요.">
+                  <Select size="s" font="legal" styles={DROPDOWN_STYLES}
+                    accessibilityLabel="방향"
+                    value={legSide}
+                    onChange={(v: unknown) => setLegSide(String(v ?? ''))}
+                    options={(inst?.kinds.find((k) => k.kind === legKind)?.sides ?? [])
+                      .map((sd) => ({ value: sd.v, label: sd.label }))}
+                  />
+                </Field>
+              </Box>
+              </HStack>
+              <HStack gap={GAP.field} alignItems="flex-end">
+              <Box width={rateW}>
+                <Field label="체결 금리(%)"
+                  help="내가 실제로 받은 레벨이에요. 종가가 아니라 이걸 적는 게 이 표의 존재 이유예요.">
+                  <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                    accessibilityLabel="체결 금리 (%)"
+                    value={legLevel}
+                    placeholder="3.970"
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegLevel(e.target.value)}
+                  />
+                </Field>
+              </Box>
+              {/* ⚠ 이 칸은 **유도로 안 옮긴다** [실측 2026-09-23]. 죽은 폭이 27.5px
+                  (T1 초과)인 건 맞지만, `Segmented` 의 알약은 `.sr-ctlfont`
+                  (14px/600)를 쓰고 컨트롤 **값**은 13px/400 이다 — 값 폰트로 재서
+                  상자를 121 로 좁혔더니 알약 합(122.5)이 **상자를 1.5px 넘었다**.
+                  제대로 하려면 알약용 탐침이 하나 더 있어야 하고, 그건 이 회차의
+                  범위 밖이다. 150 을 그대로 둔다(넘치는 것보다 남는 게 낫다). */}
+              <Box width={150}>
+                <Field label="크기 기준"
+                  help="하나만 쳐요 — 나머지는 진입일 커브로 서버가 채워요. 둘 다 받으면 안 맞는 쌍이 장부에 남아요.">
+                  <Segmented
+                    value={sizeMode}
+                    onChange={setSizeMode}
+                    label="크기 기준"
+                    options={[
+                      { value: 'notional', label: '명목', title: '억 단위' },
+                      { value: 'dv01', label: 'DV01', title: '만원/bp' },
+                    ]}
+                  />
+                </Field>
+              </Box>
+              <Box width={sizeW}>
+                <Field label={sizeMode === 'notional' ? '명목(억)' : 'DV01(만원/bp)'}>
+                  <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                    accessibilityLabel={sizeMode === 'notional' ? '명목 (억)' : 'DV01 (만원/bp)'}
+                    value={sizeVal}
+                    placeholder={sizeMode === 'notional' ? '100' : '295'}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSizeVal(e.target.value)}
+                  />
+                </Field>
+              </Box>
+              </HStack>
+              <HStack gap={GAP.field} alignItems="flex-end">
+              <Box width={dateW}>
+                <Field label="체결일">
+                  <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                    accessibilityLabel="체결일 (YYYY-MM-DD)"
+                    value={legEntry}
+                    /* ★`asof`(자료의 날)가 아니라 **오늘**이다 — 종전에는 이 기본값
+                       때문에 오늘 장중에 한 거래가 어제 날짜로 장부에 들어갔다.
+                       하드코딩돼 있던 '2026-09-21' 폴백도 같이 없앤다(서버가 늘
+                       오늘을 실어 준다). */
+                    placeholder={sheet.today}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegEntry(e.target.value)}
+                  />
+                </Field>
+              </Box>
+              <Box width={tagW}>
+                <Field label="묶음"
+                  help="다리들을 부르는 이름이에요(예 「BSS 2Y」). 산술에는 안 써요 — 묶음이 산술을 지면 화면이 BSS 를 다시 정의하게 돼요.">
+                  <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                    accessibilityLabel="묶음 이름"
+                    value={legTag}
+                    placeholder="BSS 2Y"
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLegTag(e.target.value)}
+                  />
+                </Field>
+              </Box>
+              {/* ★그날의 조건 다섯 [트레이더 2026-09-23]. 이 줄은 `flexWrap` 이라
+                  좁으면 둘째 줄로 접힌다 — 칸이 열둘이 되는 자리고, 접히는 것이
+                  줄이는 것보다 낫다(「낱말 중간 줄바꿈 금지」 5 와 같은 규율).
+                  라벨 위 · 32px 등고 · 바닥 정렬은 형제와 같다. */}
+              </HStack>
+              <HStack gap={GAP.field} alignItems="flex-end">
+              <Box width={seriesW}>
+                <Field label="계열"
+                  help="이 다리가 속한 계열이에요. 고르면 얼린 조건으로 청산·손절이 닿았는지 화면이 말해요 — 안 고르면 조건만 적히고 추적은 안 해요.">
+                  <Select size="s" font="legal" styles={DROPDOWN_STYLES}
+                    accessibilityLabel="계열"
+                    value={legSeries || NO_SERIES}
+                    onChange={(v: unknown) => {
+                      const id = String(v ?? NO_SERIES);
+                      setLegSeries(id === NO_SERIES ? '' : id);
+                    }}
+                    options={[
+                      { value: NO_SERIES, label: '안 함' },
+                      ...(inst?.series ?? []).map((x) => ({ value: x.id, label: x.label })),
+                    ]}
+                  />
+                </Field>
+              </Box>
+              <Box width={lbW}>
+                <Field label="룩백 (일)"
+                  help="이 다리를 담을 때의 조건이에요. 다섯을 다 채우면 같이 얼고, 하나라도 비면 조건 없는 다리로 담겨요.">
+                  <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                    accessibilityLabel="룩백 (일)"
+                    value={knobLb} placeholder="120"
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobLb(e.target.value)}
+                  />
+                </Field>
+              </Box>
+              <Box width={zW}>
+                <Field label="진입 σ">
+                  <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                    accessibilityLabel="진입 σ"
+                    value={knobEntryZ} placeholder="2.5"
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobEntryZ(e.target.value)}
+                  />
+                </Field>
+              </Box>
+              <Box width={zW}>
+                <Field label="청산 σ">
+                  <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                    accessibilityLabel="청산 σ"
+                    value={knobExitZ} placeholder="0.5"
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobExitZ(e.target.value)}
+                  />
+                </Field>
+              </Box>
+              <Box width={zW}>
+                <Field label="손절 σ">
+                  <TextInput size="s" fontSize="legal" height={CONTROL_H}
+                    accessibilityLabel="손절 σ"
+                    value={knobStopZ} placeholder="3"
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKnobStopZ(e.target.value)}
+                  />
+                </Field>
+              </Box>
+              <Box width={modeW}>
+                <Field label="진입 규칙">
+                  {/* 낱말은 MR 화면의 그것이다 — 두 화면이 같은 규칙을 다르게
+                      부르면 어제 다리와 오늘 노브를 못 잇는다. */}
+                  <Select size="s" font="legal" styles={DROPDOWN_STYLES}
+                    accessibilityLabel="진입 규칙"
+                    value={knobMode}
+                    onChange={(v: unknown) =>
+                      setKnobMode(String(v ?? 'level') as 'level' | 'touch')}
+                    options={[
+                      { value: 'level', label: '이탈 즉시' },
+                      { value: 'touch', label: '밴드 복귀' },
+                    ]}
+                  />
+                </Field>
+              </Box>
+              <button
+                type="button"
+                className="sr-pillbtn"
+                /* 카드(흰/짙은 카드색) 위라 캐논의 «액션 pill» 채움이 보인다 —
+                   쓰는 버튼은 사실 칩과 구별돼야 한다 [트레이더 2026-09-22]. */
+                data-fill=""
+                disabled={busy || !inst || !legTenor || !legSide || !legLevel || !sizeVal}
+                onClick={() => {
+                  const size = Number(sizeVal);
+                  const level = Number(legLevel);
+                  write(
+                    () => addLeg({
+                      kind: legKind,
+                      tenor: legTenor,
+                      side: legSide,
+                      entry: legEntry || sheet.today,
+                      level,
+                      ...(sizeMode === 'notional'
+                        ? { notional: size * 1e8 }
+                        : { dv01: size * 1e4 }),
+                      tag: legTag,
+                      ...(knobs ? { knobs } : {}),
+                      ...(legSeries ? { series: legSeries } : {}),
+                    }),
+                    `${KIND_WORD[legKind]} ${legTenor} ${SIDE_WORD[legSide] ?? legSide}${
+                      eul(SIDE_WORD[legSide] ?? legSide)} 담았어요.`);
+                }}
+              >
+                다리 담기
+              </button>
+              </HStack>
             </HStack>
-          </HStack>
-          {legSeries ? (
-            /* 그날 1등 — 담는 줄 **아래** 한 줄. 컨트롤이 아니라 글이라 폭 유도가
-               없고, 계열을 안 고르면 아예 없다(담는 줄 e2e 가 재는 기하는 그대로다).
-               문장 전체는 `suggestLine` 이 만든다 — 경고가 빠진 갈래가 없게. */
-            <Box paddingX={2}>
+            {legSeries ? (
+              /* 그날 1등 — 담는 줄 **아래** 한 줄. 컨트롤이 아니라 글이라 폭 유도가
+                 없고, 계열을 안 고르면 아예 없다(담는 줄 e2e 가 재는 기하는 그대로다).
+                 문장 전체는 `suggestLine` 이 만든다 — 경고가 빠진 갈래가 없게. */
+              <Box paddingX={2}>
+                <Text font="legal" as="span" color="fgMuted" maxWidth={760}>
+                  {suggestLine({
+                    label: inst?.series?.find((x) => x.id === legSeries)?.label ?? legSeries,
+                    entryReady,
+                    busy: suggestBusy,
+                    failed: suggestFailed,
+                    got: suggest,
+                    knobs,
+                  })}
+                </Text>
+              </Box>
+            ) : null}
+            <Box paddingX={2} paddingBottom={2}>
               <Text font="legal" as="span" color="fgMuted" maxWidth={760}>
-                {suggestLine({
-                  label: inst?.series?.find((x) => x.id === legSeries)?.label ?? legSeries,
-                  entryReady,
-                  busy: suggestBusy,
-                  failed: suggestFailed,
-                  got: suggest,
-                  knobs,
-                })}
+                {inst
+                  ? (inst.kinds.find((k) => k.kind === legKind)?.why
+                     ?? '체결 레벨과 크기는 내가 적고, 오늘 레벨과 나머지 한 칸은 서버가 채워요.')
+                  : '계기 목록을 못 읽었어요 — 백엔드를 보세요.'}
               </Text>
             </Box>
+            </FloatingWindow>
           ) : null}
-          <Box paddingX={2} paddingBottom={2}>
-            <Text font="legal" as="span" color="fgMuted" maxWidth={760}>
-              {inst
-                ? (inst.kinds.find((k) => k.kind === legKind)?.why
-                   ?? '체결 레벨과 크기는 내가 적고, 오늘 레벨과 나머지 한 칸은 서버가 채워요.')
-                : '계기 목록을 못 읽었어요 — 백엔드를 보세요.'}
-            </Text>
-          </Box>
         </VStack>
 
       </VStack>

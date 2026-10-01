@@ -1190,6 +1190,11 @@ def group_legs(rows: list[dict], **series_kw: Any) -> list[dict[str, Any]]:
         by[k].append(l)
     return [{**sum_legs(by[k], key=k,
                         label=(by[k][0]["tag"] or f"{by[k][0]['n']}번 다리 (묶음 없음)")),
+             #: ★묶음의 **손익 분해** [OWNER 2026-10-01 — 「합계랑 분해랑 각각을
+             #  트레이드별로」]. 전체(`position.split`)와 **같은 함수**다 — 화면이
+             #  다시 더하지 않게(§16), 그리고 전체와 트레이드가 두 벌의 산술로
+             #  갈리지 않게. 못 접힌 다리가 있으면 그 묶음의 항도 `None` 이다.
+             "split": position_split(by[k]),
              **group_series(by[k], **series_kw)}
             for k in order]
 
@@ -1328,6 +1333,19 @@ def score_leg(leg: dict, mark: float | None, cost_bp: float = COST_BP,
 ACCRUAL_KEYS = ("exec", "carry", "rolldown", "startup", "funding")
 
 
+def _sum_or_none(dicts: list[dict], key: str) -> float | None:
+    """「하나라도 못 잰 항이 있으면 **그 항은 `None`**」 — 섞어서 더하지 않는다.
+
+    ⚠**한 곳에 둔다** [2026-10-01]. 이 규율이 `position_split` 과 `merge_split`
+    두 곳에 **복제**돼 있었다. 복제된 규율은 한쪽만 고쳐지는 날 조용히 갈리고,
+    섞어서 더하면 「엔진 셋 + 평가만 하나」의 합이 엔진 것처럼 보인다.
+    """
+    vals = [d.get(key) for d in dicts]
+    if any(v is None for v in vals):
+        return None
+    return round(sum(float(v) for v in vals), 2)
+
+
 def position_split(rows: list[dict]) -> dict[str, float | None] | None:
     """포지션 다리들의 손익 분해 합 — **서버가 센다**(§16).
 
@@ -1342,34 +1360,43 @@ def position_split(rows: list[dict]) -> dict[str, float | None] | None:
     folded = [r for r in rows if r.get("accrued")]
     if not folded:
         return None
-    out: dict[str, float | None] = {}
-    for k in ACCRUAL_KEYS:
-        vals = [(r.get("accrual") or {}).get(k) for r in folded]
-        out[k] = (None if any(v is None for v in vals)
-                  else round(sum(float(v) for v in vals), 2))
-    # 카드가 쓴 평가 = pnl − 발생액 + 비용. 되짚을 수 있게 그 자리를 적는다.
-    known = [sum(float(v) for v in ((r.get("accrual") or {}).values()) if v is not None)
-             for r in folded]
-    out["valuation"] = round(sum(r["pnl"] for r in folded) - sum(known)
-                             + sum(r["cost"] for r in folded), 2)
-    out["engineValuation"] = (
-        None if any(r.get("engineValuation") is None for r in folded)
-        else round(sum(float(r["engineValuation"]) for r in folded), 2))
+    accs = [(r.get("accrual") or {}) for r in folded]
+    out: dict[str, float | None] = {k: _sum_or_none(accs, k) for k in ACCRUAL_KEYS}
+    # 카드가 쓴 평가 — `fold_accrual` 이 적어 둔 것을 **더하기만** 한다.
+    # ⚠종전에는 `pnl − 발생액 + 비용` 으로 **역산**했다 [고침 2026-10-01]. 같은 수가
+    #   나오지만 ⓐ읽는 사람이 세 항을 거꾸로 짚어야 뜻을 알고 ⓑ반올림이 누적된다.
+    #   접는 자리(`fold_accrual`)가 이미 그 값을 알고 있으니 거기서 받는다.
+    out["valuation"] = _sum_or_none(folded, "cardValuation")
+    out["engineValuation"] = _sum_or_none(folded, "engineValuation")
+    # ⚠`liveMove` 만 규율이 다르다 — **전부** `None` 일 때만 `None`(종가 시선)이고,
+    #   섞여 있으면 안 움직인 다리를 0 으로 세는 것이 맞다(그 다리는 못 잰 게 아니라
+    #   이동이 없는 것이다). 그래서 `_sum_or_none` 을 쓰지 않는다.
     out["liveMove"] = (None if all(r.get("liveMove") is None for r in folded)
                        else round(sum(float(r.get("liveMove") or 0.0) for r in folded), 2))
-    out["cost"] = round(sum(r["cost"] for r in folded), 2)
+    out["cost"] = _sum_or_none(folded, "cost")
     # ★`total` 은 **접힌 다리만**의 합이다 — 하나라도 안 접혔으면 카드 합계(`pnl`,
     #   전체 다리)와 **다른 수**이고, 그 둘을 같은 줄에 적으면 분해가 합계를 설명하는
     #   것처럼 보인다. 그때는 `total` 을 `None` 으로 두고 `folded/legs` 로 말한다
     #   (이 리포의 「섞어서 더하지 않는다」 — `merge_split` 과 같은 규율).
-    out["total"] = (round(sum(r["pnl"] for r in folded), 2)
-                    if len(folded) == len(rows) else None)
+    folded_total = round(sum(r["pnl"] for r in folded), 2)
+    out["total"] = folded_total if len(folded) == len(rows) else None
     #: 접힌 다리만의 소계 — 합계가 `None` 일 때도 카드가 말할 것이 있게.
-    out["foldedTotal"] = round(sum(r["pnl"] for r in folded), 2)
+    out["foldedTotal"] = folded_total
     #: 접힌 다리 수 / 전체 — 화면이 「넷 중 셋만 분해됐어요」를 적는다.
     out["folded"] = len(folded)
     out["legs"] = len(rows)
     return out
+
+
+def _unfolded(row: dict) -> dict:
+    """못 접은 다리 — 발생액 칸을 **전부 `None`** 으로 둔다.
+
+    0 으로 적으면 「캐리가 0 원이었다」는 **딴 사실**이 되고 화면의 «—» 가 사라진다
+    (이 리포의 공란 정책). ⚠`fold_accrual` 이 이 꼴을 **두 자리에서** 적고 있었다 —
+    칸이 하나 늘 때마다 두 곳을 같이 고쳐야 했으므로 한 곳으로 모은다 [2026-10-01].
+    """
+    return {**row, "accrued": False, "accrual": None,
+            "engineValuation": None, "liveMove": None, "cardValuation": None}
 
 
 def fold_accrual(row: dict, acc: dict | None, *, close_mark: float | None = None) -> dict:
@@ -1405,8 +1432,7 @@ def fold_accrual(row: dict, acc: dict | None, *, close_mark: float | None = None
       사라진다(이 리포의 그 규약). 화면이 그 사실을 적는다.
     """
     if not acc:
-        return {**row, "accrued": False, "accrual": None,
-                "engineValuation": None, "liveMove": None}
+        return _unfolded(row)
     parts = {k: acc.get(k) for k in ACCRUAL_KEYS}
     # 조달은 IRS 만 있는 북에서 `None` 이다 — 없는 것은 0 이 아니라 없는 것이고,
     # 합에서는 0 으로 **세지** 않고 「못 잰 항」으로 남긴다(공란 정책).
@@ -1414,8 +1440,7 @@ def fold_accrual(row: dict, acc: dict | None, *, close_mark: float | None = None
     if any(v is None for k, v in parts.items() if k != "funding") or acc.get("valuation") is None:
         # 평가나 발생액의 중심 성분을 못 받았으면 접지 않는다 — 반만 접으면
         # 「장부 손익」이 무엇의 합인지 말할 수 없다.
-        return {**row, "accrued": False, "accrual": None,
-                "engineValuation": None, "liveMove": None}
+        return _unfolded(row)
     val = float(acc["valuation"])
     move = None
     if row.get("live") and close_mark is not None and row.get("mark") is not None:
@@ -1430,6 +1455,11 @@ def fold_accrual(row: dict, acc: dict | None, *, close_mark: float | None = None
             "engineValuation": round(float(acc["valuation"]), 2),
             #: 장중 시선에서 종가 재평가 위에 얹은 이동(원). 종가 시선이면 `None`.
             "liveMove": None if move is None else round(move, 2),
+            #: ★**카드가 실제로 쓴 평가** = 엔진 종가 재평가 + 장중 이동.
+            #  이 값을 여기서 내보내는 이유는 `position_split` 이 종전에 그것을
+            #  `pnl − 발생액 + 비용` 으로 **역산**하고 있었기 때문이다 — 접는 자리가
+            #  이미 아는 수를 밖에서 거꾸로 짚을 이유가 없다 [2026-10-01].
+            "cardValuation": round(val, 2),
             "pnl": round(pnl, 2)}
 
 
@@ -1703,12 +1733,10 @@ def merge_split(legs: list[dict]) -> dict | None:
     got = [lg["split"] for lg in legs if lg.get("split")]
     if not got:
         return None
-    out: dict[str, float | None] = {}
-    for k in ("mtm", "carry", "rolldown", "funding", "cost", "total"):
-        vals = [sp.get(k) for sp in got]
-        out[k] = (None if any(v is None for v in vals)
-                  else round(sum(float(v) for v in vals), 2))
-    return out
+    #: 규율은 `_sum_or_none` 한 곳에 있다 — 종전에는 같은 꼴이 여기와
+    #  `position_split` 두 곳에 복제돼 있었다 [2026-10-01].
+    return {k: _sum_or_none(got, k)
+            for k in ("mtm", "carry", "rolldown", "funding", "cost", "total")}
 
 
 def merge_daily(legs: list[dict]) -> list[dict]:
