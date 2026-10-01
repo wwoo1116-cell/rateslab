@@ -146,5 +146,13 @@ export function unreachableDetail(ms: number = LOAD_DEADLINE_MS): string {
  *  **그 자리에서 잡았다** — 라우트가 `process.env` 를 직접 읽고 URL 을 이어 붙였다.
  *  ★쓰고 나면 라우트와 함께 지운다. */
 export function probeTargets(): string[] {
-  return ["/api/health", "/api/instruments"].map((p) => API_BASE + p);
+  return [
+    /* ★**대조군** — 함수가 밖으로 나갈 수 있는지부터 가른다. 이게 실패하면
+       「그 호스트만 못 간다」가 아니라 「아무 데도 못 간다」다. */
+    "https://example.com/",
+    /* 같은 호스트의 **다른 포트** — Funnel 은 8443 도 켜 두었다(`/` → :8200).
+       TCP 타임아웃이 포트별인지 본다. */
+    API_BASE.replace(/^https:\/\/([^/]+)\/.*$/, "https://$1:8443/api/health"),
+    ...["/api/health", "/api/instruments"].map((p) => API_BASE + p),
+  ];
 }
