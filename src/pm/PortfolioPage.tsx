@@ -75,6 +75,7 @@ import {
  * 세어 이 수와 맞는지 잰다 — 틀리면 시험이 먼저 빨개진다. */
 const POS_COLS = 11;
 import { suggestLine } from './suggestLine';
+import { RiskHeatmap } from './RiskHeatmap';
 import { TraceWindow } from './TraceWindow';
 import { knobWord, zWord } from './words';
 
@@ -1783,6 +1784,13 @@ export function PortfolioPage() {
         </VStack>
 
       </VStack>
+      {/* ── Risk Management [OWNER 2026-10-02 — 「거래별 상관관계를 포트폴리오 탭에
+          Risk Management 로 Heatmap」] ────────────────────────────────────────
+          포지션 카드 **아래**다: 「내가 무엇을 들고 있나」를 읽은 다음에 오는 질문이
+          「그게 사실 같은 베팅인가」이고, 위에 두면 장부를 보러 온 사람이 매번 위험
+          격자를 지나야 한다(담기 폼을 창으로 보낸 그 판단과 같다). */}
+      <RiskHeatmap />
+
       {/* 트레이드 추적 창 [OWNER 2026-09-28] — 소계 줄의 「추적」이 연다. */}
       {trace ? (
         <TraceWindow ns={trace.ns} title={trace.title} onClose={() => setTrace(undefined)} />

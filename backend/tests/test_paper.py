@@ -18,6 +18,7 @@ SQL 도 파일도 안 만진다(저장 시험만 `tmp_path`). 다리는 `test_mr
 import datetime as dt
 import json
 import math
+import pathlib
 
 import pytest
 
@@ -371,7 +372,12 @@ class TestPlumbing:
                          "/api/paper/trace",
                          # 지금 시세 [OWNER 2026-09-28] — **읽기**. 인포맥스 IRS·국채선물
                          # 장중을 장중 레벨의 낱말로 옮길 뿐, 여기서 장부를 안 매긴다.
-                         "/api/paper/live"}
+                         "/api/paper/live",
+                         # 거래 간 손익 상관 [OWNER 2026-10-02] — **읽기**. 장부를 안
+                         # 건드리고, 묶음마다 엔진을 창만큼 다시 돌려 행렬을 낸다
+                         # (`Test거래간_상관`). 상관을 **서버가** 세는 이유는 §16 이고,
+                         # 화면이 또 세면 같은 북에 두 수가 선다.
+                         "/api/paper/risk"}
 
     def test_지우는_라우트는_없다(self):
         """진 기록을 지우는 것이 생존 편향이 장부에 들어오는 가장 흔한 길이다."""
@@ -2444,3 +2450,134 @@ class Test발생액은_다리별이다:
         book = M._position_engine_book([{"n": 99, "markT": "2020-03-03"}])
         assert isinstance(book, dict), "`[]` 를 내면 호출부의 `.get` 이 터진다"
         assert (book.get("positions") or []) == []
+
+
+# ── 거래 간 상관 ─────────────────────────────────────────────────────────────
+class Test거래간_상관:
+    """★[OWNER 2026-10-02] 「거래별 Correlation … 포트폴리오 탭에 Risk Management 로」
+
+    이 북의 **실현** 손익은 7점뿐이라(09-22 진입 · 자료 10-01) 상관을 못 낸다 —
+    실측 ρ=+0.71 인데 95% 구간이 **[−0.09, +0.95]** 로 「음의 상관일 수도」까지
+    포함했다. 그래서 서버가 내는 것은 「창 시작에 들어가 지금까지 들고 있었다면」의
+    일별 손익이고, **다리·방향·크기는 장부 그대로**다.
+
+    ★계열끼리 재면 안 된다 — 방향과 크기가 빠져서 **방향이 반대인 두 거래가 +0.8
+      로 보인다**(그 둘의 손익은 −0.8 이다). 엔진에 실제 다리를 실으면 이미 들어 있다.
+    """
+
+    @staticmethod
+    def _store(tmp_path, monkeypatch, tags=("A", "A", "B", "B")):
+        monkeypatch.setattr(paper, "STORE", tmp_path / "book.json")
+        st = dict(paper.EMPTY, legs=[])
+        for i, tag in enumerate(tags):
+            paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2020-03-02",
+                          level=3.0 + i / 100, notional=1e10, dv01=1_900_000.0, tag=tag)
+        paper.save(st)
+        return st
+
+    @staticmethod
+    def _path(seq, start="2020-01-01"):
+        d0 = dt.date.fromisoformat(start)
+        return {(d0 + dt.timedelta(days=i)).isoformat(): v for i, v in enumerate(seq)}
+
+    def test_창이_아니면_422(self, tmp_path, monkeypatch):
+        from fastapi import HTTPException
+
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch)
+        with pytest.raises(HTTPException) as got:
+            M.paper_risk(window="10y")
+        assert got.value.status_code == 422
+        assert "3m" in str(got.value.detail)
+
+    def test_대각선은_1_이고_같이_움직이면_양수다(self, tmp_path, monkeypatch):
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch)
+        a = [float(i % 7) - 3 for i in range(60)]
+        monkeypatch.setattr(M, "_risk_path",
+                            lambda legs, since: self._path(a if legs[0]["tag"] == "A"
+                                                           else [2 * v for v in a]))
+        got = M.paper_risk(window="1y")
+        assert [t["label"] for t in got["trades"]] == ["A", "B"]
+        assert got["matrix"][0][0] == 1.0 and got["matrix"][1][1] == 1.0
+        # 한쪽이 다른 쪽의 2배면 완전 상관이다.
+        assert got["matrix"][0][1] == pytest.approx(1.0, abs=1e-6)
+        assert got["matrix"][0][1] == got["matrix"][1][0], "행렬은 대칭이다"
+
+    def test_반대로_움직이면_음수다(self, tmp_path, monkeypatch):
+        """★부호가 뒤집히면 「분산」과 「같은 베팅 두 번」이 뒤바뀐다."""
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch)
+        a = [float(i % 7) - 3 for i in range(60)]
+        monkeypatch.setattr(M, "_risk_path",
+                            lambda legs, since: self._path(a if legs[0]["tag"] == "A"
+                                                           else [-v for v in a]))
+        assert M.paper_risk(window="1y")["matrix"][0][1] == pytest.approx(-1.0, abs=1e-6)
+
+    def test_표본이_모자라면_수를_안_낸다(self, tmp_path, monkeypatch):
+        """★0 이 아니라 `None` 이다 — n=7 짜리 상관은 구간이 거의 전구간이다."""
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch)
+        short = [1.0, -2.0, 3.0, -1.0, 0.5, 2.0, -3.0]      # 7점
+        monkeypatch.setattr(M, "_risk_path", lambda legs, since: self._path(short))
+        got = M.paper_risk(window="1y")
+        assert got["n"] == 7 and got["n"] < got["minN"]
+        assert got["matrix"][0][1] is None, "못 잰 칸은 0 이 아니라 None 이다"
+        assert got["matrix"][0][0] == 1.0, "대각선은 항등식이라 남는다"
+
+    def test_공통_영업일에서만_잰다(self, tmp_path, monkeypatch):
+        """한쪽에만 있는 날을 0 으로 채우면 **없던 날의 0** 이 상관을 끌어내린다."""
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch)
+        a = self._path([float(i % 5) - 2 for i in range(60)], "2020-01-01")
+        b = self._path([float(i % 5) - 2 for i in range(60)], "2020-01-11")   # 10일 밀림
+        monkeypatch.setattr(M, "_risk_path",
+                            lambda legs, since: a if legs[0]["tag"] == "A" else b)
+        got = M.paper_risk(window="1y")
+        assert got["n"] == 50, "겹치는 50일만 쓴다"
+        assert got["since"] == "2020-01-11" and got["to"] == "2020-02-29"
+
+    def test_청산한_다리가_섞인_묶음은_사유와_함께_뺀다(self, tmp_path, monkeypatch):
+        """조용히 빼면 「내 거래가 왜 행렬에 없지」가 된다(이 리포의 그 규율)."""
+        from app import main as M
+
+        st = self._store(tmp_path, monkeypatch)
+        paper.close_leg(st, n=3, exit_t="2020-03-03", exit_level=3.1)
+        paper.save(st)
+        a = [float(i % 7) - 3 for i in range(60)]
+        monkeypatch.setattr(M, "_risk_path", lambda legs, since: self._path(a))
+        got = M.paper_risk(window="1y")
+        assert [t["label"] for t in got["trades"]] == ["A"]
+        assert len(got["excluded"]) == 1 and got["excluded"][0]["label"] == "B"
+        assert "청산" in got["excluded"][0]["why"]
+
+    def test_엔진이_못_세우면_사유와_함께_뺀다(self, tmp_path, monkeypatch):
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch)
+        a = [float(i % 7) - 3 for i in range(60)]
+        monkeypatch.setattr(M, "_risk_path",
+                            lambda legs, since: self._path(a) if legs[0]["tag"] == "A" else None)
+        got = M.paper_risk(window="1y")
+        assert [t["label"] for t in got["trades"]] == ["A"]
+        assert got["excluded"][0]["label"] == "B" and "엔진" in got["excluded"][0]["why"]
+
+    def test_묶음_열쇠는_화면과_같은_한_곳이다(self):
+        """★`group_key` 를 두 벌로 두면 행렬의 「트레이드」와 화면의 「트레이드」가
+        갈리고, 그때 행렬은 **없는 거래**의 상관을 말한다."""
+        tagged = {"n": 3, "tag": "1st Trade"}
+        bare = {"n": 5, "tag": None}
+        assert paper.group_key(tagged) == "tag:1st Trade"
+        assert paper.group_key(bare) == "leg:5"
+        assert paper.group_label(tagged) == "1st Trade"
+        assert "5번 다리" in paper.group_label(bare)
+        # 그리고 `group_legs` 가 **그 함수를** 쓴다(손으로 베낀 쌍둥이가 아니다).
+        src = (pathlib.Path(paper.__file__).read_text(encoding="utf-8"))
+        body = src[src.index("def group_legs("):src.index("def score_leg(")]
+        assert "group_key(l)" in body and "group_label(" in body
+        assert 'f"tag:{' not in body, "열쇠 규칙이 group_legs 안에 복제돼 있다"

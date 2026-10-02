@@ -1171,6 +1171,22 @@ def _nearest_door(groups: list[dict]) -> dict[str, Any] | None:
     return best
 
 
+def group_key(leg: dict) -> str:
+    """다리 → **묶음(트레이드) 열쇠**. 태그가 있으면 태그, 없으면 제 혼자다.
+
+    ⚠**한 곳에 둔다** [2026-10-02]. `/api/paper/risk` 의 상관 행렬이 같은 묶음을
+    봐야 화면의 「트레이드」와 행렬의 「트레이드」가 안 갈린다 — 두 벌로 두면
+    태그 규칙이 바뀌는 날 한쪽만 따라가고, 그때 행렬은 **없는 거래**의 상관을
+    말하게 된다.
+    """
+    return f"tag:{leg['tag']}" if leg.get("tag") else f"leg:{leg['n']}"
+
+
+def group_label(leg: dict) -> str:
+    """묶음의 사람 이름 — 묶음 없는 다리는 제 번호로 부른다."""
+    return leg.get("tag") or f"{leg['n']}번 다리 (묶음 없음)"
+
+
 def group_legs(rows: list[dict], **series_kw: Any) -> list[dict[str, Any]]:
     """다리들을 **묶음(태그)** 으로 모아 소계를 낸다 [OWNER 2026-09-28 — "각 트레이드
     별과 포트폴리오 전체에서의 PnL"].
@@ -1183,13 +1199,12 @@ def group_legs(rows: list[dict], **series_kw: Any) -> list[dict[str, Any]]:
     order: list[str] = []
     by: dict[str, list[dict]] = {}
     for l in rows:
-        k = f"tag:{l['tag']}" if l.get("tag") else f"leg:{l['n']}"
+        k = group_key(l)
         if k not in by:
             by[k] = []
             order.append(k)
         by[k].append(l)
-    return [{**sum_legs(by[k], key=k,
-                        label=(by[k][0]["tag"] or f"{by[k][0]['n']}번 다리 (묶음 없음)")),
+    return [{**sum_legs(by[k], key=k, label=group_label(by[k][0])),
              #: ★묶음의 **손익 분해** [OWNER 2026-10-01 — 「합계랑 분해랑 각각을
              #  트레이드별로」]. 전체(`position.split`)와 **같은 함수**다 — 화면이
              #  다시 더하지 않게(§16), 그리고 전체와 트레이드가 두 벌의 산술로

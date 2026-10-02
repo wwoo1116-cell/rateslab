@@ -59,6 +59,7 @@ from . import logfmt as _logfmt  # noqa: E402  (dictConfig 직후여야 한다)
 _logfmt.stamp_handlers()
 
 import datetime as dt
+import math
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -3893,6 +3894,144 @@ def paper_trace(legs: str, marks: str = "") -> dict:
         "book": book,
         "group": gview,
         "path": path,
+    }
+
+
+#: 상관 창 — **1년까지만** 연다. 엔진의 손익 선은 `backtest.MAX_POINTS = 400` 으로
+#: **다운샘플**된다(차트용). 400 을 넘기는 창에서는 `points[].d` 가 「하루치」가 아니라
+#: 「표본 간격치」가 되고 간격도 불균등해져서, 그 위에서 상관을 내면 숫자는 나오는데
+#: **무엇의 상관인지 말할 수 없다.** 1년 ≈ 254 영업일이라 안 깎인다(실측 2026-10-02:
+#: 1년 요청 → 254점 · 3년 요청 → 400점으로 잘림).
+RISK_WINDOWS: dict[str, int] = {"3m": 92, "6m": 183, "1y": 365}
+
+#: 상관을 **말하려면** 최소 이만큼. 아래면 수를 안 낸다(`None`) — 표본이 적은 상관은
+#: 점추정이 그럴듯해도 구간이 거의 전구간이다. 실측(이 북의 실현 손익 7일):
+#: ρ=+0.71 인데 95% 구간이 **[−0.09, +0.95]** 로 「음의 상관일 수도」까지 포함했다.
+RISK_MIN_N = 30
+
+
+def _risk_path(legs: list[dict], since: str) -> dict[str, float] | None:
+    """이 거래를 `since` 에 들어가 **지금까지 들고 있었다면**의 일별 손익 변화.
+
+    ★왜 「계열의 상관」이 아니라 이것인가: 상관은 **내 손익끼리**여야 한다. 계열끼리
+      재면 포지션의 **방향과 크기**가 빠지고, 방향이 반대인 두 거래가 +0.8 로 보인다
+      (그 둘의 손익은 −0.8 이다). 엔진에 실제 다리를 그대로 실으면 방향·크기가
+      이미 들어 있다.
+
+    ★`d`(일간 변화)는 **엔진이 센 것**을 그대로 쓴다(§16) — 공통 영업일이 어긋난 날의
+      처리까지 거기 있다(`mixedbook` 의 `gaps`). 여기서 다시 빼면 그 규율이 갈린다.
+
+    ⚠`recon`(KRD 범프)은 **안 부른다** — 상관에 필요 없고 엔진 본체보다 비싸다.
+      그래서 `_book_result` 를 안 쓰고 `run_backtest` 를 직접 부른다(실측: 거래당
+      7.7초 → **0.9초**).
+    """
+    moved = [dict(lg, entry=since) for lg in legs]
+    try:
+        specs = paper.trace_positions(moved)
+        parsed = [mixedbook.MixedPosition(
+            series_id=s["id"], direction=int(s["direction"]), notional=float(s["notional"]),
+            entry=dt.date.fromisoformat(s["entry"]), exit=None) for s in specs]
+        matrix = creditmatrix.load() if mixedbook.has_bond(parsed) else None
+        fut_data = futures.load() if mixedbook.has_futures(parsed) else None
+        res = mixedbook.run_backtest(matrix, _dataset, parsed,
+                                     _funding_spec(funding.DEFAULT_BASIS,
+                                                   funding.DEFAULT_SPREAD_BP),
+                                     fut=fut_data)
+    except (HTTPException, futures.FuturesError, BacktestError, mixedbook.MixedBookError,
+            cashbond.CashBondError, creditmatrix.CreditMatrixError, funding.FundingError,
+            paper.LegRejected, KeyError, ValueError, IndexError):
+        return None
+    return {p["t"]: float(p["d"]) for p in (res.get("points") or [])
+            if p.get("d") is not None}
+
+
+def _pearson(x: list[float], y: list[float]) -> float | None:
+    """표본 상관. 표본이 모자라거나 한쪽이 안 움직이면 **수를 안 낸다**(0 이 아니다)."""
+    n = len(x)
+    if n < RISK_MIN_N:
+        return None
+    mx, my = sum(x) / n, sum(y) / n
+    sxy = sum((a - mx) * (b - my) for a, b in zip(x, y))
+    sxx = sum((a - mx) ** 2 for a in x)
+    syy = sum((b - my) ** 2 for b in y)
+    if sxx <= 0 or syy <= 0:
+        return None
+    return round(sxy / math.sqrt(sxx * syy), 3)
+
+
+@router.get("/api/paper/risk")
+def paper_risk(window: str = "1y") -> dict:
+    """거래 간 **손익 상관** 행렬 [OWNER 2026-10-02 — 「거래별 상관관계를 포트폴리오
+    탭에 Risk Management 로 Heatmap」].
+
+    ## 무엇의 상관인가 — **실현 손익이 아니다**
+
+    이 북의 거래는 2026-09-22 에 들어갔고 자료는 10-01 까지다. 실현 일별 손익은
+    **7점**이고, 그 위의 상관은 95% 구간이 [−0.09, +0.95] 라 아무 말도 못 한다.
+    그래서 여기서 내는 것은 **「이 거래를 창 시작에 들어가 지금까지 들고 있었다면」**
+    의 일별 손익이다 — 다리·방향·크기는 **지금 장부 그대로**이고 기간만 늘린다.
+    표본이 차면(실현 ~100영업일) 실현 손익으로 갈아탈 자리가 여기다.
+
+    ## 안 세는 것은 **안 센다**
+
+    · 창이 짧아 `n < RISK_MIN_N` 이면 그 칸은 `None` 이다(0 이 아니다).
+    · 엔진이 못 세우는 거래는 `excluded` 에 **사유와 함께** 선다 — 조용히 빼면
+      「내 거래가 왜 행렬에 없지」가 된다(이 리포의 그 규율).
+    · **닫힌 다리가 섞인 묶음은 뺀다** — 지금 들고 있는 위험의 그림인데 청산한
+      다리를 같이 그리면 무엇의 위험인지 말할 수 없다.
+    """
+    if window not in RISK_WINDOWS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"창은 {'·'.join(RISK_WINDOWS)} 중 하나예요 — 받은 것: {window!r}")
+    since = (dt.date.today() - dt.timedelta(days=RISK_WINDOWS[window])).isoformat()
+
+    st = paper.load()
+    order: list[str] = []
+    by: dict[str, list[dict]] = {}
+    for lg in st.get("legs", []):
+        k = paper.group_key(lg)
+        if k not in by:
+            by[k] = []
+            order.append(k)
+        by[k].append(lg)
+
+    trades: list[dict] = []
+    excluded: list[dict] = []
+    paths: list[dict[str, float]] = []
+    for k in order:
+        legs = by[k]
+        label = paper.group_label(legs[0])
+        if any(lg.get("exit") for lg in legs):
+            excluded.append({"key": k, "label": label,
+                             "why": "청산한 다리가 있어요 — 지금 들고 있는 위험이 아니에요."})
+            continue
+        path = _risk_path(legs, since)
+        if not path:
+            excluded.append({"key": k, "label": label,
+                             "why": "엔진이 이 창에서 줄을 못 세웠어요."})
+            continue
+        trades.append({"key": k, "label": label, "legs": [int(lg["n"]) for lg in legs]})
+        paths.append(path)
+
+    #: 공통 영업일에서만 잰다 — 한쪽에만 있는 날을 0 으로 채우면 **없던 날의 0**이
+    #  상관을 끌어내린다(이 리포의 공란 정책).
+    common = sorted(set.intersection(*[set(p) for p in paths])) if paths else []
+    cols = [[p[t] for t in common] for p in paths]
+    matrix = [[1.0 if i == j else _pearson(cols[i], cols[j])
+               for j in range(len(cols))] for i in range(len(cols))]
+
+    return {
+        "window": window,
+        "since": common[0] if common else since,
+        "to": common[-1] if common else None,
+        "n": len(common),
+        "minN": RISK_MIN_N,
+        "trades": trades,
+        "matrix": matrix,
+        "excluded": excluded,
+        #: 화면이 「무엇의 상관인지」를 적는다 — 서버가 말을 쥔다.
+        "basis": "창 시작에 들어가 지금까지 들고 있었다면의 일별 손익 변화",
     }
 
 

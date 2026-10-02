@@ -218,6 +218,10 @@ export const paperTraceUrl = (ns: readonly number[], marks?: string) =>
 export const paperInstrumentsUrl = () => liveUrl("/api/paper/instruments");
 /** 지금 시세 — 화면에 떠 있는 IRS·국채선물 [OWNER 2026-09-28]. */
 export const paperLiveUrl = () => liveUrl("/api/paper/live");
+/** 거래 간 손익 상관 [OWNER 2026-10-02]. **라이브 전용**이다 — 엔진을 창만큼
+ *  다시 돌려야 해서 구워 둘 수 없고, 창을 사람이 고른다. */
+export const paperRiskUrl = (window: string) =>
+  liveUrl("/api/paper/risk", `window=${encodeURIComponent(window)}`);
 /** 그날의 1등 — 계열을 진입일까지의 자료로 격자에 돌린 순위 [OWNER 2026-09-23]. */
 export const paperSuggestUrl = (series: string, entry: string) =>
   liveUrl("/api/paper/suggest",

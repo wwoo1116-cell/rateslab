@@ -3301,3 +3301,41 @@ tr.sr-mr-book > td {
 .sr-gap-caption {
   margin-inline-start: 16px;
 }
+
+/* ── 상관 히트맵 격자 [OWNER 2026-10-02 — Risk Management] ──────────────────
+   `.sr-rv-table` 은 `width:100%` 다 — 열이 열 개쯤 서는 랭킹 표에는 맞지만,
+   N×N 상관 행렬에서는 **칸 하나가 400px 짜리 색 띠**가 된다(실측 2026-10-02:
+   거래 둘이라 두 칸이 카드 폭을 반씩 먹었다). 히트맵은 칸의 **면적이 뜻을 갖는**
+   그림이라, 폭이 N 에 따라 춤추면 같은 ρ 가 날마다 다른 크기로 보인다.
+
+   그래서 이 표만 **칸 폭을 고정**하고 표는 내용만큼만 넓어진다. 숫자는 가운데다 —
+   칸이 좁고 정사각에 가까우면 오른쪽 정렬이 칸 가장자리에 붙어 격자가 어긋나 보인다
+   (「숫자는 오른쪽」 규칙은 **열이 긴 표**의 것이고, 여기는 격자다). */
+.sr-corr {
+  width: auto;
+  /* 2px 면 간격 — 인접한 틴트 둘이 한 덩어리로 뭉치지 않게. `collapse` 로는 못 준다. */
+  border-collapse: separate;
+  border-spacing: 2px;
+}
+
+/* 첫 열(거래 이름)은 글이라 왼쪽이고 폭은 내용이 정한다. */
+.sr-corr th:not(:first-child),
+.sr-corr td:not(:first-child) {
+  width: 108px;
+  min-width: 108px;
+  text-align: center;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+/* `.sr-rv-table` 의 가장자리 인셋(16px)은 **전폭 표**의 규약이다 — 내용만큼만
+   넓은 이 표에서는 첫 칸만 밀려 머리와 몸이 어긋난다. */
+.sr-corr th:first-child,
+.sr-corr td:first-child {
+  padding-left: 0;
+}
+
+.sr-corr th:last-child,
+.sr-corr td:last-child {
+  padding-right: 0;
+}

@@ -23,7 +23,7 @@ import type { MrSplit } from '@/mr/api';
 import {
   paperCloseUrl, paperEnrollUrl, paperInstrumentsUrl, paperLegCloseUrl,
   paperLegKnobsUrl, paperLegUrl, paperLiveUrl, paperResetUrl, paperRetireUrl, paperSuggestUrl,
-  paperTraceUrl, paperTradeUrl, paperUrl,
+  paperRiskUrl, paperTraceUrl, paperTradeUrl, paperUrl,
 } from '@/lib/staticPaths';
 
 /** 하루 한 점. `cum` 은 **서버가 굴린** 누적이다. */
@@ -754,4 +754,49 @@ export async function fetchLive(): Promise<PaperLive> {
   if (r.status === 404) throw new BacktestUnavailable();
   if (!r.ok) throw new Error(`live: HTTP ${r.status}`);
   return r.json() as Promise<PaperLive>;
+}
+
+/* ── 거래 간 손익 상관 [OWNER 2026-10-02 — 「거래별 상관관계를 포트폴리오 탭에
+      Risk Management 로 Heatmap」] ────────────────────────────────────────────
+   ★무엇의 상관인지를 **서버가 말로 쥔다**(`basis`) — 화면이 지어내지 않는다.
+   이 북의 **실현** 손익은 아직 7점이라(09-22 진입 · 자료 10-01) 상관을 못 낸다:
+   ρ=+0.71 인데 95% 구간이 [−0.09, +0.95]다. 그래서 서버가 내는 것은 「창 시작에
+   들어가 지금까지 들고 있었다면」의 일별 손익이고, 다리·방향·크기는 장부 그대로다. */
+
+/** 창 — **1년까지만**이다. 엔진의 손익 선이 400점으로 다운샘플되므로 그보다 긴
+ *  창에서는 「하루치」가 「표본 간격치」가 된다(서버 `RISK_WINDOWS` 주석). */
+export type RiskWindow = '3m' | '6m' | '1y';
+
+export interface PaperRiskTrade {
+  key: string;
+  label: string;
+  legs: number[];
+}
+
+export interface PaperRisk {
+  window: RiskWindow;
+  /** 공통 영업일의 처음·끝. 창을 요청한 날이 아니라 **실제로 쓴 날**이다. */
+  since: string;
+  to: string | null;
+  /** 공통 영업일 수 — 화면이 이 수를 적어야 읽는 사람이 상관을 믿을지 정한다. */
+  n: number;
+  /** 이 아래면 칸이 `null` 이다(0 이 아니다). */
+  minN: number;
+  trades: PaperRiskTrade[];
+  /** N×N. 대각선은 1, 못 잰 칸은 **`null`**(0 과 다른 사실이다). */
+  matrix: (number | null)[][];
+  /** 행렬에서 뺀 거래 — **사유와 함께**. 조용히 빼면 「내 거래가 왜 없지」가 된다. */
+  excluded: { key: string; label: string; why: string }[];
+  /** 무엇의 상관인지. 화면은 이 말을 **옮겨 적기만** 한다. */
+  basis: string;
+}
+
+export async function fetchRisk(window: RiskWindow, signal?: AbortSignal): Promise<PaperRisk> {
+  const r = await fetch(paperRiskUrl(window), { signal });
+  if (r.status === 404) throw new BacktestUnavailable();
+  if (!r.ok) {
+    const detail = (await r.json().catch(() => null)) as { detail?: string } | null;
+    throw new Error(detail?.detail ?? `risk: HTTP ${r.status}`);
+  }
+  return r.json() as Promise<PaperRisk>;
 }
