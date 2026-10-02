@@ -2277,3 +2277,170 @@ class Test카드와추적이같은수를말한다:
         body = after[: after.index("\ndef _position_accrual(")]
         assert "_book_result(" in body
         assert src.count("_position_engine_book(") >= 3   # 정의 1 + 부르는 곳 2
+
+
+# ── 발생액은 다리별이다 ──────────────────────────────────────────────────────
+class Test발생액은_다리별이다:
+    """★★[OWNER 2026-10-02] 「**채권현물은 시가평가가 장중에서는 불가능**」
+
+    장중에 친 다리는 진입일이 자료의 마지막 날보다 뒤라 엔진이
+    `BacktestError: … is after the last observation` 으로 죽는다. 그건 **정상이고
+    반복된다** — 막을 일이 아니라 북이 견뎌야 할 상태다.
+
+    그런데 엔진 호출이 **다리 전부를 받는 한 번의 배치**라, 그 한 다리가 북 전체의
+    발생액을 껐다. `_position_accrual` 의 독스트링은 처음부터 「한 다리라도 엔진이
+    줄을 안 내면 **그 다리만** 비운다」였는데 **코드가 그 말을 안 지키고 있었다.**
+
+    실측(자료일 2026-10-01 · 10-02 장중 체결 BSS-1Y 두 다리): 무관한 9-22 다리들의
+    캐리·롤다운 합 **+1,521만원**이 안 보였다(1st +1,500만→+1,807만 ·
+    2nd +2,750만→+3,963만).
+
+    엔진의 규칙을 복제해서 막지 않는다 — **엔진에게 다리별로 물어** 못 서는 다리를
+    엔진이 고르게 한다. 아래가 그 계약의 핀이다.
+    """
+
+    @staticmethod
+    def _store(tmp_path, monkeypatch, n: int = 3) -> None:
+        monkeypatch.setattr(paper, "STORE", tmp_path / "book.json")
+        st = dict(paper.EMPTY, legs=[])
+        for i in range(n):
+            paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2020-03-02",
+                          level=3.0 + i / 100, notional=1e10, dv01=1_900_000.0)
+        paper.save(st)
+
+    @staticmethod
+    def _rows(ns):
+        return [{"n": i, "markT": "2020-03-03"} for i in ns]
+
+    @staticmethod
+    def _book(ns):
+        """엔진이 낼 법한 모양 — `reconcile_leg` 가 읽는 칸만 채운다."""
+        return {"positions": [{"n": i, "pnl": 1.0e6 * i, "carry": 2.0e5 * i,
+                               "rolldown": 1.0e5 * i, "startup": 1.0e4,
+                               "funding": None, "valuation": 7.0e5 * i,
+                               "entry_gap": 0.0, "exec": 0.0}
+                              for i in ns]}
+
+    def test_되는_날은_엔진을_한_번만_부른다(self, tmp_path, monkeypatch):
+        """★폴백은 **실패한 날만**이다. 되는 날까지 다리별로 돌면 북이 N 배 느려진다."""
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch)
+        calls = []
+
+        def fake(pos_legs):
+            calls.append([int(r["n"]) for r in pos_legs])
+            return self._book([int(r["n"]) for r in pos_legs])
+
+        monkeypatch.setattr(M, "_position_engine_book", fake)
+        monkeypatch.setattr(M, "_POS_ACCRUAL", {})
+        got = M._position_accrual(self._rows([1, 2, 3]))
+        assert sorted(got) == [1, 2, 3]
+        assert calls == [[1, 2, 3]], "되는 날은 배치 한 번뿐이어야 한다"
+
+    @staticmethod
+    def _boom(msg: str = "2026-10-02 is after the last observation (2026-10-01)"):
+        """★**현실과 같은 예외**를 던진다 — 엔진 사유는 날것의 `BacktestError` 가
+        아니라 `_book_result` 에서 **422 로 옷을 갈아입고** 올라온다.
+
+        ⚠이 한 줄이 2026-10-02 에 수리를 **헛돌게 했다**: 픽스처가 `BacktestError`
+        를 던져서 시험은 초록인데 산 장부는 그대로였다(`failed` 에 「422: …」가
+        그대로 서 있었다). 통과하는 시험이 아니라 **산 값**이 수리를 증명한다.
+        """
+        from fastapi import HTTPException
+
+        return HTTPException(status_code=422, detail=msg)
+
+    @pytest.mark.parametrize("kind", ["422", "raw"])
+    def test_한_다리가_못_서도_나머지는_선다(self, tmp_path, monkeypatch, kind):
+        """장중에 친 다리 하나가 북 전체의 캐리·롤다운을 끄면 안 된다.
+
+        두 꼴을 다 잰다 — 산 경로의 **422**(위 `_boom`)와, 엔진을 직접 부르는 날의
+        날것 `BacktestError`. 둘 중 하나만 재면 오늘 같은 일이 또 난다.
+        """
+        from app import main as M
+        from app.backtest import BacktestError
+
+        self._store(tmp_path, monkeypatch)
+        exc = self._boom() if kind == "422" else BacktestError("after the last observation")
+
+        def fake(pos_legs):
+            ns = [int(r["n"]) for r in pos_legs]
+            if 3 in ns:                      # 3번이 「장중에 친 다리」다
+                raise exc
+            return self._book(ns)
+
+        monkeypatch.setattr(M, "_position_engine_book", fake)
+        monkeypatch.setattr(M, "_POS_ACCRUAL", {})
+        got = M._position_accrual(self._rows([1, 2, 3]))
+        assert sorted(got) == [1, 2], "못 서는 다리만 빠져야 한다"
+        assert 3 not in got
+        # 그리고 남은 둘은 **빈 칸이 아니라 수**를 들고 있다.
+        assert got[1]["carry"] is not None and got[2]["carry"] is not None
+
+    def test_422_가_아닌_HTTP_오류는_안_삼킨다(self, tmp_path, monkeypatch):
+        """422 는 「이 묶음은 못 쟀다」지만 500·409 는 **딴 말**이다 — 삼키면 북이
+        조용히 반쪽이 되고 아무도 왜인지 모른다."""
+        from fastapi import HTTPException
+
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch)
+
+        def fake(pos_legs):
+            raise HTTPException(status_code=500, detail="엔진이 죽었어요")
+
+        monkeypatch.setattr(M, "_position_engine_book", fake)
+        monkeypatch.setattr(M, "_POS_ACCRUAL", {})
+        with pytest.raises(HTTPException) as got:
+            M._position_accrual(self._rows([1, 2]))
+        assert got.value.status_code == 500
+
+    def test_줄_수가_안_맞아도_다리별로_떨어진다(self, tmp_path, monkeypatch):
+        """⚠`zip` 이 다리와 줄을 어긋 맞추면 **남의 캐리**가 붙는다 — 그 길이 검사는
+        그대로 두되, 걸렸을 때 전부를 버리지 않고 다리별로 다시 묻는다."""
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch)
+
+        def fake(pos_legs):
+            ns = [int(r["n"]) for r in pos_legs]
+            if len(ns) > 1:
+                return self._book(ns[:-1])       # 한 줄 모자라게 낸다
+            return self._book(ns)
+
+        monkeypatch.setattr(M, "_position_engine_book", fake)
+        monkeypatch.setattr(M, "_POS_ACCRUAL", {})
+        got = M._position_accrual(self._rows([1, 2, 3]))
+        assert sorted(got) == [1, 2, 3], "다리별로 물으면 셋 다 선다"
+
+    def test_다리별_값이_배치와_같다(self, tmp_path, monkeypatch):
+        """★폴백이 **다른 수**를 내면 화면이 날마다 다른 장부를 말한다."""
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch)
+        monkeypatch.setattr(M, "_position_engine_book",
+                            lambda pos_legs: self._book([int(r["n"]) for r in pos_legs]))
+        monkeypatch.setattr(M, "_POS_ACCRUAL", {})
+        batch = M._position_accrual(self._rows([1, 2]))
+
+        def fake(pos_legs):
+            ns = [int(r["n"]) for r in pos_legs]
+            if len(ns) > 1:
+                raise self._boom("배치는 못 쓴다")       # 산 경로와 같은 422
+            return self._book(ns)
+
+        monkeypatch.setattr(M, "_position_engine_book", fake)
+        monkeypatch.setattr(M, "_POS_ACCRUAL", {})
+        per_leg = M._position_accrual(self._rows([1, 2]))
+        assert per_leg == batch, "다리별과 배치가 1원까지 같아야 한다"
+
+    def test_다리가_하나도_없으면_엔진_책은_dict_다(self, tmp_path, monkeypatch):
+        """②리팩터 1번 — `return []` 이었다. 함수는 dict 를 반환한다고 적혀 있고
+        호출부가 `.get("positions")` 를 부른다(다리가 다 빠지면 AttributeError)."""
+        from app import main as M
+
+        self._store(tmp_path, monkeypatch, n=0)
+        book = M._position_engine_book([{"n": 99, "markT": "2020-03-03"}])
+        assert isinstance(book, dict), "`[]` 를 내면 호출부의 `.get` 이 터진다"
+        assert (book.get("positions") or []) == []

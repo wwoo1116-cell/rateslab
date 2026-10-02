@@ -3494,7 +3494,11 @@ def _position_engine_book(pos_legs: list[dict]) -> dict:
     by_n = {int(lg["n"]): lg for lg in st.get("legs", [])}
     picked = [by_n[int(r["n"])] for r in pos_legs if int(r["n"]) in by_n]
     if not picked:
-        return []
+        #: ⚠**`{}` 다.** 종전에는 `[]` 를 냈는데 이 함수는 dict 를 반환한다고
+        #  적혀 있고 호출부가 `.get("positions")` 를 부른다 — 다리가 다 빠지면
+        #  AttributeError 였다. `build_sheet` 의 `if accrual_of and pos_legs:`
+        #  가드 덕에 안 터지고 있었을 뿐이다 [고침 2026-10-02].
+        return {}
     cut = {int(r["n"]): r.get("markT") for r in pos_legs}
     specs = paper.trace_positions(picked)
     parsed = []
@@ -3514,11 +3518,81 @@ def _position_engine_book(pos_legs: list[dict]) -> dict:
     return book
 
 
+def _accrual_once(pos_legs: list[dict], by_n: dict[int, dict]) -> dict[int, dict] | None:
+    """한 묶음을 엔진에 **한 번** 실어 발생액을 낸다. 못 내면 `None` 이다.
+
+    `None` 과 `{}` 는 **다른 말**이다 — `None` 은 「이 묶음은 못 쟀다」이고 `{}` 는
+    「쟀는데 줄 게 없다」다. 부르는 쪽이 그 둘을 보고 다리별로 다시 갈지 정한다.
+
+    ⚠줄 수가 다리 수와 다르면 **쓰지 않는다.** `zip` 이 다리와 줄을 **어긋 맞춰**
+      엉뚱한 다리에 남의 캐리를 붙이기 때문이다(종전 코드의 그 길이 검사가 이것을
+      막고 있었고, 그 판단은 그대로 둔다).
+    """
+    try:
+        book = _position_engine_book(pos_legs)
+    except HTTPException as exc:
+        # ⚠★엔진의 사유는 `_book_result` 에서 **422 로 옷을 갈아입는다** — 여기까지
+        #   올라오는 것은 날것의 `BacktestError` 가 아니다. 실측 2026-10-02 에
+        #   이것을 놓쳐 수리가 **안 먹었고**(시험은 초록인데 산 장부는 그대로였다),
+        #   내 시험 픽스처가 `BacktestError` 를 던지고 있어서 못 잡았다.
+        #   → 픽스처는 **현실과 같은 예외**를 던져야 한다.
+        if exc.status_code != 422:
+            raise                      # 422 만 「이 묶음은 못 쟀다」다
+        return None
+    except (futures.FuturesError, BacktestError, KeyError, ValueError, IndexError):
+        # 사유는 삼키지 않는다 — 부르는 쪽이 다리별로 다시 물어 **어느 다리**가
+        # 못 서는지 가린다. 여기서 사유를 붙이면 그 다리가 아니라 묶음의 사유가 된다.
+        return None
+    rows = book.get("positions") or []
+    picked = [by_n[int(r["n"])] for r in pos_legs if int(r["n"]) in by_n]
+    if len(rows) != len(picked):
+        return None
+    out: dict[int, dict] = {}
+    for lg, row in zip(picked, rows):
+        # 체결 차이는 `reconcile_leg` 와 **같은 식**으로 잰다 — 거기 하나뿐이게.
+        rec = paper.reconcile_leg(lg, row, paper_pnl=None, cost=None)
+        out[int(lg["n"])] = {
+            "exec": rec["exec"], "carry": rec["carry"], "rolldown": rec["rolldown"],
+            "startup": rec["startup"], "funding": rec["funding"],
+            "valuation": rec["valuation"],
+        }
+    return out
+
+
 def _position_accrual(pos_legs: list[dict]) -> dict[int, dict]:
     """다리 번호 → 발생액 + 엔진 평가. `paper.fold_accrual` 이 읽는 꼴로 낸다.
 
     ⚠한 다리라도 엔진이 줄을 안 내면 **그 다리만** 비운다 — 전체를 버리면 카드가
       통째로 평가만의 수로 돌아가고, 그 사실이 조용해진다.
+
+    ## ★★독스트링은 맞았고 **코드가 그 말을 안 지키고 있었다** [고침 2026-10-02]
+
+    엔진은 다리 전부를 받는 **한 번의 배치**다. 그래서 다리 하나가
+    `BacktestError` 를 내면(가장 흔한 길: **장중에 친 다리** — 진입일이 자료의
+    마지막 날보다 뒤라 `_index_on_or_after` 가 「after the last observation」으로
+    죽는다) 예외가 통째로 올라가 `build_sheet` 가 `accs = {}` 로 삼키고
+    **모든 다리**가 `accrued=False` 가 됐다. 길이 검사(`len(rows) == len(picked)`)
+    도 같은 전부-아니면-전무였다.
+
+    [OWNER 2026-10-02] 「**채권현물은 시가평가가 장중에서는 불가능**」 — 즉 장중
+    체결은 **정상이고 반복된다.** 그래서 이건 드문 사고가 아니라 **장중에 다리를
+    담을 때마다** 북 전체의 캐리·롤다운이 사라지는 상태였다. 실측(자료일
+    2026-10-01 · 10-02 장중 체결 BSS-1Y 두 다리): 무관한 9-22 다리들의
+    **캐리·롤다운 합 +1,521만원**이 안 보였다(1st +1,500만→+1,807만 ·
+    2nd +2,750만→+3,963만).
+
+    ## 처방 — 묶음으로 한 번, 안 되면 **다리별로** 다시
+
+    엔진의 규칙(「언제부터 못 매기나」)을 여기 **복제하지 않는다.** 진입일을 자료일과
+    비교하는 식을 이 파일에 적으면 그 규율이 두 곳에 살고 한쪽만 고쳐지는 날 조용히
+    갈린다. 대신 **엔진에게 다리별로 물어서** 못 서는 다리를 엔진이 고르게 한다.
+
+    다리별 재질문이 같은 수를 낸다는 것은 가정이 아니다 — `/api/paper/trace` 가
+    이미 **묶음 단위 부분집합**으로 같은 함수를 부르고 있고(트레이드별 추적),
+    `tests/test_paper.py` 가 묶음별 합이 전체와 1원까지 닫히는 것을 잰다.
+
+    비용: 되는 날은 **종전과 똑같이 배치 한 번**이다. 다리별 N 번은 **실패한 날만**
+    이고, 그 결과는 지문 열쇠로 캐시된다.
     """
     st = paper.load()
     by_n = {int(lg["n"]): lg for lg in st.get("legs", [])}
@@ -3527,18 +3601,15 @@ def _position_accrual(pos_legs: list[dict]) -> dict[int, dict]:
     got = _POS_ACCRUAL.get(key)
     if got is not None:
         return got
-    rows = (_position_engine_book(pos_legs).get("positions") or [])
-    picked = [by_n[int(r["n"])] for r in pos_legs if int(r["n"]) in by_n]
-    out: dict[int, dict] = {}
-    if len(rows) == len(picked):
-        for lg, row in zip(picked, rows):
-            # 체결 차이는 `reconcile_leg` 와 **같은 식**으로 잰다 — 거기 하나뿐이게.
-            rec = paper.reconcile_leg(lg, row, paper_pnl=None, cost=None)
-            out[int(lg["n"])] = {
-                "exec": rec["exec"], "carry": rec["carry"], "rolldown": rec["rolldown"],
-                "startup": rec["startup"], "funding": rec["funding"],
-                "valuation": rec["valuation"],
-            }
+    out = _accrual_once(pos_legs, by_n)
+    if out is None:
+        #: ★다리별로 다시 — **되는 다리만** 건진다. 못 서는 다리는 여기 안 실리고
+        #  `fold_accrual` 이 그 다리만 `accrued=False` 로 둔다(공란 정책).
+        out = {}
+        for r in pos_legs:
+            one = _accrual_once([r], by_n)
+            if one:
+                out.update(one)
     _POS_ACCRUAL.clear()           # 지문이 바뀌면 옛것을 들고 있을 이유가 없다
     _POS_ACCRUAL[key] = out
     return out
