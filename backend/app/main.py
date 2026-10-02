@@ -107,6 +107,7 @@ from .cache import cached, peek
 from .cors import allowed_origin_regex, allowed_origins
 from . import dev_marker
 from . import cashbond
+from . import creditdts
 from . import creditmatrix
 from . import funding
 from .curves import TENOR_T, build_basis_curves
@@ -479,6 +480,29 @@ def forwards() -> dict:
 def surface() -> dict:
     # 커브 표면 — 테너 × 날짜 × 금리 (Lab). 리더 입력 없음 → 통째로 굽힌다.
     return _surface
+
+
+@router.get("/api/lab/creditdts")
+def lab_creditdts(floor: float = creditdts.FLOOR_BP) -> dict:
+    """크레딧 RV (DTS) — **Lab 세입자** [OWNER 2026-10-02 「DTS version 을 하나
+    Lab 에다가 만드는 게 낫겠는데?」].
+
+    제품 `/api/rv/analysis` 와 **다른 라우트·다른 모듈**이다. 제품의 Score 는
+    트레이더 설계안이고 여기는 검증이 한 바퀴 돈 축이다 — 둘을 한 라우트에
+    섞으면 어느 수가 어느 규약의 것인지 화면이 말할 수 없다.
+
+    근거와 한계는 `creditdts.py` 머리에 있다(표본밖 성적 · 회전 비용 문턱 ·
+    겹침 때문에 t 를 액면대로 믿지 말 것).
+
+    **라이브 전용**이다 — 민평이 SQL 에만 있어 구워 둘 수 없다(제품 RV 와 같다).
+    """
+    if not (0.0 <= floor <= 50.0):
+        raise HTTPException(status_code=422,
+                            detail=f"바닥은 0~50bp 사이예요 — 받은 것: {floor}")
+    try:
+        return creditdts.analysis(floor_bp=float(floor))
+    except creditdts.CreditDtsError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.get("/api/surface3d")
