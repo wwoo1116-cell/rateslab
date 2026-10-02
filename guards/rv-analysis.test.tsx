@@ -405,33 +405,122 @@ describe('종목 지정 — 잔존→버킷 스냅', () => {
     item({ sector: 'KDB', sectorLabel: '산금채 AAA', tenor: '3Y', years: 3.0, seriesId: 'k3' }),
   ];
 
+  /* 끝값은 **페이로드 모양**으로 넘긴다 — 화면이 상수를 적으면 H 를 3/12개월로
+     바꾼 날 거짓말을 한다(`pick.ts` 의 그 이유). H 6개월 → 하한 0.5년. */
+  const B = { maxYears: 3.0, hMonths: 6 };
+
   it('가장 가까운 테너로 스냅한다 — 2.4→2.5Y, 2.8→3Y, 2.2→2Y', () => {
-    const r24 = snapCreditBucket(SNAP, 'KDB', 2.4, 3.0);
-    const r28 = snapCreditBucket(SNAP, 'KDB', 2.8, 3.0);
-    const r22 = snapCreditBucket(SNAP, 'KDB', 2.2, 3.0);
+    const r24 = snapCreditBucket(SNAP, 'KDB', 2.4, B);
+    const r28 = snapCreditBucket(SNAP, 'KDB', 2.8, B);
+    const r22 = snapCreditBucket(SNAP, 'KDB', 2.2, B);
     expect(r24?.kind === 'hit' && r24.item.tenor).toBe('2.5Y');
     expect(r28?.kind === 'hit' && r28.item.tenor).toBe('3Y');
     expect(r22?.kind === 'hit' && r22.item.tenor).toBe('2Y');
   });
 
   it('상한(maxYears) 밖은 스냅하지 않고 사유를 돌려준다 — 조용히 3Y 로 안 끌려간다', () => {
-    expect(snapCreditBucket(SNAP, 'KDB', 5.0, 3.0)).toEqual({ kind: 'oob' });
+    expect(snapCreditBucket(SNAP, 'KDB', 5.0, B)).toEqual({
+      kind: 'oob',
+      side: 'above',
+      edgeYears: 3.0,
+    });
     // 경계: 3.0 은 3Y 로 적중, 3.01 은 밖.
-    expect(snapCreditBucket(SNAP, 'KDB', 3.0, 3.0)?.kind).toBe('hit');
-    expect(snapCreditBucket(SNAP, 'KDB', 3.01, 3.0)).toEqual({ kind: 'oob' });
+    expect(snapCreditBucket(SNAP, 'KDB', 3.0, B)?.kind).toBe('hit');
+    expect(snapCreditBucket(SNAP, 'KDB', 3.01, B)?.kind).toBe('oob');
+  });
+
+  /* ★이 묶음이 2026-10-02 에 생겼다 — **하한에는 가드가 없었다.**
+     Score 가 붙은 테너는 산 페이로드에서 9M~3Y 여섯 칸이고 3M·6M 에는 없다
+     (서버 사유: "만기 보유(H 안에 만기) — 금리 위험이 없어 버퍼가 정의되지
+     않아요"). 그래서 잔존 0.4년이 **조용히 9M 버킷으로 끌려가** 잔존이 거의 두
+     배인 칸의 Score 를 빌려 쓰고 있었다 — 상한 쪽에 「조용히 3Y 로 끌려가 거짓이
+     된다」고 적어 둔 바로 그 결함이 아래쪽에만 살아 있었다. */
+  it('★하한(H 안에 만기)도 스냅하지 않는다 — 0.4년이 조용히 9M 로 안 끌려간다', () => {
+    const SHORT: RvCreditItem[] = [
+      item({ sector: 'KDB', sectorLabel: '산금채 AAA', tenor: '9M', years: 0.75, seriesId: 'k9m' }),
+      ...SNAP,
+    ];
+    expect(snapCreditBucket(SHORT, 'KDB', 0.4, B)).toEqual({
+      kind: 'oob',
+      side: 'below',
+      edgeYears: 0.5,
+    });
+    // 경계는 서버 식 그대로 — `years <= hMonths/12` 가 채점 불가다.
+    expect(snapCreditBucket(SHORT, 'KDB', 0.5, B)?.kind).toBe('oob');
+    const over = snapCreditBucket(SHORT, 'KDB', 0.51, B);
+    expect(over?.kind === 'hit' && over.item.tenor).toBe('9M');
+  });
+
+  it('★하한은 H 를 따라 움직인다 — 화면 상수가 아니다', () => {
+    const SHORT: RvCreditItem[] = [
+      item({ sector: 'KDB', sectorLabel: '산금채 AAA', tenor: '6M', years: 0.5, seriesId: 'k6m' }),
+      item({ sector: 'KDB', sectorLabel: '산금채 AAA', tenor: '9M', years: 0.75, seriesId: 'k9m' }),
+    ];
+    // H 3개월이면 하한 0.25년 — 0.4년은 이제 **적중**이다(6M 으로).
+    const h3 = snapCreditBucket(SHORT, 'KDB', 0.4, { maxYears: 3.0, hMonths: 3 });
+    expect(h3?.kind === 'hit' && h3.item.tenor).toBe('6M');
+    // H 12개월이면 하한 1.0년 — 0.9년도 밖이다.
+    expect(snapCreditBucket(SHORT, 'KDB', 0.9, { maxYears: 3.0, hMonths: 12 })).toEqual({
+      kind: 'oob',
+      side: 'below',
+      edgeYears: 1.0,
+    });
+  });
+
+  it('★스냅 거리를 같이 돌려준다 — 버킷 이름만으론 얼마나 멀리 빌렸는지 모른다', () => {
+    const r = snapCreditBucket(SNAP, 'KDB', 2.3, B);
+    expect(r?.kind === 'hit' && r.gapYears).toBeCloseTo(0.2, 10);
+    const exact = snapCreditBucket(SNAP, 'KDB', 2.5, B);
+    expect(exact?.kind === 'hit' && exact.gapYears).toBe(0);
   });
 
   it('미지정(섹터 공란·잔존 0)은 null — 카드가 서지 않는다', () => {
-    expect(snapCreditBucket(SNAP, '', 2.5, 3.0)).toBeNull();
-    expect(snapCreditBucket(SNAP, 'KDB', 0, 3.0)).toBeNull();
+    expect(snapCreditBucket(SNAP, '', 2.5, B)).toBeNull();
+    expect(snapCreditBucket(SNAP, 'KDB', 0, B)).toBeNull();
   });
 
   it('Score 가 없는 버킷도 적중은 적중이다 — 카드가 "Score 없음"으로 선다', () => {
     const noScore: RvCreditItem[] = [
       item({ sector: 'CARD', sectorLabel: '카드채 AA+', tenor: '2Y', years: 2.0, score: null }),
     ];
-    const r = snapCreditBucket(noScore, 'CARD', 1.9, 3.0);
+    const r = snapCreditBucket(noScore, 'CARD', 1.9, B);
     expect(r?.kind).toBe('hit');
     expect(r?.kind === 'hit' && r.item.score).toBeNull();
+  });
+
+  /* ── 화면이 사유를 **적는가** ─────────────────────────────────────────────
+     함수가 사유를 돌려줘도 화면이 안 적으면 조용한 스냅과 같다. 그리고 상한
+     문구는 틀린 사유("5Y·10Y 선물")를 대고 있었다 — 실제 사유는 트레이더
+     워크북의 커브가 3M~3Y 여덟 노드라는 것이다(`rv.py` MAX_YEARS 주석). */
+  it('★화면이 양쪽 끝의 사유와 스냅 거리를 적는다 — 틀린 「선물」 사유는 돌아오지 않는다', () => {
+    const src = fs.readFileSync(path.join(RV_DIR, 'RvPage.tsx'), 'utf8');
+    expect(src, '하한 사유(H 안에 만기)를 화면이 적어야 한다').toMatch(/H\(\{data\.hMonths\}개월\) 안에 만기/);
+    expect(src, '상한 사유는 워크북이다').toMatch(/워크북의 커브가 3M~3Y 여덟 노드/);
+    expect(src, '틀린 「선물」 사유가 돌아왔다').not.toMatch(/5Y·10Y 선물은 만기 상한 밖/);
+    expect(src, '스냅 거리를 적어야 한다').toMatch(/년 차이/);
+  });
+
+  /* ── ⓐ 내 호가는 버킷 Score 와 **다른 축**이다 ───────────────────────────── */
+  it('★내 호가 칸은 안 넣으면 «—» 다 — 0 은 「민평 그대로」라는 딴 진술이다', () => {
+    const src = fs.readFileSync(path.join(RV_DIR, 'RvPage.tsx'), 'utf8');
+    // 상태가 number 면 안 넣은 칸이 "민평 0.0bp" 라는 없는 진술을 한다.
+    expect(src).toMatch(/useState<number \| null>\(null\)/);
+    expect(src, '방향을 말로 적어야 한다(+ = 싸게 산다, 매수 기준)').toMatch(/그만큼 싸게 사요/);
+    const cmp = fs.readFileSync(path.join(RV_DIR, 'PickCompare.tsx'), 'utf8');
+    expect(cmp, '비교표도 안 넣은 호가를 «—» 로 적는다').toMatch(/quoteBp == null \? '—'/);
+  });
+
+  /* ── ⓑ 후보는 값을 복사하지 않는다 ─────────────────────────────────────── */
+  it('★후보 비교는 담을 때의 값을 복사하지 않는다 — 지금 페이로드로 다시 스냅한다', () => {
+    const cmp = fs.readFileSync(path.join(RV_DIR, 'PickCompare.tsx'), 'utf8');
+    // 열쇠만 든다: 후보 타입에 Score·캐리 같은 **값 필드가 없다**.
+    expect(cmp).toMatch(/export interface PickCandidate/);
+    expect(cmp, '후보가 값을 들면 창·H 를 바꿔도 이 표만 옛 수로 선다').not.toMatch(
+      /PickCandidate[\s\S]{0,400}?\bscore\b/,
+    );
+    // 그리고 창이 **직접** 스냅한다.
+    expect(cmp).toMatch(/snapCreditBucket\(items, c\.sector, c\.ttm, bounds\)/);
+    // 명구는 Score 를 적는 표면의 의무다(이 리포의 ① 규율).
+    expect(cmp).toMatch(/투자판단이 아니라 RV 랭킹이에요/);
   });
 });

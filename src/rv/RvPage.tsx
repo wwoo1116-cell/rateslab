@@ -81,7 +81,8 @@ import {
   type RvReinvestMode,
   type RvWindow,
 } from './api';
-import { bp1, sig } from './fmt';
+import { bp1, sig, yr } from './fmt';
+import { PickCompare, type PickCandidate } from './PickCompare';
 import { snapCreditBucket } from './pick';
 import { RankingTable } from './RankingTable';
 import { RvScatter } from './RvScatter';
@@ -115,6 +116,12 @@ const PICK_NONE = '__none__';
  * "30.00"(~36px) + "년"(~13px) + 좌우 패딩(32) + 편집여유 ≈ 95 → 100 으로 둔다
  * [말줄임·겹침 금지 규칙]. */
 const PICK_TTM_W = 100;
+
+/** 「민평 대비」 입력 칸 폭 [OWNER 2026-10-02]. 값은 부호 있는 bp 라
+ * "-12.5"(~34px) + "bp"(~15px) + 좌우 패딩(32) + 편집여유 ≈ 86 → 88.
+ * 잔존 칸(100)보다 좁은 것은 "30.00" 보다 짧기 때문이다 — 둘을 같은 폭으로
+ * 맞추면 바에서 숫자 칸만 넓어 보인다(가로도 잰다, 얼라인 규칙 7). */
+const PICK_QUOTE_W = 88;
 
 /** 설정 패널의 한 그룹 — 제목 + 줄들. 그룹 사이에만 Divider 를 긋는다. */
 function SetGroup({ title, children }: { title: string; children: React.ReactNode }) {
@@ -471,6 +478,16 @@ export function RvPage() {
    * 섹터 '' = 미지정, 잔존 0 = 미입력(둘 다 차야 카드가 선다). */
   const [pickSector, setPickSector] = useState('');
   const [pickTtm, setPickTtm] = useState(0);
+  /** 민평 대비 호가(bp) [OWNER 2026-10-02 — 「내 호가도」]. **`null` 은 「안
+   * 넣었다」이고 0 과 다른 사실이다**(0 = 「민평 그대로」라는 진술). 그래서
+   * number 가 아니라 `number | null` 로 든다 — 0 으로 두면 안 넣은 칸이
+   * "민평 0.0bp" 라는 **없는 진술**을 하게 된다(이 리포의 공란 정책). */
+  const [pickQuote, setPickQuote] = useState<number | null>(null);
+  /** 담은 후보들과 다음 번호. 창은 **값을 복사하지 않는다** — 열쇠만 들고
+   * 지금 페이로드로 다시 스냅한다(`PickCompare.tsx` 머리의 ★). */
+  const [cands, setCands] = useState<PickCandidate[]>([]);
+  const [candSeq, setCandSeq] = useState(1);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   const load = useCallback(() => {
     setError(undefined);
@@ -548,11 +565,28 @@ export function RvPage() {
     ctlFont,
     160,
   );
-  /* 매핑은 `pick.ts` 한 곳 — 섹터 일치 + 잔존 최근접 테너로 스냅, 상한 밖은 사유. */
+  /* 매핑은 `pick.ts` 한 곳 — 섹터 일치 + 잔존 최근접 테너로 스냅, **양쪽 끝**은
+     사유. 끝값(상한 maxYears · 하한 hMonths/12)은 **페이로드가 준다** — `data` 가
+     `PickBounds` 를 그대로 만족하므로 넘기는 것은 `data` 하나다. 화면에 0.75 같은
+     상수를 적으면 H 를 3/12개월로 바꾼 날 화면이 거짓말을 한다. */
   const pick = useMemo(
-    () => (data ? snapCreditBucket(data.credit.items, pickSector, pickTtm, data.maxYears) : null),
+    () => (data ? snapCreditBucket(data.credit.items, pickSector, pickTtm, data) : null),
     [data, pickSector, pickTtm],
   );
+  /* 담기 — 지금 지정된 것이 **적중일 때만** 담는다(범위 밖을 담으면 비교표에
+     빈 줄이 쌓인다). 담아도 입력은 **안 비운다**: 잔존만 바꿔 다음 후보를 담는
+     일이 잦다(포지션 담기 창이 안 닫히는 것과 같은 판단, ④ 2026-10-02). */
+  const canAdd = pick?.kind === 'hit';
+  const addCand = useCallback(() => {
+    if (pickSector === '' || !(pickTtm > 0)) return;
+    const label = pickSectors.find((x) => x.id === pickSector)?.label ?? pickSector;
+    setCands((prev) => [
+      ...prev,
+      { id: candSeq, sector: pickSector, sectorLabel: label, ttm: pickTtm, quoteBp: pickQuote },
+    ]);
+    setCandSeq((n) => n + 1);
+    setCompareOpen(true);
+  }, [candSeq, pickQuote, pickSector, pickSectors, pickTtm]);
 
   /* 실패·대기는 공용 상태 컴포넌트로 — 손 문장 셋이 리포의 ErrorState(재시도
    * 버튼)·LoadingState 와 딴 모양으로 서 있던 것의 정리(크리틱·CDS 점검). */
@@ -658,6 +692,40 @@ export function RvPage() {
               format={(v) => (v > 0 ? String(v) : '')}
               onCommit={(v) => setPickTtm(Math.max(0, Math.min(50, v)))}
             />
+            {/* ⓐ 민평 대비 호가 [OWNER 2026-10-02]. 버킷 Score 는 「그 칸이
+                평소보다 싸나」를 말하고, 이 칸은 「내가 받은 호가가 민평에서 얼마
+                떨어졌나」를 말한다 — **다른 질문**이라 한 수로 합치지 않는다.
+                입력이 곧 답이라 **산술이 없다**(§16 과 다툴 자리가 아니다).
+                빈칸은 `null` 로 둔다 — 0 은 「민평 그대로」라는 진술이다. */}
+            <NumField
+              label="종목 지정 — 민평 대비(bp)"
+              value={pickQuote ?? 0}
+              suffix="bp"
+              width={PICK_QUOTE_W}
+              format={(v) => (pickQuote == null ? '' : String(v))}
+              onCommit={(v) => setPickQuote(v)}
+            />
+            {/* ⓑ 담기 — 적중일 때만 켜진다. 비활성 사유는 카드가 이미 적고 있다. */}
+            <button
+              type="button"
+              className="sr-pillbtn"
+              disabled={!canAdd}
+              aria-label="이 종목을 후보로 담기"
+              onClick={addCand}
+            >
+              담기
+            </button>
+            {cands.length > 0 ? (
+              <button
+                type="button"
+                className="sr-pillbtn"
+                data-on={compareOpen || undefined}
+                aria-expanded={compareOpen}
+                onClick={() => setCompareOpen((v) => !v)}
+              >
+                후보 {cands.length}
+              </button>
+            ) : null}
             <button
               type="button"
               className="sr-pillbtn"
@@ -952,17 +1020,49 @@ export function RvPage() {
                         : ''}
                     </Text>
                   </HStack>
-                  {/* 입력 잔존 → 스냅된 버킷을 밝힌다(조용한 스냅 금지) + 캐리·롤·버퍼. */}
+                  {/* 입력 잔존 → 스냅된 버킷을 밝힌다(조용한 스냅 금지) + **거리** +
+                      캐리·롤·버퍼. 거리를 안 적으면 2.3년을 3Y 로 빌린 것이 안
+                      보인다 [2026-10-02]. */}
                   <Text font="legal" as="span" color="fgMuted">
-                    잔존 {pickTtm}년 → {pick.item.tenor} 버킷 · 캐리 {sig(pick.item.carryBp)}bp · 롤{' '}
-                    {sig(pick.item.rollBp)}bp · 버퍼 {sig(pick.item.bufferBp)}bp
+                    잔존 {yr(pickTtm)}년 → {pick.item.tenor} 버킷
+                    {pick.gapYears > 0 ? ` (${yr(pick.gapYears)}년 차이)` : ' (딱 맞아요)'} · 캐리{' '}
+                    {sig(pick.item.carryBp)}bp · 롤 {sig(pick.item.rollBp)}bp · 버퍼{' '}
+                    {sig(pick.item.bufferBp)}bp
                     {pick.item.score == null ? ' · 집합이 얕아 Score 미산출' : ''}
                   </Text>
+                  {/* ⓐ 내 호가 — 왼쪽 수(버킷의 역사)와 **다른 축**이라 줄을 따로
+                      쓴다. 안 넣었으면 이 줄이 아예 안 선다(0 이라고 적지 않는다). */}
+                  {pickQuote != null ? (
+                    <Text font="legal" as="span" color="fgMuted">
+                      내 호가 민평 {sig(pickQuote)}bp —{' '}
+                      {pickQuote > 0
+                        ? '그만큼 싸게 사요'
+                        : pickQuote < 0
+                          ? '그만큼 비싸게 사요'
+                          : '민평 그대로예요'}
+                      {' '}(매수 기준 · 버킷 Score 와 다른 축이에요)
+                    </Text>
+                  ) : null}
                 </>
-              ) : (
+              ) : pick.side === 'below' ? (
+                /* ★하한 — 종전에는 이 경우가 **조용히 9M 버킷으로 끌려갔다**
+                   [고침 2026-10-02]. 사유는 서버 것 그대로다(`rv.py` 의
+                   "만기 보유(H 안에 만기) — 금리 위험이 없어 버퍼가 정의되지
+                   않아요"). H 는 화면 컨트롤이라 끝값도 페이로드에서 온다. */
                 <Text font="body" as="p" color="fgMuted">
-                  이 화면은 잔존 {data.maxYears}년까지만 매겨요 — 입력한 {pickTtm}년은 범위
-                  밖이에요(5Y·10Y 선물은 만기 상한 밖, OWNER 2026-08-20).
+                  입력한 {yr(pickTtm)}년은 보유기간 H({data.hMonths}개월) 안에 만기가 들어요 —
+                  금리 위험이 없어 버퍼가 정의되지 않아서 채점을 안 해요. 채점은 잔존{' '}
+                  {yr(pick.edgeYears)}년 초과부터예요.
+                </Text>
+              ) : (
+                /* 상한 — 사유를 **워크북**으로 적는다. 종전 문구는 "5Y·10Y 선물은
+                   만기 상한 밖"이었는데 크레딧 버킷에 선물은 없고, 실제 사유는
+                   트레이더 워크북의 커브가 3M~3Y 여덟 노드라는 것이다
+                   (`backend/app/rv.py` MAX_YEARS 주석) [정정 2026-10-02]. */
+                <Text font="body" as="p" color="fgMuted">
+                  이 화면은 잔존 {yr(pick.edgeYears)}년까지만 매겨요 — 입력한 {yr(pickTtm)}년은
+                  범위 밖이에요. 트레이더 워크북의 커브가 3M~3Y 여덟 노드라서 이 화면도 같은
+                  유니버스를 말해요.
                 </Text>
               )}
             </VStack>
@@ -1102,6 +1202,22 @@ export function RvPage() {
       ) : null}
 
       {drill ? <DrillWindow point={drill} window={window} onClose={() => setDrill(null)} /> : null}
+
+      {/* ── ⓑ 후보 비교 [OWNER 2026-10-02] ────────────────────────────────────
+          값은 **안 넘긴다** — 열쇠(섹터·잔존·내 호가)와 지금 페이로드를 넘기고
+          창이 매번 다시 스냅한다. 그래서 창(52주/전체)·H·조달을 바꾸면 이 표도
+          같이 따라온다(`PickCompare.tsx` 머리의 ★). */}
+      {compareOpen ? (
+        <PickCompare
+          candidates={cands}
+          items={data.credit.items}
+          bounds={data}
+          window={window}
+          onRemove={(id) => setCands((prev) => prev.filter((c) => c.id !== id))}
+          onSelect={setDrill}
+          onClose={() => setCompareOpen(false)}
+        />
+      ) : null}
     </VStack>
   );
 }

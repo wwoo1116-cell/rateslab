@@ -76,7 +76,11 @@ export type WindowKey =
      확인하듯이 새 창 띄워서」]. 추적 창(`papertrace`)과 **다른 열쇠**다 — 추적을
      열어 두고 다음 다리를 담는 일이 있고, 그때 한쪽을 옮기면 다른 쪽이 따라가면
      안 된다. */
-  | "paperadd";
+  | "paperadd"
+  /* Credit RV 후보 비교 [OWNER 2026-10-02 — 「후보 둘셋 비교」]. 이력 단면 창
+     (`rv`)과 **다른 열쇠**다 — 후보를 띄워 놓고 한 줄의 이력을 여는 일이 있고,
+     그때 한쪽을 옮기면 다른 쪽이 따라가면 안 된다. */
+  | "rvpick";
 
 const remembered = new Map<WindowKey, WinPos>();
 

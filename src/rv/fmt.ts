@@ -20,3 +20,11 @@ export function sig(v: number, digits = 1): string {
 export function bp1(v: number): string {
   return v.toFixed(1);
 }
+
+/** 년 표기 — 잔존과 스냅 거리가 같은 자를 쓴다 [2026-10-02]. 뒤 0 은 떼므로
+ * 0.25 → "0.25" · 0.5 → "0.5" · 3 → "3" 이다("3.00년"은 정수 만기를 소수처럼
+ * 보이게 한다). 자리수를 아는 곳을 늘리지 않기 위해 여기 둔다 — RV 화면의
+ * 수량 표기는 이 파일 한 벌이다(위 머리 주석). */
+export function yr(v: number): string {
+  return String(Number(v.toFixed(2)));
+}
