@@ -85,13 +85,22 @@ describe('창과 자리', () => {
     expect(API).toMatch(/RiskWindow = '3m' \| '6m' \| '1y'/);
   });
 
-  it('★창이다 — 늘 깔아 두지 않는다', () => {
-    /* [OWNER 2026-10-02 — 「다리추가 옆에 버튼으로 리스크 관리 항목에서 확인할 수
-       있게」]. 상관을 보는 것은 «가끔 하는 일»이고 장부를 보는 것은 «늘 하는 일»이라,
-       인라인 카드로 깔아 두면 위계가 뒤집힌다(담기 폼을 창으로 보낸 그 판단과 같다). */
-    expect(SRC).toMatch(/<FloatingWindow/);
-    expect(SRC, '제 열쇠로 자리를 기억한다').toMatch(/windowKey="paperrisk"/);
-    expect(PAGE, '카드로 늘 깔려 있으면 안 된다').not.toMatch(/^\s*<RiskHeatmap \/>\s*$/m);
+  it('★★떠 있는 창이 아니다 — 거래내역을 덮으면 안 된다', () => {
+    /* [OWNER 2026-10-02] 「다리추가 옆에 버튼으로 … **화면 거래내역 가리지 말라는
+       얘기임**」. 처음엔 「버튼으로」만 읽고 FloatingWindow 로 만들었는데 그게
+       정확히 틀린 답이었다 — 떠 있는 창은 열리는 순간 표 위를 **덮는다**(실측:
+       기본 자리가 페이지 머리와 포지션 카드를 가렸다).
+       기준은 「창이냐 카드냐」가 아니라 **「덮느냐 미느냐」**다. */
+    /* ⚠주석이 아니라 **코드**만 본다 — 이 파일의 머리 주석이 「왜 창이 아닌가」를
+       설명하며 그 이름을 적고 있어서, 소스를 통째로 훑으면 그 설명이 걸린다
+       (오늘 색 가드에서 같은 실수를 한 번 했다). 임포트와 JSX 둘을 각각 잰다. */
+    expect(SRC, '창 부품을 들여오면 안 된다').not.toMatch(/^import .*FloatingWindow/m);
+    expect(SRC, '창으로 돌아가면 거래내역을 다시 덮는다').not.toMatch(/<FloatingWindow/);
+    expect(SRC, '자리를 미는 카드다').toMatch(/className="sr-card"/);
+  });
+
+  it('★안 켜면 DOM 에 아예 없다 — 자리도 안 먹는다', () => {
+    expect(PAGE).toMatch(/\{riskOpen \? <RiskHeatmap \/> : null\}/);
   });
 
   it('★「다리 추가」 바로 옆 버튼이 연다', () => {
@@ -103,14 +112,14 @@ describe('창과 자리', () => {
     expect(PAGE.slice(add, risk), '둘은 한 줄에 선다').not.toMatch(/sr-card/);
   });
 
-  it('담기·추적과 **다른 상태·다른 열쇠**다 — 셋을 같이 띄울 수 있다', () => {
+  it('담기와 **다른 상태**다 — 담아 놓고 상관을 볼 수 있다', () => {
     expect(PAGE).toMatch(/const \[riskOpen, setRiskOpen\] = useState\(false\)/);
-    expect(PAGE).toMatch(/riskOpen \? <RiskHeatmap onClose=/);
+    expect(PAGE).toMatch(/const \[addOpen, setAddOpen\] = useState\(false\)/);
+    /* 안 쓰는 창 열쇠를 남기면 등록부가 거짓말을 한다 — 「이 창이 있다」고 적힌
+       채로 그 창이 없으면, 다음 사람이 자리 기억을 고치러 가서 헛돈다. */
     const geom = fs.readFileSync(
       path.join(__dirname, '..', 'src', 'ui', 'window', 'geometry.ts'), 'utf8');
-    for (const k of ['paperadd', 'papertrace', 'paperrisk']) {
-      expect(geom, `${k} 열쇠가 있어야 한다`).toMatch(new RegExp(`"${k}"`));
-    }
+    expect(geom, '창이 아니므로 열쇠도 없어야 한다').not.toMatch(/paperrisk/);
   });
 
   it('거래가 둘 미만이면 행렬 대신 사유가 선다', () => {

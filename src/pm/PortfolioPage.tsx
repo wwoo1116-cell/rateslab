@@ -1800,13 +1800,17 @@ export function PortfolioPage() {
         </VStack>
 
       </VStack>
+      {/* ── 리스크 관리 [OWNER 2026-10-02 — 「다리추가 옆에 버튼으로 … 화면
+          거래내역 가리지 말라는 얘기임」] ───────────────────────────────────
+          머리의 「리스크 관리」가 여닫는다. **떠 있는 창이 아니다** — 창은 열리는
+          순간 거래내역을 덮고, 그게 오너가 막은 바로 그것이다. 켜지면 포지션 카드
+          **아래에 붙어 자리를 밀고**, 안 켜면 DOM 에 아예 없다. */}
+      {riskOpen ? <RiskHeatmap /> : null}
+
       {/* 트레이드 추적 창 [OWNER 2026-09-28] — 소계 줄의 「추적」이 연다. */}
       {trace ? (
         <TraceWindow ns={trace.ns} title={trace.title} onClose={() => setTrace(undefined)} />
       ) : null}
-      {/* ── 리스크 관리 창 [OWNER 2026-10-02] — 머리의 「리스크 관리」가 연다.
-          추적·담기와 **다른 열쇠**라 셋을 같이 띄워 둘 수 있다. */}
-      {riskOpen ? <RiskHeatmap onClose={() => setRiskOpen(false)} /> : null}
     </VStack>
   );
 }

@@ -11,6 +11,22 @@
  * **둘 다 10Y pay 를 공유하는 커브 스티프너**라 ρ = +0.67 이 나온다. 분산이 아니라
  * 집중이고, 테너 사다리가 그걸 그대로 말한다(10Y 에 순 DV01 +2,000만/bp 가 몰림).
  *
+ * ── ★★**창이 아니라 인라인이다** [OWNER 2026-10-02] ────────────────────────
+ *
+ * > [OWNER] 「다리추가 옆에 버튼으로 리스크 관리 항목에서 확인할 수 있게 하기」
+ * >         … 「**화면 거래내역 가리지 말라는 얘기임**」
+ *
+ * 처음엔 「버튼으로」를 읽고 `FloatingWindow` 로 만들었는데 **그게 정확히 틀린
+ * 답이었다** — 떠 있는 창은 열리는 순간 거래내역 위를 덮는다(실측: 기본 자리가
+ * 페이지 머리와 포지션 카드를 가렸다). 오너가 원한 것은 「떠 있는 것」이 아니라
+ * **「안 볼 때는 자리를 안 먹고, 볼 때는 아무것도 안 가리는 것」**이다.
+ *
+ * 그래서: 「다리 추가」 옆 알약이 **여닫고**, 켜지면 포지션 카드 **아래에 붙어**
+ * 자리를 **밀어낸다**(덮지 않는다). 안 켜면 DOM 에 아예 없다.
+ * ⚠담기 폼(`paperadd`)이 창인 것과 **다른 판단**이고, 그 차이가 이유다: 담기는
+ *   «표를 보면서 치는» 일이라 떠 있어야 하고, 상관은 «표 대신 보는» 일이라 떠
+ *   있을 이유가 없다. 「창이 캐논」이 아니라 **덮느냐 미느냐**가 기준이다.
+ *
  * ── 수는 **서버가 센다**(§16) ──────────────────────────────────────────────
  * 상관도 창도 n 도 `/api/paper/risk` 가 낸다. 화면은 칠하고 적기만 한다 — 「무엇의
  * 상관인가」라는 말(`basis`)까지 서버 것을 옮긴다. 두 층이 각자 「상관」을 정의하면
@@ -35,7 +51,6 @@ import { Text } from '@coinbase/cds-web/typography';
 
 import { BacktestUnavailable } from '@/lib/api';
 import { tintFor } from '@/theme/tint';
-import { FloatingWindow } from '@/ui/window/FloatingWindow';
 
 import { fetchRisk, type PaperRisk, type RiskWindow } from './api';
 
@@ -50,7 +65,7 @@ function rho(v: number | null): string {
   return v == null ? '—' : v.toFixed(2);
 }
 
-export function RiskHeatmap({ onClose }: { onClose: () => void }) {
+export function RiskHeatmap() {
   const [win, setWin] = useState<RiskWindow>('1y');
   const [got, setGot] = useState<PaperRisk | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,16 +102,17 @@ export function RiskHeatmap({ onClose }: { onClose: () => void }) {
   const thin = got != null && got.n < got.minN;
 
   return (
-    /* ★**창이다**(카드가 아니다) [OWNER 2026-10-02 — 「다리추가 옆에 버튼으로
-       리스크 관리 항목에서 확인할 수 있게」]. 상관을 보는 것은 «가끔 하는 일»이고
-       장부를 보는 것은 «늘 하는 일»이라, 늘 깔아 두면 위계가 뒤집힌다 — 담기 폼을
-       창으로 보낸 그 판단과 **같은 판단**이고 **같은 부품**이다(캐논 `ui/window/`).
-       제 열쇠(`paperrisk`)로 자리를 기억하므로 담기·추적과 같이 열어 둘 수 있다. */
-    <FloatingWindow
-      windowKey="paperrisk"
-      title="Risk Management — 거래 간 상관"
-      width={760}
-      aside={
+    <VStack className="sr-card" flexShrink={0} width="100%">
+      <HStack alignItems="baseline" justifyContent="space-between" gap={1}
+        paddingX={2} paddingTop={1.5} paddingBottom={0.5} flexWrap="wrap">
+        <HStack alignItems="baseline" gap={1} flexWrap="wrap">
+          <Text font="label1" as="h2" noWrap>Risk Management — 거래 간 상관</Text>
+          <Text font="legal" as="span" color="fgMuted">
+            {got
+              ? `${got.basis} · n=${got.n}${got.to ? ` · ${got.since} ~ ${got.to}` : ''}`
+              : busy ? '재는 중…' : ''}
+          </Text>
+        </HStack>
         <HStack gap={0.5} alignItems="center">
           {WINDOWS.map((w) => (
             <button
@@ -111,18 +127,7 @@ export function RiskHeatmap({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </HStack>
-      }
-      onClose={onClose}
-    >
-      {/* 무엇의 상관인지와 표본은 **창 안 첫 줄**이다 — 제목 옆에 밀어 넣으면
-          창이 좁아지는 날 잘린다(말줄임 금지). */}
-      <Box paddingX={2} paddingTop={1}>
-        <Text font="legal" as="span" color="fgMuted">
-          {got
-            ? `${got.basis} · n=${got.n}${got.to ? ` · ${got.since} ~ ${got.to}` : ''}`
-            : busy ? '재는 중…' : ''}
-        </Text>
-      </Box>
+      </HStack>
 
       {err ? (
         <Box paddingX={2} paddingBottom={2}>
@@ -214,6 +219,6 @@ export function RiskHeatmap({ onClose }: { onClose: () => void }) {
           </VStack>
         </>
       )}
-    </FloatingWindow>
+    </VStack>
   );
 }

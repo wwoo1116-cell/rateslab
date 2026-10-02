@@ -80,11 +80,7 @@ export type WindowKey =
   /* Credit RV 후보 비교 [OWNER 2026-10-02 — 「후보 둘셋 비교」]. 이력 단면 창
      (`rv`)과 **다른 열쇠**다 — 후보를 띄워 놓고 한 줄의 이력을 여는 일이 있고,
      그때 한쪽을 옮기면 다른 쪽이 따라가면 안 된다. */
-  | "rvpick"
-  /* 거래 간 상관 [OWNER 2026-10-02 — 「다리추가 옆에 버튼으로 리스크 관리 항목에서
-     확인할 수 있게」]. 담기(`paperadd`)·추적(`papertrace`)과 **다른 열쇠**다 —
-     셋이 같이 열릴 수 있고, 그때 한쪽을 옮기면 다른 쪽이 따라가면 안 된다. */
-  | "paperrisk";
+  | "rvpick";
 
 const remembered = new Map<WindowKey, WinPos>();
 
