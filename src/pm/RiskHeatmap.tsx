@@ -35,6 +35,7 @@ import { Text } from '@coinbase/cds-web/typography';
 
 import { BacktestUnavailable } from '@/lib/api';
 import { tintFor } from '@/theme/tint';
+import { FloatingWindow } from '@/ui/window/FloatingWindow';
 
 import { fetchRisk, type PaperRisk, type RiskWindow } from './api';
 
@@ -49,7 +50,7 @@ function rho(v: number | null): string {
   return v == null ? '—' : v.toFixed(2);
 }
 
-export function RiskHeatmap() {
+export function RiskHeatmap({ onClose }: { onClose: () => void }) {
   const [win, setWin] = useState<RiskWindow>('1y');
   const [got, setGot] = useState<PaperRisk | null>(null);
   const [busy, setBusy] = useState(false);
@@ -86,17 +87,16 @@ export function RiskHeatmap() {
   const thin = got != null && got.n < got.minN;
 
   return (
-    <VStack className="sr-card" flexShrink={0} width="100%">
-      <HStack alignItems="baseline" justifyContent="space-between" gap={1}
-        paddingX={2} paddingTop={1.5} paddingBottom={0.5} flexWrap="wrap">
-        <HStack alignItems="baseline" gap={1} flexWrap="wrap">
-          <Text font="label1" as="h2" noWrap>Risk Management — 거래 간 상관</Text>
-          <Text font="legal" as="span" color="fgMuted">
-            {got
-              ? `${got.basis} · n=${got.n}${got.to ? ` · ${got.since} ~ ${got.to}` : ''}`
-              : busy ? '재는 중…' : ''}
-          </Text>
-        </HStack>
+    /* ★**창이다**(카드가 아니다) [OWNER 2026-10-02 — 「다리추가 옆에 버튼으로
+       리스크 관리 항목에서 확인할 수 있게」]. 상관을 보는 것은 «가끔 하는 일»이고
+       장부를 보는 것은 «늘 하는 일»이라, 늘 깔아 두면 위계가 뒤집힌다 — 담기 폼을
+       창으로 보낸 그 판단과 **같은 판단**이고 **같은 부품**이다(캐논 `ui/window/`).
+       제 열쇠(`paperrisk`)로 자리를 기억하므로 담기·추적과 같이 열어 둘 수 있다. */
+    <FloatingWindow
+      windowKey="paperrisk"
+      title="Risk Management — 거래 간 상관"
+      width={760}
+      aside={
         <HStack gap={0.5} alignItems="center">
           {WINDOWS.map((w) => (
             <button
@@ -111,7 +111,18 @@ export function RiskHeatmap() {
             </button>
           ))}
         </HStack>
-      </HStack>
+      }
+      onClose={onClose}
+    >
+      {/* 무엇의 상관인지와 표본은 **창 안 첫 줄**이다 — 제목 옆에 밀어 넣으면
+          창이 좁아지는 날 잘린다(말줄임 금지). */}
+      <Box paddingX={2} paddingTop={1}>
+        <Text font="legal" as="span" color="fgMuted">
+          {got
+            ? `${got.basis} · n=${got.n}${got.to ? ` · ${got.since} ~ ${got.to}` : ''}`
+            : busy ? '재는 중…' : ''}
+        </Text>
+      </Box>
 
       {err ? (
         <Box paddingX={2} paddingBottom={2}>
@@ -203,6 +214,6 @@ export function RiskHeatmap() {
           </VStack>
         </>
       )}
-    </VStack>
+    </FloatingWindow>
   );
 }

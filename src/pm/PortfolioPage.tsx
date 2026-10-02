@@ -1029,6 +1029,9 @@ export function PortfolioPage() {
    *  ⚠담은 뒤에도 **안 닫는다**: 이 북의 트레이드는 다리 둘짜리 스프레드가
    *  보통이라(BSS·커브) 연달아 담는 것이 기본 동작이다. */
   const [addOpen, setAddOpen] = useState(false);
+  /** 리스크 관리 창 [OWNER 2026-10-02]. 담기와 **다른 상태**다 — 담아 놓고 상관을
+   *  보는 일이 있고, 그때 한쪽을 닫으면 다른 쪽도 닫히면 안 된다. */
+  const [riskOpen, setRiskOpen] = useState(false);
   /** ★**장중 레벨** [OWNER 2026-09-28 — "지금 2년은 4.06, 5년은 4.27, 10년은 4.3375"].
    *  이 장부의 마크는 종가인데 데스크는 장중에 산다 — 연휴 뒤 첫날처럼 종가가 아직
    *  없는 날 장부는 사흘 전 수에 묶인다. 지금 보는 금리를 치면 **서버가** 그 값으로
@@ -1412,16 +1415,29 @@ export function PortfolioPage() {
               </Text>
             </HStack>
             {/* 담기는 창이 진다 [OWNER 2026-10-01]. 카드 머리의 컨트롤은 Main
-                pill 크기(32px) — 「상세 분석」·「추적」이 선 그 자리다. */}
-            <button
-              type="button"
-              className="sr-pillbtn"
-              data-on={addOpen || undefined}
-              aria-expanded={addOpen}
-              onClick={() => setAddOpen((v) => !v)}
-            >
-              다리 추가
-            </button>
+                pill 크기(32px) — 「상세 분석」·「추적」이 선 그 자리다.
+                리스크 관리도 **같은 줄**이다 [OWNER 2026-10-02 — 「다리추가 옆에
+                버튼으로」]: 둘 다 «이 북을 두고 가끔 하는 일»이라 같은 위계다. */}
+            <HStack gap={0.5} alignItems="center">
+              <button
+                type="button"
+                className="sr-pillbtn"
+                data-on={addOpen || undefined}
+                aria-expanded={addOpen}
+                onClick={() => setAddOpen((v) => !v)}
+              >
+                다리 추가
+              </button>
+              <button
+                type="button"
+                className="sr-pillbtn"
+                data-on={riskOpen || undefined}
+                aria-expanded={riskOpen}
+                onClick={() => setRiskOpen((v) => !v)}
+              >
+                리스크 관리
+              </button>
+            </HStack>
           </HStack>
           {/* ★위계의 꼭대기 — 포트폴리오 전체는 **표 위 한 줄**이다 [OWNER
               2026-09-28]. 종전에는 이 카드 머리와 표 맨 아래 「전체」 줄에 같은
@@ -1784,17 +1800,13 @@ export function PortfolioPage() {
         </VStack>
 
       </VStack>
-      {/* ── Risk Management [OWNER 2026-10-02 — 「거래별 상관관계를 포트폴리오 탭에
-          Risk Management 로 Heatmap」] ────────────────────────────────────────
-          포지션 카드 **아래**다: 「내가 무엇을 들고 있나」를 읽은 다음에 오는 질문이
-          「그게 사실 같은 베팅인가」이고, 위에 두면 장부를 보러 온 사람이 매번 위험
-          격자를 지나야 한다(담기 폼을 창으로 보낸 그 판단과 같다). */}
-      <RiskHeatmap />
-
       {/* 트레이드 추적 창 [OWNER 2026-09-28] — 소계 줄의 「추적」이 연다. */}
       {trace ? (
         <TraceWindow ns={trace.ns} title={trace.title} onClose={() => setTrace(undefined)} />
       ) : null}
+      {/* ── 리스크 관리 창 [OWNER 2026-10-02] — 머리의 「리스크 관리」가 연다.
+          추적·담기와 **다른 열쇠**라 셋을 같이 띄워 둘 수 있다. */}
+      {riskOpen ? <RiskHeatmap onClose={() => setRiskOpen(false)} /> : null}
     </VStack>
   );
 }

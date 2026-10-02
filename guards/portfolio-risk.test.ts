@@ -85,12 +85,32 @@ describe('창과 자리', () => {
     expect(API).toMatch(/RiskWindow = '3m' \| '6m' \| '1y'/);
   });
 
-  it('포트폴리오 탭에 서고, 포지션 카드 **아래**다', () => {
-    expect(PAGE).toMatch(/<RiskHeatmap \/>/);
-    const risk = PAGE.indexOf('<RiskHeatmap />');
-    const pos = PAGE.indexOf('>포지션</Text>');
-    expect(pos, '포지션 카드가 있어야 한다').toBeGreaterThan(-1);
-    expect(risk, '「무엇을 들고 있나」를 읽은 다음에 오는 질문이다').toBeGreaterThan(pos);
+  it('★창이다 — 늘 깔아 두지 않는다', () => {
+    /* [OWNER 2026-10-02 — 「다리추가 옆에 버튼으로 리스크 관리 항목에서 확인할 수
+       있게」]. 상관을 보는 것은 «가끔 하는 일»이고 장부를 보는 것은 «늘 하는 일»이라,
+       인라인 카드로 깔아 두면 위계가 뒤집힌다(담기 폼을 창으로 보낸 그 판단과 같다). */
+    expect(SRC).toMatch(/<FloatingWindow/);
+    expect(SRC, '제 열쇠로 자리를 기억한다').toMatch(/windowKey="paperrisk"/);
+    expect(PAGE, '카드로 늘 깔려 있으면 안 된다').not.toMatch(/^\s*<RiskHeatmap \/>\s*$/m);
+  });
+
+  it('★「다리 추가」 바로 옆 버튼이 연다', () => {
+    const add = PAGE.indexOf('다리 추가');
+    const risk = PAGE.indexOf('리스크 관리');
+    expect(add, '다리 추가 버튼이 있어야 한다').toBeGreaterThan(-1);
+    expect(risk, '리스크 관리 버튼이 있어야 한다').toBeGreaterThan(add);
+    // 둘 사이에 다른 카드가 끼면 「옆」이 아니다 — 같은 HStack 안이어야 한다.
+    expect(PAGE.slice(add, risk), '둘은 한 줄에 선다').not.toMatch(/sr-card/);
+  });
+
+  it('담기·추적과 **다른 상태·다른 열쇠**다 — 셋을 같이 띄울 수 있다', () => {
+    expect(PAGE).toMatch(/const \[riskOpen, setRiskOpen\] = useState\(false\)/);
+    expect(PAGE).toMatch(/riskOpen \? <RiskHeatmap onClose=/);
+    const geom = fs.readFileSync(
+      path.join(__dirname, '..', 'src', 'ui', 'window', 'geometry.ts'), 'utf8');
+    for (const k of ['paperadd', 'papertrace', 'paperrisk']) {
+      expect(geom, `${k} 열쇠가 있어야 한다`).toMatch(new RegExp(`"${k}"`));
+    }
   });
 
   it('거래가 둘 미만이면 행렬 대신 사유가 선다', () => {
