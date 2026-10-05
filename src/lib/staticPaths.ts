@@ -132,6 +132,16 @@ export const issuanceCalendarUrl = (ym: string, months: number) =>
 export const issuanceDayUrl = (iso: string) =>
   liveUrl(`/api/issuance/day/${encodeURIComponent(iso)}`);
 
+/* ── Lab 크레딧 RV (DTS) [OWNER 2026-10-02] ───────────────────────────────────
+ * 제품 `/api/rv/analysis` 와 **다른 라우트**다 — 제품 Score 는 트레이더 설계안
+ * 이고 이쪽은 표본밖을 한 바퀴 돈 축이라, 한 라우트에 섞으면 어느 수가 어느
+ * 규약의 것인지 화면이 말할 수 없다(`backend/app/creditdts.py` 머리).
+ *
+ * **라이브 전용**이다 — 민평이 SQL 에만 있어 구워 둘 수 없다(제품 RV 와 같다).
+ * 바닥(`floor`)은 손잡이가 아니라 서버 상수다: 고를 수 있게 하면 랭킹이 사람의
+ * 선택에 따라 달라지고, 그 선택을 기록할 자리가 이 화면에 없다. */
+export const labCreditDtsUrl = () => liveUrl("/api/lab/creditdts");
+
 export const cashbondInstrumentsUrl = () => liveUrl("/api/cashbond/instruments");
 
 export const cashbondSeriesUrl = (id: string) =>

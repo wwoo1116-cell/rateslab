@@ -198,7 +198,7 @@ export function tabForSection(s: SectionId, lastGroup: Group): TabId {
  *
  * 세입자는 **탭이 아니라 URL 상태**다(`?g=lab&lab=scenario`). 탭을 늘리면
  * `sectionOf()` 가 드는 «섹션은 유도값» 규칙에 두 번째 상태가 끼어든다. */
-export type LabId = 'surface' | 'issuance' | 'model' | 'irs';
+export type LabId = 'surface' | 'issuance' | 'model' | 'irs' | 'creditdts';
 
 /** 내려간 세입자. 공유된 링크가 죽지 않게 갈 곳을 적어 둔다. */
 export const RETIRED_LAB: Record<string, LabId> = { scenario: 'model' };
@@ -220,10 +220,17 @@ export const LAB_ITEMS: { id: LabId; label: string; desc: string; glyph: string 
      북 장중 평가로 벌써 읽고 `/api/paper/live` 로 내고 있었고, 없던 것은 화면뿐.
      Lab 에 두는 이유: 이 수로 무엇을 할지(문턱·신호)를 아직 안 정했다. */
   { id: 'irs', label: '실시간 IRS', desc: '지금 커브가 종가에서 얼마나 움직였나', glyph: '◷' },
+  /* 크레딧 RV (DTS) [OWNER 2026-10-02 — 「DTS version 을 하나 Lab 에다가 만드는
+     게 낫겠는데?」]. 제품 Strategy/Credit RV 의 **대체가 아니라 짝**이다 —
+     제품 Score 는 트레이더 설계안이고 이 축은 표본밖을 한 바퀴 돈 것뿐이라,
+     둘을 나란히 두고 기록이 쌓인 뒤에 승격을 묻는다(실시간 IRS 와 같은 자세).
+     그래서 `rv.py` 도 제품 화면도 한 줄 안 건드렸다. */
+  { id: 'creditdts', label: '크레딧 RV (DTS)', desc: '같은 만기 안에서 제 평소보다 벌어진 칸은 어디인가', glyph: '◰' },
 ];
 
 export function isLabId(v: string | undefined): v is LabId {
-  return v === 'surface' || v === 'issuance' || v === 'model' || v === 'irs';
+  return v === 'surface' || v === 'issuance' || v === 'model' || v === 'irs'
+    || v === 'creditdts';
 }
 
 /* ── Strategy 의 세입자들 [OWNER 2026-08-24] ─────────────────────────────────
