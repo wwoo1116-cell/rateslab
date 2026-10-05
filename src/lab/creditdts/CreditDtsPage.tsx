@@ -77,7 +77,7 @@ import { ErrorState, LoadingState } from '@/ui/DataState';
 import { useMeasure } from '@/ui/useMeasure';
 
 import { fetchCreditDts, type CreditDts, type CreditDtsItem } from './api';
-import { PAD, quadrantCounts, quadrantGeometry, spearman } from './quadrant';
+import { PAD, quadrantCounts, quadrantGeometry, spearman, xScaleNote } from './quadrant';
 
 /** 측정 전 첫 프레임의 크기. `useMeasure` 가 0 을 주는 그 한 프레임에 좌표를
  *  0 으로 접으면 점이 모두 왼쪽 위에 모였다가 튀어나온다. */
@@ -257,10 +257,53 @@ function Quadrant({ items, hover, onHover }: {
               </g>
             );
           })}
-          <text x={PAD.l} y={h - 10} fontSize={11} fill="var(--color-fgMuted)">
-            국고 대비 스프레드 (bp) — 오른쪽일수록 넓어요 · 세로선은 오늘 중앙값
+          {/* 네 구역의 이름 — 축 둘을 **말 그대로** 서술한다(제품 사분면의 그 규율:
+              가치 판단 낱말을 얹지 않는다). 모서리에 적어야 「왼쪽 위」가 어디인지
+              설명문과 그림이 따로 놀지 않는다. */}
+          <text x={PAD.l + 6} y={PAD.t + 16} className="sr-rv-quad">좁은데 싸다 · 순수 RV</text>
+          <text x={w - PAD.r - 6} y={PAD.t + 16} textAnchor="end" className="sr-rv-quad">
+            넓고 싸다
           </text>
-          <text x={6} y={PAD.t + 10} fontSize={11} fill="var(--color-fgMuted)">z</text>
+          <text x={PAD.l + 6} y={PAD.t + geo.inner.h - 8} className="sr-rv-quad">좁고 비싸다</text>
+          <text
+            x={w - PAD.r - 6} y={PAD.t + geo.inner.h - 8}
+            textAnchor="end" className="sr-rv-quad"
+          >
+            넓은데 비싸다 · 캐리만
+          </text>
+
+          {/* ★눈금 — 첫 판에는 **숫자가 하나도 없었다**(실측 스크린샷에서 드러났다).
+              「세로선은 중앙값」이라고 적어도 그 중앙값이 얼마인지 읽을 길이 없었다. */}
+          {geo.xTicks.map((v, i) => (
+            <text
+              key={`x${i}`}
+              x={i === 0 ? PAD.l : i === 1 ? geo.xMidPx : PAD.l + geo.inner.w}
+              y={PAD.t + geo.inner.h + 18}
+              textAnchor={i === 0 ? 'start' : i === 1 ? 'middle' : 'end'}
+              className="sr-rv-tick"
+            >
+              {bp(v)}
+            </text>
+          ))}
+          {geo.yTicks.map((v, i) => (
+            <text
+              key={`y${i}`}
+              x={PAD.l - 8}
+              y={(v === 0 ? geo.zeroPx : v > 0 ? PAD.t : PAD.t + geo.inner.h) + 4}
+              textAnchor="end"
+              className="sr-rv-tick"
+            >
+              {fmtDelta(v, 'ratio')}
+            </text>
+          ))}
+          <text x={PAD.l + geo.inner.w / 2} y={h - 6} textAnchor="middle" className="sr-rv-tick">
+            {xScaleNote(geo.xScale)}
+          </text>
+          {/* ⚠세로축 이름을 svg 안에 두지 않는다 — 좌상단 `z` 글자가 첫 눈금
+              `+0.42` 와 **겹쳤다**(실측 스크린샷 2026-10-06). 제품 `RvScatter` 도
+              세로축 이름을 그림 안에 안 둔다: 축이 무엇인지는 카드 머리의
+              「세로가 점수고 …」 한 줄과 랭킹 표의 `z` 열이 이미 말한다.
+              겹침은 잘림의 사촌이고 같은 등급의 결함이다(CLAUDE.md 말줄임 §3). */}
         </svg>
         {/* 그림의 변화는 **소리가 안 난다** — 짚은 자리를 한 문장으로 읽는다.
             스트립은 `aria-hidden` 이라(제 머리에 그 근거가 있다) 두 번 읽히지 않는다. */}

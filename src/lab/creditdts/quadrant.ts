@@ -88,7 +88,9 @@ export function spearman(xs: readonly number[], ys: readonly number[]): number |
   return sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : null;
 }
 
-export const PAD = { l: 46, r: 14, t: 14, b: 36 } as const;
+/* 눈금 글자와 축 설명이 설 자리. 제품 `RvScatter` 의 치수를 따른다 —
+ * 같은 그림을 두 치수로 그리면 한 화면에서 축이 서로 안 맞아 보인다. */
+export const PAD = { l: 52, r: 16, t: 16, b: 48 } as const;
 
 export interface QuadrantPoint {
   id: string;
@@ -100,6 +102,23 @@ export interface QuadrantPoint {
 
 export interface QuadrantGeometry {
   points: QuadrantPoint[];
+  /** 가로 눈금 셋(최소·중앙값·최대)과 세로 눈금 셋(최소·0·최대).
+   *  **그림에 숫자가 하나도 없으면** 「세로선은 중앙값」이라고 적어 봐야 그 중앙값이
+   *  얼마인지 읽을 길이 없다(첫 판이 그랬다 — 실측 스크린샷에서 드러났다). */
+  xTicks: number[];
+  yTicks: number[];
+  /** 가로 축의 눈금자. ★**스프레드는 로그로 읽는다** — 선형으로 그렸더니 중앙값이
+   *  폭의 **13.5%** 자리에 서고 점의 80%가 폭의 31%에 뭉쳤다(실측 2026-10-06,
+   *  120칸: 중앙 50.6bp·최대 286.4bp). 캔버스 2/3 가 점 10% 를 싣고 있었고, 그건
+   *  「전부 왼쪽」이라는 **틀린 문장**이다.
+   *
+   *  ⚠**네 구역은 안 바뀐다** — 구역은 중앙값의 어느 쪽인가로 정해지고, 단조변환은
+   *  그걸 못 옮긴다. 바뀌는 것은 **간격뿐**이다(가드가 그 불변을 잰다).
+   *
+   *  스프레드가 0 이하인 칸이 하나라도 있으면 **선형으로 떨어진다** — 로그는 거기서
+   *  정의되지 않는다. 지금 유니버스는 통안을 빼서 음수가 0건이지만(실측), 그것은
+   *  오늘의 사실이지 계약이 아니다. 화면이 **어느 눈금자인지 적는다**. */
+  xScale: 'log' | 'linear';
   /** 가로 경계 = **오늘 후보의 중앙값**. 0 을 그으면 전부 오른쪽에 몰린다
    *  (제품 사분면이 같은 이유로 중앙값을 쓴다). */
   xMid: number;
@@ -130,10 +149,16 @@ export function quadrantGeometry(
   const y0 = ys.length ? Math.min(...ys) : 0;
   const y1 = ys.length ? Math.max(...ys) : 1;
 
-  const px = (v: number) => PAD.l + ((v - x0) / Math.max(1e-9, x1 - x0)) * iw;
+  const xScale: 'log' | 'linear' = xs.length > 0 && x0 > 0 ? 'log' : 'linear';
+  const t = (v: number) => (xScale === 'log' ? Math.log(v) : v);
+  const t0 = t(x0);
+  const t1 = t(x1);
+
+  const px = (v: number) => PAD.l + ((t(v) - t0) / Math.max(1e-9, t1 - t0)) * iw;
   const py = (v: number) => PAD.t + (1 - (v - y0) / Math.max(1e-9, y1 - y0)) * ih;
 
   const xMid = median(xs);
+  const zeroInRange = ys.length > 0 && y0 <= 0 && 0 <= y1;
   return {
     points: items.map((it) => ({
       id: it.seriesId,
@@ -141,12 +166,22 @@ export function quadrantGeometry(
       cy: py(it.z),
       item: it,
     })),
+    xTicks: xs.length ? [x0, xMid, x1] : [],
+    yTicks: ys.length ? (zeroInRange ? [y1, 0, y0] : [y1, y0]) : [],
+    xScale,
     xMid,
     xMidPx: px(xMid),
     zeroPx: py(0),
-    zeroInRange: y0 <= 0 && 0 <= y1,
+    zeroInRange,
     inner: { w: iw, h: ih },
   };
+}
+
+/** 그림 밑에 적는 눈금자 이름. 화면이 어느 자로 쟀는지 **말한다**. */
+export function xScaleNote(xScale: 'log' | 'linear'): string {
+  return xScale === 'log'
+    ? '국고 대비 스프레드 (bp · 로그 눈금) — 오른쪽일수록 넓어요 · 세로선은 오늘 중앙값'
+    : '국고 대비 스프레드 (bp) — 오른쪽일수록 넓어요 · 세로선은 오늘 중앙값';
 }
 
 /** 네 구역의 수 — 화면이 「무엇이 몇 개인지」를 한 줄로 말할 때 쓴다.

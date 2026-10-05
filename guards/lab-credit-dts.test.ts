@@ -37,11 +37,14 @@ import { describe, expect, it } from 'vitest';
 
 import { stripComments } from './_source';
 import {
+  PAD,
   median,
   quadrantCounts,
   quadrantGeometry,
   spearman,
+  xScaleNote,
 } from '../src/lab/creditdts/quadrant';
+import LIVE from './lab-credit-dts.live.json';
 import type { CreditDtsItem } from '../src/lab/creditdts/api';
 import { DEFAULT_LAB, LAB_ITEMS, isLabId, resolveLab } from '../src/ui/nav';
 
@@ -127,14 +130,59 @@ describe('경계선 둘 — 가로는 중앙값, 세로는 0', () => {
     expect(median([])).toBe(0);
   });
 
-  it('가로 경계가 그 중앙값에 선다', () => {
+  it('가로 경계가 그 중앙값에 선다 — **로그 자** 위에서', () => {
     const its = [10, 20, 30, 40].map((v, i) =>
       item({ seriesId: `S${i}`, nowBp: v, z: 0.1 }));
     const geo = quadrantGeometry(its, 520, 360);
     expect(geo.xMid).toBe(25);
-    /* 10~40 범위의 25 는 정확히 가운데 — 안쪽 폭의 절반 자리다. */
+    expect(geo.xScale).toBe('log');
+    /* ln 25 는 ln 10~ln 40 의 66.1% 자리다. 선형이면 50% 였다 — 이 수가 눈금자를
+       못 바꾸게 잡는다. */
+    const frac = (Math.log(25) - Math.log(10)) / (Math.log(40) - Math.log(10));
     expect(geo.xMidPx).toBeCloseTo(geo.points[0]!.cx
-      + (geo.points[3]!.cx - geo.points[0]!.cx) / 2, 9);
+      + (geo.points[3]!.cx - geo.points[0]!.cx) * frac, 9);
+  });
+
+  it('스프레드가 0 이하인 칸이 있으면 **선형으로 떨어진다**', () => {
+    /* 로그는 거기서 정의되지 않는다. 지금 유니버스는 통안을 빼서 음수가 0건이지만
+       그건 오늘의 사실이지 계약이 아니다. */
+    const its = [-5, 10, 30, 40].map((v, i) =>
+      item({ seriesId: `S${i}`, nowBp: v, z: 0.1 }));
+    const geo = quadrantGeometry(its, 520, 360);
+    expect(geo.xScale).toBe('linear');
+    expect(geo.points.every((p) => Number.isFinite(p.cx))).toBe(true);
+    expect(xScaleNote('linear')).not.toContain('로그');
+    expect(xScaleNote('log')).toContain('로그');
+  });
+
+  /* ★눈금자를 바꿔도 **뜻은 안 바뀐다**. 구역은 「중앙값의 어느 쪽인가」로 정해지고
+     단조변환은 그걸 못 옮긴다 — 바뀌는 것은 간격뿐이다. 이 시험이 그 약속이다. */
+  it('로그로 바꿔도 네 구역의 수가 **한 칸도** 안 바뀐다', () => {
+    const its = LIVE.items as unknown as CreditDtsItem[];
+    const counts = quadrantCounts(its);
+    expect(counts.pureRv + counts.wideCheap + counts.tightRich + counts.carryOnly)
+      .toBe(its.length);
+    /* 산 응답 실측(2026-10-06): 순수 RV 41 · 캐리만 8. */
+    expect(counts.pureRv).toBe(41);
+    expect(counts.carryOnly).toBe(8);
+    const geo = quadrantGeometry(its, 1080, 560);
+    expect(geo.xScale).toBe('log');
+    const left = geo.points.filter((p) => p.cx < geo.xMidPx).length;
+    const right = geo.points.filter((p) => p.cx >= geo.xMidPx).length;
+    expect(left + right).toBe(its.length);
+    // 중앙값이 가르므로 양쪽이 거의 반이다(동값 때문에 정확히 반이 아닐 수 있다).
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(2);
+  });
+
+  it('★중앙값 선이 **그림 가운데 절반 안**에 선다 — 선형이던 첫 판은 13.5% 였다', () => {
+    /* 실측 2026-10-06: 선형 축에서 중앙값이 폭의 13.5% 자리에 서고 점의 80%가
+       폭의 31%에 뭉쳤다. 캔버스 2/3 가 점 10%를 싣는 그림은 「전부 왼쪽」이라는
+       **틀린 문장**을 말한다. 이 시험이 그 상태로 돌아가는 것을 막는다. */
+    const its = LIVE.items as unknown as CreditDtsItem[];
+    const geo = quadrantGeometry(its, 1080, 560);
+    const frac = (geo.xMidPx - PAD.l) / geo.inner.w;
+    expect(frac).toBeGreaterThan(0.25);
+    expect(frac).toBeLessThan(0.75);
   });
 
   it('세로 경계는 **0**이다 — 중앙값이 아니다', () => {
