@@ -15,8 +15,15 @@
   sql.status    full | missing-1d | partial | absent | error
                 partial 은 "기대일 행은 있는데 1D 외의 노드가 빈" 상태 —
                 적재가 진행 중일 수 있으니 기다리는 쪽으로 읽어야 한다
+  imx.status    full | absent | error — 보충 출처(`imx_data.timeseries`
+                종합ALL)가 기대일을 들고 있는가. 2026-10-07 에 붙였다: 그날
+                `mkt_irs_close` 는 10-06 을 안 들고 있었는데 **같은 서버의 이
+                테이블에는 이미 와 있었다**. 로그에 둘이 나란히 찍혀야 「출처가
+                둘이고 하나가 섰다」를 다음 사람이 한 줄에서 본다
   xlsx.status   fresh | stale | missing | error
                 fresh = 기대일 행이 있고 값이 수치다 (전일종가 컷 뒤 기준)
+  servedSource  지금 서빙 중인 `source` 라벨(`--served-source` 로 받는다).
+                날짜가 같아도 이것이 `wouldServe.source` 와 다르면 재기동이다
   wouldServe    **지금 백엔드를 재기동하면 서빙될 asof** — 서버가 부팅 때 지나는
                 그 로더(`load_dataset_merged`)를 그대로 지나서 얻는다
 
@@ -90,6 +97,19 @@ def sql_state(expected: dt.date) -> dict:
     return {"status": "partial", "missing": sorted(missing)}
 
 
+def imx_state(expected: dt.date) -> dict:
+    """보충 출처가 기대일을 들고 있는가. 판정은 안 한다 — 눈이지 결정이 아니다."""
+    try:
+        from app.dataset import imx_day_values
+
+        day = imx_day_values(expected)
+    except Exception as e:  # noqa: BLE001 — 보충 출처가 죽은 것도 상태다
+        return {"status": "error", "detail": str(e)[:200]}
+    if not day:
+        return {"status": "absent"}
+    return {"status": "full", "nodes": len(day)}
+
+
 def xlsx_state(expected: dt.date, today: dt.date) -> dict:
     if not DEFAULT_XLSX.exists():
         return {"status": "missing"}
@@ -136,7 +156,8 @@ _WHY = {
 
 
 def decide(served: str, serve_asof: str | None, expected: str | None,
-           business_day: bool) -> dict:
+           business_day: bool, served_source: str | None = None,
+           serve_source: str | None = None) -> dict:
     """다섯 상태 중 하나. **순수 함수** — DB 도 시계도 안 본다.
 
     문자열 비교인 것은 의도다: ISO 날짜는 사전순이 시간순이고, 날짜로 파싱하면
@@ -150,6 +171,18 @@ def decide(served: str, serve_asof: str | None, expected: str | None,
     if not served:
         return {"verdict": "start", "why": _WHY["start"]}
     if serve_asof > served:
+        return {"verdict": "restart", "why": _WHY["restart"]}
+    # ★날짜는 같은데 **출처가 다르면** 그것도 낡은 스냅샷이다 [2026-10-07].
+    #
+    # 실측으로 밟았다: 2026-10-07 09:28 에 보충 출처(종합ALL)로 10-06 을 메워
+    # 재기동했고, 09:4x 에 `mkt_irs_close` 자신의 10-06 행이 도착했다. 날짜가
+    # 둘 다 10-06 이라 종전 판정은 `current` 였고, 화면은 **대체분을 하루 더**
+    # 들고 있었다 — 그 둘은 11개 테너에서 같지만 8Y·9Y 에서 최대 1.00bp
+    # 다르다. 「서버가 든 데이터셋 ≠ 로더가 지금 만들 데이터셋」이면 재기동이고,
+    # 그건 `restart` 의 그 문장 그대로다(어휘를 하나 더 만들지 않는다).
+    #
+    # 둘 중 하나라도 빈 값이면 건너뛴다 — 이 필드 이전의 백엔드도 떠 있어야 한다.
+    if served_source and serve_source and served_source != serve_source:
         return {"verdict": "restart", "why": _WHY["restart"]}
     # 여기 아래로는 재기동해도 날짜가 안 앞선다. 그러면 남은 물음은 하나다 —
     # **화면이 데스크가 기대하는 종가를 들고 있는가.** `serve_asof` 가 아니라
@@ -170,6 +203,13 @@ def main() -> int:
         help="지금 :8200 이 서빙 중인 asof. 주면 verdict 가 붙는다. "
              "안 떠 있으면 빈 문자열을 넘긴다.",
     )
+    ap.add_argument(
+        "--served-source",
+        default=None,
+        metavar="LABEL",
+        help="지금 :8200 이 서빙 중인 `source` 라벨(/api/health). 날짜가 같아도 "
+             "출처가 갈리면 재기동 사유다 — 안 주면 그 판정만 건너뛴다.",
+    )
     a = ap.parse_args()
 
     from app.engine_port import _is_kr_business_day
@@ -185,14 +225,18 @@ def main() -> int:
         expected = prev_kr_business_day(today)
         report["expected"] = expected.isoformat()
         report["sql"] = sql_state(expected)
+        report["imx"] = imx_state(expected)
         report["xlsx"] = xlsx_state(expected, today)
     report["wouldServe"] = would_serve(today)
     if a.served is not None:
+        report["servedSource"] = (a.served_source or "").strip() or None
         report.update(decide(
             a.served.strip(),
             report["wouldServe"]["asof"],
             expected.isoformat() if expected else None,
             business,
+            report["servedSource"],
+            report["wouldServe"].get("source"),
         ))
 
     if a.json:

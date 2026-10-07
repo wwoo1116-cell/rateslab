@@ -39,6 +39,7 @@ database at miraebond2.kro.kr:4004". 이 파일은 그 첫 조각이고, **읽�
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import os
 from typing import Any, Sequence
@@ -81,6 +82,23 @@ def _settings() -> tuple[str, int, str, str, str]:
 #: IRS 종가 테이블. 같은 스키마에 이름이 뒤집힌 `irs_mkt_close` 도 있는데 그건
 #: 이 테이블이 아니다 — 오너가 지목한 것은 `mkt_irs_close` 다.
 IRS_CLOSE_TABLE = "mkt_irs_close"
+
+#: **보충 출처** — 데스크의 인포맥스 시계열 창고. 같은 서버, 다른 스키마
+#: (`sim_portfolio` 아님). 2026-10-07 에 붙였다: `mkt_irs_close` 가 10-06 종가를
+#: 안 들고 있는데 **같은 서버의 이 테이블에는 이미 와 있었다**. 출처가 둘이고
+#: 하나가 섰다 — 9-22 국고 전수조사에서 밟은 그 모양이다.
+#:
+#: 쓰는 범위는 **하루**로 묶어 둔다 (`imx_irs_day`). 과거사를 여기로 갈아타지
+#: 않는 이유는 엑셀 폴백과 같다: 출처가 날마다 바뀌면 차트에 유령 점프가 생긴다.
+IMX_TIMESERIES_TABLE = "imx_data.timeseries"
+
+#: 이 창고에는 IRS 가 출처별로 네 계열 담겨 있고(TP1·KMB·실거래TRD·종합ALL),
+#: 종합ALL 만 산다 — 나머지 셋은 2026-09-11 에서 멈춰 있다(2026-10-07 실측).
+#: 종합ALL 을 고른 근거는 **대조**다: `mkt_irs_close` 와 전 13테너·겹친 34,528칸에서 불일치 14건(0.04%)·최대 1.00bp 이고,
+#: 그 14건이 **전부 8Y(8건)·9Y(6건)** 다 — 나머지 11테너는 2,656일 전부 자릿수까지
+#: 같다. (★처음엔 2Y·5Y·10Y 셋만 재서 「1,308칸 0건」이라 적었다. 골라 쟨 수였고,
+#: 2026-10-07 에 SQL 자신의 10-06 행이 도착했을 때 8Y 가 0.25bp 어긋나 드러났다.)
+IMX_IRS_CATEGORY = "스왑-IRS(종합ALL)"
 
 _engine: Engine | None = None
 
@@ -169,3 +187,25 @@ def irs_close_rows() -> list[dict[str, Any]]:
     """
     rows = read_sql(f"SELECT * FROM {IRS_CLOSE_TABLE} ORDER BY irs_date ASC")
     return [dict(r._mapping) for r in rows]
+
+
+def imx_irs_day(d: dt.date) -> dict[str, float]:
+    """보충 출처의 종합ALL IRS 커브 **하루** — `{item 라벨: 값}`.
+
+    행이 없으면 빈 dict 다. 예외가 아닌 이유: 「그 날이 아직 없다」는 오류가
+    아니라 상태이고, 부르는 쪽(`dataset.merge_expected_close`)은 그 상태에서
+    엑셀로 넘어가거나 지연 칩에 맡기는 선택을 해야 한다.
+
+    하루만 읽는다. 전량(44,187행)을 읽을 이유가 없고, 읽으면 과거사를 이 출처로
+    갈아타는 유혹이 생긴다 — `IMX_TIMESERIES_TABLE` 주석의 금지가 그것이다.
+    """
+    rows = read_sql(
+        f"SELECT item, value FROM {IMX_TIMESERIES_TABLE} "
+        "WHERE category = :c AND trade_date = :d",
+        {"c": IMX_IRS_CATEGORY, "d": d.isoformat()},
+    )
+    return {
+        str(r.item): float(r.value)
+        for r in rows
+        if r.value is not None
+    }

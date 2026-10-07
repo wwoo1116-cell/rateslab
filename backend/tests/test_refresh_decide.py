@@ -20,8 +20,10 @@ cc = pytest.importorskip("scripts.check_close",
 
 
 def v(served: str, serve_asof: str | None, expected: str | None = "2026-09-21",
-      business: bool = True) -> str:
-    return cc.decide(served, serve_asof, expected, business)["verdict"]
+      business: bool = True, served_source: str | None = None,
+      serve_source: str | None = None) -> str:
+    return cc.decide(served, serve_asof, expected, business,
+                     served_source, serve_source)["verdict"]
 
 
 def test_stale_snapshot_restarts():
@@ -77,3 +79,43 @@ def test_every_verdict_has_one_sentence():
         v("2026-09-21", "2026-09-21"),
     }
     assert seen == set(cc._WHY)
+
+
+# ── 출처가 갈린 날 [2026-10-07] ────────────────────────────────────────────
+#
+# 보충 출처(종합ALL)로 하루를 메운 뒤 원출처가 따라잡는 날이 있다. 실측:
+# 09:28 에 종합ALL 로 10-06 을 메워 재기동했고, 09:4x 에 `mkt_irs_close` 자신의
+# 10-06 행이 도착했다. 날짜가 둘 다 10-06 이라 종전 판정은 `current` 였고 화면은
+# 대체분을 하루 더 들었다 — 11개 테너는 같지만 8Y·9Y 가 최대 1.00bp 다르다.
+
+
+def test_same_day_but_substituted_source_restarts():
+    assert v("2026-10-06", "2026-10-06", expected="2026-10-06",
+             served_source="sql+imx-day", serve_source="sql") == "restart"
+
+
+def test_same_day_same_source_is_current():
+    assert v("2026-10-06", "2026-10-06", expected="2026-10-06",
+             served_source="sql", serve_source="sql") == "current"
+    assert v("2026-10-06", "2026-10-06", expected="2026-10-06",
+             served_source="sql+imx-day",
+             serve_source="sql+imx-day") == "current"
+
+
+def test_source_rule_is_skipped_when_either_side_is_unknown():
+    """이 필드 이전의 백엔드도 떠 있어야 한다 — 모르면 그 판정만 건너뛴다."""
+    for a, b in ((None, "sql"), ("sql+imx-day", None), ("", ""), (None, None)):
+        assert v("2026-10-06", "2026-10-06", expected="2026-10-06",
+                 served_source=a, serve_source=b) == "current"
+
+
+def test_the_date_rule_still_wins_over_the_source_rule():
+    """날짜가 앞서면 그것만으로 재기동이다 — 출처를 못 읽어도 멈추지 않는다."""
+    assert v("2026-10-05", "2026-10-06", expected="2026-10-06",
+             served_source=None, serve_source=None) == "restart"
+
+
+def test_waiting_is_not_masked_by_the_source_rule():
+    """출처가 같고 SQL 이 기대일을 안 들고 있으면 여전히 «기다림» 이다."""
+    assert v("2026-10-02", "2026-10-02", expected="2026-10-06",
+             served_source="sql", serve_source="sql") == "waiting"

@@ -13,6 +13,7 @@ data paths, current to the same date as IRS.
 | Asset class | Source | Range | State |
 |---|---|---|---|
 | **IRS (swaps)** | `sim_portfolio.mkt_irs_close` | … 2026-08-12 | **live** |
+| **IRS (swaps) — supplementary** | `imx_data.timeseries` cat. `스왑-IRS(종합ALL)`, 13 tenors | 2013-01-02 … | **live**, used one day at a time when `mkt_irs_close` lags [2026-10-07]. Values agree with `mkt_irs_close` on 34,514/34,528 overlapping cells; the 14 exceptions are all 8Y/9Y, max 1.00bp. No 1D/3M here, and its `CD 91일물` is a DIFFERENT series from `cd_rate` (331/440 mismatch) |
 | **Cash govvy (KTB) + credit curves** | `sim_portfolio.credit_matrix` | 2020-01-02 … **2026-08-12** | **live** |
 | **KTB futures 3Y** | `infomax.daily_ktb_price` | 2012-01-02 … **2026-08-12** | **live** |
 | **KTB futures 10Y** | `infomax.daily_lktb_price` | 2012-01-02 … **2026-08-12** | **live** |

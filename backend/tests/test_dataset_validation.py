@@ -63,14 +63,24 @@ def write_book(path: Path, rows: list[tuple]) -> Path:
 
 
 def good_rows(n: int = 40, end: dt.date | None = None) -> list[tuple]:
-    """`n` consecutive weekdays, most recent first. Ends YESTERDAY by
+    """`n` consecutive KR BUSINESS DAYS, most recent first. Ends YESTERDAY by
     default: a row dated today is dropped by the 전일종가 cutoff (see the
-    dedicated tests below), and these fixtures are about everything else."""
+    dedicated tests below), and these fixtures are about everything else.
+
+    업무일이지 평일이 아니다 [2026-10-07]. 종전에는 `weekday() < 5` 였고, 그때는
+    통했다 — 비영업일 컷이 없었으니까. 컷이 생긴 뒤로는 창에 공휴일이 끼는
+    날(기본값은 「어제까지 40칸」이라 돌리는 날마다 창이 움직인다)마다 이
+    픽스처가 경고를 하나 달고 와서 「좋은 파일」이 아니게 된다. 픽스처의 뜻은
+    **종가가 든 멀쩡한 파일**이고, 멀쩡한 인포맥스 내보내기에는 휴일 행이
+    없다 — 그래서 달력을 엔진 것으로 맞춘다.
+    """
+    from app.engine_port import _is_kr_business_day
+
     end = end or dt.date.today() - dt.timedelta(days=1)
     out: list[tuple] = []
     d = end
     while len(out) < n:
-        if d.weekday() < 5:
+        if _is_kr_business_day(d):
             out.append((dt.datetime(d.year, d.month, d.day), *BASE))
         d -= dt.timedelta(days=1)
     return out
@@ -275,3 +285,79 @@ def test_all_rows_on_or_after_today_is_refused(book):
     with pytest.raises(DataFileError) as e:
         load_dataset(book(rows), today=dt.date(2026, 8, 1))
     assert "completed closes" in str(e.value)
+
+
+# ── 비영업일 컷 [2026-10-07] ────────────────────────────────────────────────
+# `mkt_irs_close` 가 휴일에 전영업일 커브를 복사한 행을 만든다. 그 행이 asof 가
+# 되면 화면 머리가 장이 쉰 날을 「종가」라 부르고, 영업일만 걷는 장부와 날짜가
+# 갈린다 [OWNER 2026-10-07 — "이거 왜 종가업데이트 안 되냐"]. 실측 판례가
+# 2026-10-05(개천절 대체공휴일)이고, 그 행은 10-02 와 IRS 13칼럼이 한 자리까지
+# 같았다.
+
+
+def _row(d: dt.date, *vals) -> tuple:
+    return (dt.datetime(d.year, d.month, d.day), *(vals or BASE))
+
+
+def test_a_holiday_row_is_dropped(book):
+    """장이 쉰 날의 행은 종가가 아니다 — 실측 그대로의 날짜로 친다."""
+    today = dt.date(2026, 10, 7)          # 수요일
+    rows = [
+        _row(dt.date(2026, 10, 5)),       # 개천절 대체공휴일 — 복사본
+        _row(dt.date(2026, 10, 2)),       # 금요일 종가
+        _row(dt.date(2026, 10, 1)),
+    ]
+    ds = load_dataset(book(rows), today=today)
+    assert ds.asof == dt.date(2026, 10, 2)
+    assert dt.date(2026, 10, 5) not in ds.dates
+    assert any("non-business-day" in w for w in ds.warnings)
+
+
+def test_a_weekend_row_is_dropped_too(book):
+    """주말도 같은 컷이다 — 「공휴일만」이 아니라 「영업일이 아닌 날」이다."""
+    today = dt.date(2026, 10, 7)
+    rows = [
+        _row(dt.date(2026, 10, 3)),       # 토요일(개천절)
+        _row(dt.date(2026, 10, 2)),
+        _row(dt.date(2026, 10, 1)),
+    ]
+    ds = load_dataset(book(rows), today=today)
+    assert ds.dates == [dt.date(2026, 10, 1), dt.date(2026, 10, 2)]
+
+
+def test_the_cut_keeps_the_series_aligned(book):
+    """날짜만 빼고 값을 안 빼면 모든 bisect 가 한 칸씩 어긋난다 — 그 축을 박는다."""
+    today = dt.date(2026, 10, 7)
+    rows = [
+        _row(dt.date(2026, 10, 5), 1.0, 2.0, 9.99, 3.0),   # 10Y = 9.99, 버려질 행
+        _row(dt.date(2026, 10, 2), 1.0, 2.0, 4.26, 3.0),
+    ]
+    ds = load_dataset(book(rows), today=today)
+    assert all(len(v) == len(ds.dates) for v in ds.series.values())
+    assert ds.latest("10Y") == 4.26        # 유령 행의 9.99 가 아니다
+
+
+def test_a_business_day_only_file_is_untouched(book):
+    today = dt.date(2026, 10, 7)
+    rows = [_row(dt.date(2026, 10, 6)), _row(dt.date(2026, 10, 2))]
+    ds = load_dataset(book(rows), today=today)
+    assert len(ds.dates) == 2
+    assert not any("non-business-day" in w for w in ds.warnings)
+
+
+def test_all_rows_on_non_business_days_is_refused(book):
+    """남는 종가가 없다 — 빈 시트와 같은 부류로 거절한다."""
+    rows = [_row(dt.date(2026, 10, 5)), _row(dt.date(2026, 10, 3))]
+    with pytest.raises(DataFileError) as e:
+        load_dataset(book(rows), today=dt.date(2026, 10, 7))
+    assert "weekend or a KR holiday" in str(e.value)
+
+
+def test_the_intraday_cut_speaks_first_on_a_holiday(book):
+    """오늘이 휴일인 날의 오늘 자 행은 「장중」이라고 말하는 쪽이 정확하다."""
+    today = dt.date(2026, 10, 9)          # 한글날 — 휴일이면서 '오늘'
+    rows = [_row(today), _row(dt.date(2026, 10, 8))]
+    ds = load_dataset(book(rows), today=today)
+    assert ds.asof == dt.date(2026, 10, 8)
+    assert any("전일종가" in w for w in ds.warnings)
+    assert not any("non-business-day" in w for w in ds.warnings)

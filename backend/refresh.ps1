@@ -93,7 +93,7 @@ Say "===== refresh start port=$Port ====="
 #
 # 판정 문장(`why`)도 파이썬이 만든다 — 한 사실에 두 어휘가 생기는 것이 이 리포의
 # 고질병이다. 여기서는 그대로 로그에 옮긴다.
-function Get-Verdict($served) {
+function Get-Verdict($served, $servedSource) {
   $env:PYTHONUTF8 = "1"
   # ⚠ Windows PowerShell 5.1 함정 — 이 한 줄이 없으면 **항상** null 이 돈다.
   # 로더는 stderr 에 경고를 쓴다(`[dataset] last observation ... is 34 days old`).
@@ -118,7 +118,7 @@ function Get-Verdict($served) {
     # 넘기는 **빈 인자를 그냥 떨어뜨린다**. 그러면 argparse 가 값 없는 `--served` 를
     # 보고 usage 로 죽어서 판정이 영영 null 이 된다(실측 2026-09-22 — 「백엔드가
     # 안 떠 있다」가 하필 그 경로였다). `=` 꼴은 한 토큰이라 안 떨어진다.
-    $out = & $python "scripts\check_close.py" --json "--served=$served" 2>$null
+    $out = & $python "scripts\check_close.py" --json "--served=$served" "--served-source=$servedSource" 2>$null
     # 로더가 stdout 에 경고를 섞는다(`[dataset] ...`). JSON 줄만 집는다.
     $line = ($out | Where-Object { $_ -match '^\s*\{' } | Select-Object -Last 1)
     if (-not $line) { return $null }
@@ -134,6 +134,17 @@ function Get-ServedAsof {
   try {
     $r = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 8
     return [string]$r.asof
+  } catch { return "" }
+}
+
+# 지금 서비스 중인 백엔드가 **어느 출처로** 그 날을 들고 있는가 [2026-10-07].
+# 날짜가 같아도 보충 출처(종합ALL·엑셀)로 메운 날이면 원출처가 따라잡은 뒤
+# 재기동해야 한다 — 판정은 Python 이 한다(`check_close.decide`). 못 읽으면 빈
+# 문자열이고, 그러면 그 판정만 건너뛴다(이 필드 이전의 백엔드도 떠 있어야 한다).
+function Get-ServedSource {
+  try {
+    $r = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 8
+    return [string]$r.source
   } catch { return "" }
 }
 
@@ -161,7 +172,8 @@ function Invoke-PlanWarm {
 # 단발이다. 루프가 없는 것이 수리다(머리의 「기다리는 자리」 참조) — 다시 보는
 # 것은 스케줄러가 한다.
 $served = Get-ServedAsof
-$r = Get-Verdict $served
+$servedSource = Get-ServedSource
+$r = Get-Verdict $served $servedSource
 if ($null -eq $r) {
   Say "판정을 못 구했어요(check_close.py) — 파이썬·자격증명(BW_MYSQL_*)을 보세요. 재기동 안 함."
   exit 1
@@ -170,7 +182,12 @@ if ($null -eq $r) {
 $serveAsof = [string]$r.wouldServe.asof
 $expected = if ($r.expected) { [string]$r.expected } else { "(영업일 아님)" }
 $sqlStatus = if ($r.sql) { [string]$r.sql.status } else { "-" }
-Say "served=$served  wouldServe=$serveAsof  expected=$expected  sql=$sqlStatus  -> $($r.verdict)"
+# 보충 출처(종합ALL)도 같은 줄에 적는다 [2026-10-07]. 「sql=absent imx=full」이
+# 한 줄에 있으면 「종가가 안 왔다」와 「우리 테이블만 섰다」가 구별된다 —
+# 2026-10-07 아침에 그 구별이 없어서 로그가 「적재를 기다리는 중」으로만 보였다.
+$imxStatus = if ($r.imx) { [string]$r.imx.status } else { "-" }
+$srcPair = "$servedSource>$([string]$r.wouldServe.source)"
+Say "served=$served  wouldServe=$serveAsof  expected=$expected  sql=$sqlStatus  imx=$imxStatus  src=$srcPair  -> $($r.verdict)"
 Say $r.why
 
 switch ($r.verdict) {

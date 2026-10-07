@@ -23,6 +23,7 @@ give v2 the same data v1 sees.
 | Source | What |
 |---|---|
 | **MySQL** `sim_portfolio.mkt_irs_close` @ `miraebond2.kro.kr:4004` | **primary** source of IRS closes since 2026-08-07 |
+| **MySQL** `imx_data.timeseries` (category `스왑-IRS(종합ALL)`) @ same server | **supplementary** source of the IRS close, one day at a time, since 2026-10-07 — tried BEFORE the workbook. Agrees with `mkt_irs_close` on 34,514/34,528 cells; the 14 exceptions are all 8Y/9Y, max 1.00bp |
 | `data/irsdata.xlsx` | fallback workbook (copied, 776,519 B at copy time) |
 | **ECOS** `722Y001/D/0101000` via `app/ecos.py` (`ECOS_API_KEY`) | **primary** source of the BOK base rate — funding since 2026-08-20, the policy step since 2026-09-01 |
 | `data/bokbaserate.xlsx` | base-rate **fallback** only (copied, 640,795 B) — read when ECOS has no key, no network and no cache; `policy_step` says so in `warnings` |
@@ -199,6 +200,57 @@ powershell -ExecutionPolicy Bypass -File backend\serve.ps1 -Local   # 개발·�
     powershell -File backend/refresh_schedule.ps1            # 지금 상태만
     powershell -File backend/refresh_schedule.ps1 -Apply     # 30분마다 12시간
     powershell -File backend/refresh.ps1 -DryRun             # 판정만, 안 죽인다
+
+#### 출처가 둘이고 하나가 섰다 + 유령 휴일 행 [2026-10-07]
+
+[OWNER — "이거 왜 종가업데이트 안 되냐"] 화면이 10-05 를 「IRS 종가」라 부르고
+장부는 10-02 를 마지막 종가라 적고 있었다. 한 화면에 날짜가 둘이었고, 원인도
+둘이었다.
+
+**(1) `mkt_irs_close` 가 10-06 을 안 들고 있었다.** 배관은 멀쩡했다 —
+`refresh.log` 가 `sql=absent -> waiting` 을 정직하게 찍고 30분마다 다시 보고
+있었다. 그런데 **같은 서버의 `imx_data.timeseries` 종합ALL 에는 10-06 이 이미
+와 있었다**(2년 3.87 · 5년 4.085 · 10년 4.18). 「종가가 안 왔다」가 아니라
+**출처가 둘인데 우리가 보는 쪽만 섰다** — 2026-09-22 국고 전수조사에서 밟은 그
+모양이다.
+
+고른 근거는 대조다: 겹친 **34,528칸에서 불일치 14건(0.04%)·최대 1.00bp**, 그리고
+그 14건이 **전부 8Y(8건)·9Y(6건)** — 커브에서 가장 얇은 두 점이다. 나머지 11테너는
+2,656일 전부 자릿수까지 같다. ★처음엔 2Y·5Y·10Y 셋만 재서 「1,308칸 0건」이라
+적었다 — **골라 쟨 수였고**, 같은 날 SQL 자신의 10-06 행이 도착했을 때 8Y 가
+0.25bp 어긋나 드러났다. 그래서 하루가 통째로 없을 때 **종합ALL 을 엑셀보다 먼저** 쓴다
+(`dataset.merge_expected_close`, `source="sql+imx-day"`). 단서 둘:
+
+- **과거사는 안 갈아탄다.** `mysqldb.imx_irs_day` 는 **하루만** 읽는다.
+- **둘을 한 날에 섞지 않는다.** 종합ALL 에 1D(콜)·3M(CD91)이 없는데 그 둘을
+  엑셀에서 끌어오면 「엑셀이 섞이면 source 가 반드시 말한다」를 라벨 하나로 못
+  적는다. 그 날의 1D·3M 칸은 **빈칸**이고 경고가 노드 이름을 말한다 — ⚠ 다만
+  **화면이 em dash 를 보이는 것은 아니다**(2026-10-07 라이브 실측): `derive.value_at`
+  이 「없으면 직전 종가」로 이어 붙여서 1D 가 3.113·d1 0.0 으로 찍혔다. 이 테이블에
+  1D 빈칸이 9건·3M 이 10건 이미 있어 원래부터 있던 동작이고, 이 변경은 그것을 가장
+  최근 날로 옮긴다. 같은 계열의 어제 값이 40~61bp 다른 계열의 오늘 값보다 낫다는
+  판단은 그대로다. **열린 결정**: 이어 붙인 칸임을 화면이 말해야 하는가. imx 의
+  `CD 91일물` 은 `cd_rate` 와 **다른 계열**이기도 하다(440칸 중 331칸 불일치·
+  최대 40bp) — 1D 가 엑셀과 다른 계열인 것과 같은 함정이라 같은 답을 썼다.
+
+**(2) 휴일에 유령 행이 있었다.** 2026-10-05(개천절 대체공휴일) 행의 IRS 13칼럼이
+10-02 와 **한 자리까지 같았다** — 전영업일 커브의 복사본이다. 역사 전체에 12개,
+종합ALL 쪽에도 9개 있다. 그래서 컷은 출처별이 아니라 공통 관문
+`dataset._finalize` 에 뒀다(전일종가 컷 바로 다음). 그 행이 `asof` 가 되면
+화면이 장이 쉰 날을 「종가」라 부르고, 영업일만 걷는 장부와 날짜가 갈리고,
+수익률 0 인 가짜 거래일이 역사에 낀다.
+
+⚠ **지연 칩은 안 깨져 있었다.** `staleness.py` 가 영업일로 세므로 asof 가
+10-02 든 10-05 든 「덜 센 영업일」은 하나다 — 9-22 메모의 「칩 자체는
+정직했다」가 여기서도 유효하다. 고친 것은 날짜가 가리키는 **날**이고 숫자가
+아니다.
+
+아침 로그가 이제 둘을 나란히 적는다 — `sql=absent imx=full` 이 한 줄에 있으면
+다음 사람이 「안 왔다」와 「우리 쪽만 섰다」를 구별한다.
+
+    today: 2026-10-07   expected: 2026-10-06
+    sql: absent   imx: full(13)   xlsx: stale 2026-08-19
+    wouldServe: 2026-10-06  (source=sql+imx-day)
 
 #### ⚠ PowerShell 5.1 함정 다섯 (전부 실측으로 밟았다)
 

@@ -316,16 +316,35 @@ def test_the_manifest_reuses_the_existing_hash_scheme(two_builds):
     서버(app/main.py)와 빌드가 같은 함수를 쓴다는 것이 이 테스트의 주장이고,
     그 주장은 스킴이 바뀌어도 그대로다."""
     from app.cache import SCHEMA_VERSION, sql_data_hash
+    from app.dataset import load_dataset_merged
 
     a, _ = two_builds
     m = json.loads((a / "api" / "manifest.json").read_text("utf-8"))
-    ds = load_dataset_sql()
+    # ★빌드와 서버가 지나는 **그 로더**로 묻는다 [2026-10-07]. 종전에는
+    # `load_dataset_sql()` 로 물었고, 그러면 보충 출처가 하루를 메운 날 —
+    # 2026-10-07 아침이 그 날이었다 — 빨개진다. 그 날 빨개지는 것은 스킴이
+    # 둘이라는 뜻이 아니라 **질문이 틀렸다**는 뜻이었다: 병합 로더만이
+    # `data_key` 를 채우고(`dataset.load_dataset_merged` 꼬리), 서버와 빌드는
+    # 둘 다 그것을 쓴다. 옛 질문은 병합이 no-op 인 날에만 성립했다.
+    ds = load_dataset_merged()
     # the key carries the dataset's effective asof too — the same table read
     # on different days is a different dataset under the 전일종가 cutoff
-    assert m["dataHash"] == sql_data_hash(ds.asof)
+    assert m["dataHash"] == ds.data_key
     assert f":v{SCHEMA_VERSION}:" in m["dataHash"]
     assert m["schemaVersion"] == SCHEMA_VERSION
     assert m["asof"] == ds.asof.isoformat()
+
+    # 스킴은 하나다 — 어느 날이든 키는 **테이블 워터마크**로 시작한다.
+    pure = sql_data_hash(load_dataset_sql().asof)
+    watermark = pure.split(":v")[0]
+    assert m["dataHash"].startswith(watermark)
+    if ds.source == "sql":
+        assert m["dataHash"] == pure
+    else:
+        # 보충분이 섞인 날은 키가 **갈라져야** 한다. 내용이 다른데 키가 같은
+        # 캐시가 이 리포의 고질병이다.
+        assert m["dataHash"] != pure
+        assert ds.source in m["dataHash"]
 
 
 # ── the integrity check itself (Pass G) ─────────────────────────────────────

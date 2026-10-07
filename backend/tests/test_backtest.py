@@ -346,12 +346,18 @@ def test_a_closed_position_freezes_and_keeps_counting(ds):
     but its realised P&L stays in the total — money that was made does not
     un-make itself, and a position that kept marking after it was closed is the
     classic way a backtest flatters itself."""
-    closed = Position("10Y", +1, N, dt.date(2025, 7, 30), dt.date(2026, 3, 2))
+    # ⚠ 청산일은 **영업일**이어야 한다 [2026-10-07]. 종전에는 2026-03-02 였고
+    # 통했다 — 그 날은 삼일절 대체공휴일인데 `mkt_irs_close` 의 휴일 복사본이
+    # 데이터에 있었기 때문이다. 비영업일 컷이 그 행을 떨어내자 청산이
+    # 2026-02-27 로 스냅되면서 이 단정이 빨개졌다. **시험이 못 박고 있던 날이
+    # 장이 쉰 날이었다** — 날짜를 바꾸는 것이 수리고, 컷을 되돌리는 것이
+    # 아니다 (`app/dataset.py` 의 비영업일 컷 주석 참조).
+    closed = Position("10Y", +1, N, dt.date(2025, 7, 30), dt.date(2026, 3, 3))
     other = Position("2Y", +1, N, dt.date(2025, 7, 30))
     book = run_backtest(ds, [closed, other])
     rec = book["positions"][0]
     assert rec["closed"] is True
-    assert rec["exit"] == "2026-03-02"
+    assert rec["exit"] == "2026-03-03"
 
     # the same trade run alone ends at the same figure
     solo = run_backtest(ds, [closed])

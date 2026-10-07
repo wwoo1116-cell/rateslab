@@ -148,6 +148,8 @@ class Dataset:
     # 있다고 말은 해줘야 해"]. 값은 넷뿐이다:
     #   "sql"          mkt_irs_close 그대로
     #   "sql+xlsx-1d"  SQL 이되, asof 의 1D 만 엑셀에서 채움
+    #   "sql+imx-day"  SQL 이되, asof 하루 전체를 종합ALL(imx_data)에서 덧붙임
+    #                  — 그 날의 1D·3M 은 빈칸이다(종합ALL 에 없다) [2026-10-07]
     #   "sql+xlsx-day" SQL 이되, asof 하루 전체를 엑셀에서 덧붙임
     #   "xlsx"         SQL 을 못 읽어 엑셀 전체로 폴백
     # 화면(freshness 칩)과 manifest 가 이 값을 그대로 내보낸다. 라벨이지 판정이
@@ -334,6 +336,54 @@ def _finalize(
         raise DataFileError(
             f"no completed closes: every data row is dated on/after {today}"
         )
+
+    # ── 비영업일 컷 [2026-10-07] ────────────────────────────────────────────
+    # 장이 쉰 날에 행이 있으면 그것은 종가가 아니다. `mkt_irs_close` 는 휴일에
+    # **전영업일 커브를 그대로 복사한 행**을 만든다 — 2026-10-05(개천절 대체
+    # 공휴일) 행은 10-02 와 IRS 13칼럼이 한 자리까지 같고 `call_rate` 만
+    # 달랐다. 역사 전체에 그런 행이 12개 있고, 보충 출처
+    # (`imx_data.timeseries` 종합ALL)에도 9개 있다 — 한 테이블의 사고가 아니라
+    # 적재의 성질이라서 컷이 여기 있어야 한다.
+    #
+    # 유령 행이 `asof` 가 되면 셋이 깨진다. (1) 화면 머리가 장이 쉰 날을
+    # 「종가」라 부른다. (2) 영업일만 걷는 장부(`paper.py:1869`)는 그 날을 안
+    # 세므로 **한 화면에 날짜가 둘** 찍힌다 [OWNER 2026-10-07 — "이거 왜
+    # 종가업데이트 안 되냐"]. (3) 복사본이 관측 하나로 세어져 수익률 0 인
+    # 가짜 거래일이 역사에 끼고, 그 위에서 변동성·백테스트가 돈다.
+    #
+    # ⚠ 지연 칩은 **안 깨진다** — `staleness.py` 가 영업일로 세므로 유령 행이
+    # asof 를 10-02 에서 10-05 로 밀어도 「덜 센 영업일」 수는 그대로다
+    # (10-05 는 영업일이 아니다). 2026-09-22 메모의 「칩 자체는 정직했다」가
+    # 여기서도 유효하다 — 고칠 것은 날짜가 가리키는 **날**이지 숫자가 아니다.
+    #
+    # 컷이 전일종가 컷 **다음**인 이유: 오늘이 휴일인 날의 오늘 자 행은
+    # 「장중이라 뺐다」고 말하는 쪽이 정확하다. 달력은 엔진 것 하나뿐이고
+    # (`engine_port._is_kr_business_day`) 지연 import 인 이유는
+    # `prev_kr_business_day` 와 같다.
+    from .engine_port import _is_kr_business_day  # 지연 import
+
+    biz = [_is_kr_business_day(d) for d in dates]
+    if not all(biz):
+        dropped = [d.isoformat() for d, ok in zip(dates, biz) if not ok]
+        dates = [d for d, ok in zip(dates, biz) if ok]
+        series = {
+            t: [v for v, ok in zip(vals, biz) if ok] for t, vals in series.items()
+        }
+        order_rows = [r for r, ok in zip(order_rows, biz) if ok]
+        shown = ", ".join(dropped[:6])
+        if len(dropped) > 6:
+            shown += f", … (+{len(dropped) - 6})"
+        warnings.append(
+            f"dropped {len(dropped)} non-business-day row(s) ({shown}) — "
+            "장이 쉰 날의 행은 종가가 아니다: 휴일 행은 전영업일 커브의 "
+            "복사본이라 asof 가 장이 쉰 날을 가리키고, 수익률 0 인 가짜 "
+            "거래일이 역사에 낀다"
+        )
+    if not dates:
+        raise DataFileError(
+            "no completed closes: every data row falls on a weekend or a KR "
+            "holiday"
+        )
     # Blank counts are re-derived from the KEPT rows — the parse-time tallies
     # include any dropped intraday rows, and an all-blank column must be
     # judged on what will actually be served.
@@ -448,7 +498,7 @@ def load_dataset_sql(today: dt.date | None = None) -> Dataset:
                      source="sql")
 
 
-# ── 병합: SQL 우선, 엑셀 보충 [OWNER, 2026-08-11] ────────────────────────────
+# ── 병합: SQL 우선, 종합ALL·엑셀 보충 [OWNER, 2026-08-11 · 2026-10-07] ──────
 #
 # 아침 자동 굽기의 데이터 규칙. 오너 지시 그대로다:
 #   "혹시 SQL 데이터가 없다면 엑셀 데이터를 참조하는 방식으로 할 거고" —
@@ -458,7 +508,9 @@ def load_dataset_sql(today: dt.date | None = None) -> Dataset:
 #
 # 그래서 판정은 **기대 전영업일 하루**에 대해서만 내린다. SQL 이 그 날을 온전히
 # 들고 있으면 SQL 그대로, 1D 만 비면 그 칸만 엑셀, 그 날이 통째로 없으면 그
-# 하루를 엑셀에서 덧붙인다. 과거사(history)는 절대 엑셀로 갈아타지 않는다 —
+# 하루를 덧붙인다 — 2026-10-07 부터 그 자리에 출처가 둘이고 **종합ALL 이 먼저**,
+# 엑셀이 나중이다(`merge_expected_close` 꼬리의 근거 참조).
+# 과거사(history)는 절대 다른 출처로 갈아타지 않는다 —
 # 1D 는 두 출처가 **다른 계열**(80.8% 불일치)이라, 폴백이 역사를 바꾸면 SQL 이
 # 뒤늦게 적재된 날 1D 차트에 유령 점프가 생긴다. 전체 폴백("xlsx")은 SQL 을
 # 아예 못 읽는 비상시 뿐이고, 그때는 칩이 말한다.
@@ -493,13 +545,75 @@ def _xlsx_value_at(xlsx_ds: Dataset, tenor: str, date: dt.date) -> float | None:
     return xlsx_ds.series[tenor][i]
 
 
+# 보충 출처의 한글 item 라벨 → 테너. `SQL_COLUMN_TENOR` 가 컬럼명에 대해 하는
+# 일을 `imx_data.timeseries` 종합ALL 의 라벨에 대해 한다. 13개가
+# `mkt_irs_close` 의 `irs_*` 컬럼과 1:1 이다.
+#
+# ★**1D(콜)·3M(CD91) 은 여기 없다.** 종합ALL 에 그 둘이 없고, 같은 창고의
+# `단기금리 / CD 91일물` 은 `cd_rate` 와 **다른 계열**이다 — 2025년 이후 겹친
+# 440칸 중 331칸 불일치·최대 40bp (2026-10-07 실측). 1D 가 엑셀과 다른 계열인
+# 것과 같은 함정이라 같은 답을 쓴다: **채우지 않고 빈칸으로 둔다.**
+#
+# ⚠ 빈칸이 화면에서 em dash 가 되는 것은 **아니다**(2026-10-07 라이브 실측).
+# `derive.value_at` 이 「없으면 직전 종가」로 이어 붙이므로 그 날 1D·3M 은
+# **그 계열 자신의 직전 종가**로 보이고 d1 변화가 0.0 으로 찍힌다. 이 테이블에
+# 1D 빈칸이 9건·3M 이 10건 이미 있어서 원래부터 있던 동작이고, 내 변경이 그걸
+# **가장 최근 날**로 옮긴 것이다. 그래도 답은 같다 — 같은 계열의 어제 값이,
+# 40~61bp 다른 계열의 오늘 값보다 낫다. (「이어 붙인 칸임을 화면이 말해야
+# 하는가」는 열린 결정이다.)
+IMX_ITEM_TENOR: dict[str, str] = {
+    "6개월": "6M",
+    "9개월": "9M",
+    "1년": "1Y",
+    "18개월": "1.5Y",
+    "2년": "2Y",
+    "3년": "3Y",
+    "4년": "4Y",
+    "5년": "5Y",
+    "6년": "6Y",
+    "7년": "7Y",
+    "8년": "8Y",
+    "9년": "9Y",
+    "10년": "10Y",
+}
+
+
+def imx_day_values(expected: dt.date) -> dict[str, float] | None:
+    """기대 전영업일의 종합ALL 커브를 **테너 키**로. 못 읽거나 비면 None.
+
+    실패를 삼키는 이유는 `load_dataset_merged` 의 SQL 폴백과 같다 — 보충 출처가
+    죽어도 서버는 떠야 하고, 그 사실은 `source` 라벨과 지연 칩이 말한다.
+    """
+    from .mysqldb import imx_irs_day  # 지연 import: 엑셀 경로는 DB 를 안 켠다
+
+    try:
+        raw = imx_irs_day(expected)
+    except Exception as e:  # noqa: BLE001 — 보충 출처가 죽어도 서버는 뜬다
+        log.warning("[dataset] 보충 출처(종합ALL) 읽기 실패: %s", e)
+        return None
+    out = {
+        IMX_ITEM_TENOR[k]: v for k, v in raw.items() if k in IMX_ITEM_TENOR
+    }
+    unknown = sorted(set(raw) - set(IMX_ITEM_TENOR))
+    if unknown:
+        log.warning(
+            "[dataset] 종합ALL 에 모르는 항목: %s — IMX_ITEM_TENOR 에 없다",
+            ", ".join(unknown),
+        )
+    return out or None
+
+
 def merge_expected_close(
     sql_ds: Dataset | None,
     xlsx_ds: Dataset | None,
     expected: dt.date,
+    imx_day: dict[str, float] | None = None,
 ) -> Dataset:
-    """기대 전영업일 하루에 대한 SQL·엑셀 병합. 순수 함수 — DB 도 파일도 안
-    만진다. 테스트가 이 함수를 직접 친다.
+    """기대 전영업일 하루에 대한 SQL·종합ALL·엑셀 병합. 순수 함수 — DB 도 파일도
+    안 만진다(`imx_day` 도 읽어 놓은 dict 로 받는다). 테스트가 이 함수를 직접 친다.
+
+    `imx_day` 는 `imx_day_values(expected)` 가 준 `{테너: 값}` 이고, 하루가
+    통째로 없을 때 **엑셀보다 먼저** 쓰인다 [2026-10-07].
 
     반환되는 데이터셋의 `source` 가 곧 판정이다 (Dataset.source 주석 참조).
     `data_key` 는 여기서 만들지 않는다 — 워터마크/파일 바이트는 I/O 라서
@@ -534,29 +648,57 @@ def merge_expected_close(
             )
         return sql_ds
 
-    # SQL 에 기대일이 통째로 없다 → 그 하루를 엑셀에서 덧붙인다.
-    if xlsx_ds is None or all(
-        _xlsx_value_at(xlsx_ds, t, expected) is None for t in sql_ds.series
-    ):
+    # SQL 에 기대일이 통째로 없다 → 그 하루를 보충 출처에서 덧붙인다.
+    #
+    # ★순서: **종합ALL 먼저, 엑셀 나중** [2026-10-07]. 종합ALL 은 `mkt_irs_close`
+    # 와 같은 계열이다 — 겹친 34,528칸에서 불일치 14건(0.04%)·최대 1.00bp 이고
+    # 그 14건이 전부 8Y·9Y(커브에서 가장 얇은 두 점)다. 엑셀의 1D 는 80.8%
+    # 불일치하는 **다른 계열**이고, 엑셀은 아침 굽기가 멈추면 조용히 낡는다
+    # (2026-10-07 실측 49일). 같은 계열이 완전한 하루보다 낫다.
+    #
+    # ⚠ 0.04% 는 0 이 아니다. 그래서 원출처가 따라잡으면 날짜가 같아도
+    # 재기동한다 — `scripts/check_close.py` 의 출처 판정이 그 자리다.
+    #
+    # ★**둘을 한 날에 섞지 않는다.** 종합ALL 에 없는 1D·3M 을 엑셀에서 끌어오면
+    # 「엑셀이 섞이면 source 가 반드시 말한다」는 불변식이 라벨 하나로 표현이
+    # 안 된다(`tests/test_dataset_merge.py` 머리의 둘째 불변식). 그래서 종합ALL
+    # 로 덧붙인 날의 1D·3M 칸은 **빈칸**이고 경고가 노드 이름을 댄다. 화면에서는
+    # `derive.value_at` 이 그 칸을 직전 종가로 이어 붙인다(원래 동작 —
+    # `IMX_ITEM_TENOR` 주석의 ⚠ 참조). 오너의 1D 규칙 [2026-08-11] 은 「SQL 이
+    # 그 날을 들고 있는데 1D 칸만 빈」 경우를 두고 쓴 것이고 그 분기는 위에
+    # 그대로 있다.
+    candidates: list[tuple[str, dict[str, float | None]]] = []
+    if imx_day:
+        candidates.append(
+            ("sql+imx-day", {t: imx_day.get(t) for t in sql_ds.series})
+        )
+    if xlsx_ds is not None:
+        candidates.append((
+            "sql+xlsx-day",
+            {t: _xlsx_value_at(xlsx_ds, t, expected) for t in sql_ds.series},
+        ))
+    pick = next(
+        (c for c in candidates if any(v is not None for v in c[1].values())),
+        None,
+    )
+    if pick is None:
         sql_ds.warnings.append(
-            f"기대 전영업일 {expected} 이 SQL 에도 엑셀에도 없다 — "
+            f"기대 전영업일 {expected} 이 SQL 에도 보충 출처"
+            "(종합ALL·엑셀)에도 없다 — "
             f"{sql_ds.asof} 까지로 서빙 (지연 칩이 말한다)"
         )
         return sql_ds
 
-    appended: dict[str, float | None] = {}
-    absent: list[str] = []
+    label, day = pick
+    absent = [t for t in sql_ds.series if day[t] is None]
     for tenor in sql_ds.series:
-        v = _xlsx_value_at(xlsx_ds, tenor, expected)
-        sql_ds.series[tenor].append(v)
-        appended[tenor] = v
-        if v is None:
-            absent.append(tenor)
+        sql_ds.series[tenor].append(day[tenor])
     sql_ds.dates.append(expected)
-    sql_ds.source = "sql+xlsx-day"
+    sql_ds.source = label
+    whence = "종합ALL(imx_data)" if label == "sql+imx-day" else "엑셀"
     sql_ds.warnings.append(
-        f"{expected} 종가가 SQL 에 없어 하루 전체를 엑셀에서 덧붙임"
-        + (f" (엑셀에도 없는 노드: {', '.join(absent)})" if absent else "")
+        f"{expected} 종가가 SQL 에 없어 하루 전체를 {whence} 에서 덧붙임"
+        + (f" ({whence} 에도 없는 노드: {', '.join(absent)})" if absent else "")
     )
     return sql_ds
 
@@ -587,6 +729,13 @@ def load_dataset_merged(
         sql_err = e
         log.warning("[dataset] SQL 로드 실패, 엑셀 폴백 시도: %s", e)
 
+    # 보충 출처는 **하루가 통째로 없을 때만** 읽는다 — 그 한 번이 왕복 하나다.
+    imx_day: dict[str, float] | None = None
+    if sql_ds is not None and sql_ds.asof < expected:
+        imx_day = imx_day_values(expected)
+
+    # 엑셀은 그대로 둔다: 종합ALL 이 하루를 메워도 1D 패치 분기(위)는 엑셀을
+    # 쓰고, 종합ALL 이 비면 엑셀이 다음 차례다.
     need_xlsx = (
         sql_ds is None
         or sql_ds.asof < expected
@@ -604,7 +753,7 @@ def load_dataset_merged(
             f"MySQL 도 엑셀도 읽지 못했다 (SQL: {sql_err})"
         ) from sql_err
 
-    ds = merge_expected_close(sql_ds, xlsx_ds, expected)
+    ds = merge_expected_close(sql_ds, xlsx_ds, expected, imx_day)
 
     # 캐시 키. 순수 SQL = 기존 sql_data_hash 그대로 — 어제의 캐시가 오늘도
     # 맞는 한 살아 있어야 한다. 엑셀이 섞이면 병합분 값의 지문을 덧붙인다.

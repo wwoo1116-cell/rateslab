@@ -25,15 +25,23 @@ export interface Manifest {
   /** ISO dates, ascending, strictly after `asof`. */
   businessDaysAfter: string[];
   freshnessThresholds: { behind: number; stale: number };
-  /** 데이터 출처 [OWNER, 2026-08-11]. "sql" 이 정상 경로; "sql+xlsx-1d" /
-   * "sql+xlsx-day" / "xlsx" 는 엑셀이 섞였다는 뜻이고 화면이 칩으로 말한다.
+  /** 데이터 출처 [OWNER, 2026-08-11 · 2026-10-07]. "sql" 이 정상 경로; 나머지는
+   * 보충 출처가 섞였다는 뜻이고 화면이 칩으로 말한다 — "sql+imx-day" 는 같은
+   * 서버의 종합ALL(imx_data)에서 하루를 메운 것(그 날 1D·3M 칸은 비고, 화면은
+   * 직전 종가를 이어 붙인다 — backend `derive.value_at`),
+   * "sql+xlsx-1d" / "sql+xlsx-day" / "xlsx" 는 엑셀이 섞인 것.
    * 옵셔널인 이유: 이 필드가 생기기 전에 구운 트리도 읽혀야 한다. */
   source?: DataSource;
   builtAt: string;
 }
 
-/** `Dataset.source` (backend/app/dataset.py) 의 네 값. */
-export type DataSource = "sql" | "sql+xlsx-1d" | "sql+xlsx-day" | "xlsx";
+/** `Dataset.source` (backend/app/dataset.py) 의 다섯 값. */
+export type DataSource =
+  | "sql"
+  | "sql+imx-day"
+  | "sql+xlsx-1d"
+  | "sql+xlsx-day"
+  | "xlsx";
 
 export type FreshnessLevel = "current" | "behind" | "stale";
 
