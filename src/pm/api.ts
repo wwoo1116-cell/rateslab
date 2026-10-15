@@ -246,8 +246,16 @@ export interface PaperPositionGroup {
   seriesWhy?: string | null;
   unit?: string | null;
   asof?: string | null;
-  /** 계열의 지금 값(계열 단위). */
+  /** 계열의 지금 값(계열 단위). 다 닫힌 묶음에서는 **내가 적은 청산 레벨로 만든
+   *  스프레드**다 — 지난 거래에 오늘 값을 적으면 한 줄 안에서 시계가 둘이 된다. */
   now?: number | null;
+  /** ★「지금」이 **무엇인가** [고침 2026-10-15] — 장중 시세 · 종가 · 내 청산 레벨.
+   *  종전에는 화면이 `live` 하나로 「장중/종가」를 갈랐는데, 닫힌 묶음에는 그 둘
+   *  다 아닌 셋째가 있었다(그래서 청산한 줄이 「2026-10-15 장중」이라 섰다).
+   *  낱말을 서버가 고르고 화면은 읽기만 한다(§16). */
+  nowBasis?: 'live' | 'close' | 'exit' | null;
+  /** 묶음의 다리가 **전부** 닫혔으면 그 마지막 청산일 — 아니면 `null`. */
+  exitT?: string | null;
   entryT?: string | null;
   entryV?: number | null;
   /** 내 레벨 — 내 체결로 만든 진입 스프레드(`fill`)거나, 못 세우면 진입일 종가(`close`). */
@@ -689,7 +697,8 @@ export interface PaperTrace {
   book: BacktestResult;
   /** 묶음의 계열 시선(`group_series`) — 창 머리띠의 내 레벨·지금·Δ·z. */
   group: Pick<PaperPositionGroup,
-    'series' | 'seriesWhy' | 'unit' | 'asof' | 'now' | 'entryT' | 'entryV'
+    'series' | 'seriesWhy' | 'unit' | 'asof' | 'now' | 'nowBasis' | 'exitT'
+    | 'entryT' | 'entryV'
     | 'myLevel' | 'myBasis' | 'delta' | 'knobs' | 'knobsMixed' | 'track'>;
   /** 계열의 **경로** [OWNER 2026-09-28 — "추적 … 정교화"] — 진입 앞 몇 봉부터
    *  오늘까지의 값과 그날그날의 중심선·청산선·손절선(`series_path`, `track_leg` 와

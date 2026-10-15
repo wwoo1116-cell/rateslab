@@ -291,3 +291,74 @@ describe('한 줄은 한 시계만 말한다 [적대 검증 2026-09-28]', () => 
     expect(api()).toMatch(/table: 'close'/);
   });
 });
+
+describe('닫은 거래는 거기서 멈춘다 [트레이더 2026-10-15]', () => {
+  /* > "1st랑 2nd는 이미 닫은 거래인데 왜 아직도 손익에 반영되어있어?"
+   *
+   * 실현 손익이 누적 합에 남는 것은 장부가 하는 일이라 맞다. 틀린 것은 그 수가
+   * **아직도 움직인다**는 것이었다 — 서버는 닫힌 다리를 청산 레벨로 얼리는데
+   * (`score_leg`) 마크를 장중으로 덮어서 `fold_accrual` 이 그 위에 오늘의 이동을
+   * 얹고 있었고, 묶음 줄은 **오늘 밴드**로 「청산 9.18bp」라고 섰다. */
+
+  it('닫힌 다리엔 오늘의 마크가 없다 — 서버에서 끊는다', () => {
+    const b = py();
+    expect(b).toMatch(/if lg\.get\("exit"\):\s*\n\s*live_lv = None/);
+    /* 그리고 묶음의 「지금」은 내가 적은 청산 레벨이다 — 진입과 **같은 식**
+       (`my_series_level`)을 청산 레벨에 쓴다(산술을 두 벌로 만들지 않는다). */
+    expect(b).toMatch(/closed_all = bool\(rows\) and all\(l\.get\("exit"\) for l in rows\)/);
+    expect(b).toMatch(/"nowBasis": "exit"/);
+    expect(b).toMatch(/if out\["knobs"\] and not closed_all:/);
+  });
+
+  it('「지금」의 낱말은 **서버가 고른다** — 화면이 `live` 로 안 가른다', () => {
+    /* `live ? 장중 : 종가` 는 셋째(청산)를 몰라서 닫힌 묶음을 「장중」이라 적었다. */
+    expect(api()).toMatch(/nowBasis\?: 'live' \| 'close' \| 'exit' \| null/);
+    expect(src('src/pm/words.ts')).toMatch(/export const NOW_WORD/);
+    const p = page();
+    expect(p).toMatch(/NOW_WORD\[g\.nowBasis\]/);
+    expect(p).not.toMatch(/g\.live \? '장중' : '종가'/);
+  });
+
+  it('묶음 줄의 밴드·청산선도 **들고 있을 때만** 선다', () => {
+    /* 다리 줄은 처음부터 `open={l.open}` 이었고(「닫힌 다리에는 아무것도 안
+       적는다」) 묶음 줄만 `open` 을 켜 두어 지난 일을 오늘 일처럼 적었다. */
+    const p = page();
+    expect(p).toMatch(/<TrackCell track=\{g\.track \?\? null\} open=\{g\.open > 0\} \/>/);
+    expect(p).toMatch(/<LevelCell track=\{g\.track \?\? null\} open=\{g\.open > 0\} \/>/);
+  });
+});
+
+describe('비용은 거래 한 번에 매긴다 [트레이더 2026-10-15]', () => {
+  /* > "아웃라이트던 커브던 플라이던 한 번 거래에서 비용은 0.5bp 그러니까,
+   * >  왕복은 1bp"
+   *
+   * 종전 `score_leg` 는 다리마다 `COST_BP × dv01` 이라 커브가 1bp·플라이가
+   * 1.5bp 였다. 그건 계획면(`mrmetrics.score` — 계열 한 번에 0.5bp)과 **같은
+   * 거래에 다른 돈**이고, 이 파일의 「자를 두 벌 만들지 않는다」가 바로 그 명제다. */
+
+  it('몫을 내는 자리가 **하나**다 (`cost_dv01_of`)', () => {
+    const b = py();
+    expect(b).toMatch(/def cost_dv01_of\(/);
+    /* 묶음 열쇠는 화면과 같은 그 함수다 — 두 벌로 두면 비용의 「트레이드」와
+       화면의 「트레이드」가 갈린다. */
+    const body = b.slice(b.indexOf('def cost_dv01_of('), b.indexOf('def group_legs('));
+    expect(body).toMatch(/group_key\(l\)/);
+    expect(body).not.toMatch(/f"tag:\{/);
+    /* 편도·왕복(1×·2×)은 다리마다 다를 수 있어 **여기서 안 센다** — `score_leg` 몫. */
+    expect(body).not.toMatch(/2\.0/);
+  });
+
+  it('카드와 문 앞이 **같은 몫**을 쓴다', () => {
+    /* 두 자리가 다른 비용을 쓰면 카드의 손익과 「거기까지 가면 얼마」가 안 이어진다. */
+    const b = py();
+    expect(b).toMatch(/row = score_leg\(lg, mark, cost_bp=cost_bp, mark_t=mark_t,\s*\n\s*cost_dv01=cost_dv01\.get\(int\(lg\["n"\]\)\)\)/);
+    expect(b).toMatch(/cost_base = dv01 if cost_dv01 is None else float\(cost_dv01\)/);
+    expect(b).toMatch(/- 2\.0 \* cost_bp \* cost_base/);
+  });
+
+  it('머리의 비용 칸이 **거래 한 번**이라고 적는다', () => {
+    /* 「편도 0.5bp」만 적으면 다리마다인지 거래마다인지가 안 적혀 있다. */
+    const p = page();
+    expect(p).toMatch(/거래 한 번 \$\{sheet\.costBp\}bp · 왕복/);
+  });
+});

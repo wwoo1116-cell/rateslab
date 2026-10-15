@@ -68,6 +68,12 @@ STORE = Path(__file__).resolve().parent.parent / "data" / "paper_book.json"
 
 #: 계획면과 **같은** 비용·Delta. 다른 값을 쓰면 두 화면이 같은 거래에 다른 돈을
 #: 매긴다 — 그러면 대조가 안 된다.
+#:
+#: ★**거래 한 번의 편도 비용**이다 — 다리 하나의 것이 아니다 [트레이더 2026-10-15]:
+#: 「아웃라이트던 커브던 플라이던 한 번 거래에서 비용은 0.5bp, 그러니까 왕복은 1bp」.
+#: 다리마다 매기면 커브가 1bp·플라이가 1.5bp 가 되고, 그 순간 이 카드는 계획면
+#: (`mrmetrics.score` — 계열 한 번에 0.5bp)과 **같은 거래에 다른 돈**을 매긴다.
+#: 다리로 쪼개는 몫은 `cost_dv01_of` 가 한 곳에서 낸다.
 COST_BP = 0.5
 NOTIONAL = 1_000_000.0
 
@@ -385,7 +391,8 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
               *, irs_of: Callable[[str, str], float | None] | None = None,
               cost_bp: float = COST_BP,
               marks: dict[tuple[str, str], float] | None = None,
-              unit: str | None = None) -> dict[str, Any] | None:
+              unit: str | None = None,
+              cost_dv01: float | None = None) -> dict[str, Any] | None:
     """얼린 조건으로 **지금** 청산·손절에 닿았는가 [OWNER 2026-09-23].
 
     ## 엔진과 **같은 규칙**을 쓴다 — 두 벌이면 장부가 거짓말을 한다
@@ -510,9 +517,13 @@ def track_leg(leg: dict, points_of: Callable[[str], list[dict]] | None = None,
             rs = int(leg.get("rateSign") or 0)
             lvl = float(leg.get("level") or 0.0)
 
+            # 비용은 **거래**의 것이라 이 다리의 몫만 진다 — 카드(`score_leg`)와
+            # 같은 `cost_dv01` 이다. 안 받으면 다리의 DV01(옛 호출부).
+            cost_base = dv01 if cost_dv01 is None else float(cost_dv01)
+
             def pnl_at(r: float) -> float:
                 # 장부의 그 식(`score_leg`) — 걷을 때의 손익이라 **왕복** 비용.
-                return rs * (r - lvl) * 100.0 * dv01 - 2.0 * cost_bp * dv01
+                return rs * (r - lvl) * 100.0 * dv01 - 2.0 * cost_bp * cost_base
 
             w_k = table["legs"][k]["w"]
             mine = {
@@ -1034,10 +1045,26 @@ def group_series(rows: list[dict], *,
 
     조건이 없어도 지금·Δ 는 선다(조건은 밴드에만 필요하다). 다리들의 조건이 서로
     다르면 첫 것을 쓰고 그 사실을 적는다(`knobsMixed`).
+
+    ## ★다 닫힌 묶음은 **청산에서 멈춘다** [고침 2026-10-15]
+
+    종전에는 닫힌 묶음도 「지금」에 **오늘 계열 값**을 적고 Δ 를 그 위에서 셌다.
+    그래서 10-06 에 청산한 1st Trade 줄이 「지금 6.75bp · 2026-10-15 장중 ·
+    Δ +1.75bp」라고 서는데 같은 줄의 손익은 청산 레벨에 얼어 있었다 — **한 줄
+    안에서 두 시계**가 돌고, Δ 를 DV01 에 곱해도 그 줄의 돈이 안 나온다.
+
+    닫힌 묶음의 「지금」은 **내가 적은 청산 레벨로 만든 스프레드**다(진입을 내
+    체결로 세우는 그 식 `my_series_level` 을 청산 레벨에 그대로 쓴다 — 산술을 두
+    벌로 만들지 않는다). 밴드·청산선은 `None` 이다 — 오늘 밴드를 지난 거래에
+    적는 것은 「지난 일을 오늘 일처럼」이고, 다리 줄은 이미 그 규율을 진다
+    (`build_sheet` 의 `row["track"] … if row["open"]`). `nowBasis` 가 그 사실을
+    낱말로 지고, 화면은 그 낱말을 **읽기만** 한다(§16).
     """
     out: dict[str, Any] = {
         "series": None, "seriesWhy": None, "unit": None, "asof": None, "now": None,
         "live": False,
+        #: 「지금」이 **무엇인가** — 장중 시세 · 종가 · 내가 적은 청산 레벨.
+        "nowBasis": None, "exitT": None,
         "entryT": None, "entryV": None, "myLevel": None, "myBasis": None, "delta": None,
         "knobs": None, "knobsMixed": False, "track": None,
     }
@@ -1060,14 +1087,25 @@ def group_series(rows: list[dict], *,
         out["seriesWhy"] = snap["why"]
         return out
     out.update({k: snap[k] for k in ("unit", "asof", "now", "live", "entryT", "entryV")})
+    out["nowBasis"] = "live" if snap["live"] else "close"
     my = my_series_level(snap["table"], rows) if snap["table"] else None
     if my is not None:
         out["myLevel"], out["myBasis"] = my, "fill"
     else:
         out["myLevel"], out["myBasis"] = snap["entryV"], ("close" if snap["entryV"] is not None else None)
+    # ★다 닫힌 묶음 — 「지금」은 청산 레벨이고 시계가 거기서 멈춘다(머리의 그 절).
+    closed_all = bool(rows) and all(l.get("exit") for l in rows)
+    if closed_all:
+        out["exitT"] = max(str(l["exit"]) for l in rows)
+        done = (my_series_level(snap["table"],
+                                [{**l, "level": l["exitLevel"]} for l in rows])
+                if snap["table"] and all(l.get("exitLevel") is not None for l in rows)
+                else None)
+        out.update({"now": done, "asof": out["exitT"], "live": False,
+                    "nowBasis": "exit" if done is not None else None})
     if out["myLevel"] is not None and out["now"] is not None:
         out["delta"] = round(out["now"] - out["myLevel"], 4)
-    if out["knobs"]:
+    if out["knobs"] and not closed_all:
         out["track"] = track_leg({"entry": entry, "knobs": out["knobs"], "series": sid,
                                   "kind": "", "tenor": ""},
                                  points_of, irs_of=irs_of, cost_bp=cost_bp, marks=marks)
@@ -1187,6 +1225,52 @@ def group_label(leg: dict) -> str:
     return leg.get("tag") or f"{leg['n']}번 다리 (묶음 없음)"
 
 
+def cost_dv01_of(legs: list[dict]) -> dict[int, float]:
+    """다리 번호 → **비용을 매길 DV01**. 비용은 다리가 아니라 **거래**에 붙는다.
+
+    > [트레이더 2026-10-15] "아웃라이트던 커브던 플라이던 한 번 거래에서 비용은
+    > 0.5bp 그러니까, 왕복은 1bp"
+
+    ## 왜 다리로 매기면 틀리는가
+
+    종전 `score_leg` 는 다리마다 `COST_BP × dv01` 을 물렸다. 그래서 같은 0.5bp 가
+    아웃라이트엔 한 번, 커브엔 **두 번**, 플라이엔 **세 번** 걸렸다 — 실측(DV01
+    1,000만원/bp · 2026-10-15 장부): 커브 세 트레이드의 비용이 5,000만원인데
+    거래 단위로는 2,500만원이다. 계획면(`mrmetrics.score`)은 계열 **한 번**에
+    0.5bp 를 물리므로, 카드와 계획면이 같은 거래에 두 배 다른 비용을 쓰고 있었다.
+
+    ## 거래의 DV01 은 **그 계열 1bp** 의 돈이다
+
+    커브와 플라이는 DV01 중립이라(`dv01.dv01_payload` 의 그 가중) 계열 1bp 에
+    묶음이 버는 돈은 **제일 작은 다리의 DV01** 과 같다:
+
+        커브   긴 쪽 페이 d · 짧은 쪽 리시브 d  → d·Δ(긴−짧은)     → 단위 = d
+        플라이 벨리 2w · 윙 w 둘               → w·Δ(2벨리−윙둘)   → 단위 = w
+        아웃라이트 다리 하나 d                                      → 단위 = d
+
+    ⚠**DV01 중립이 아닌 묶음**(예 10Y 1,000만 대 2Y 300만)에서는 「그 계열 1bp」가
+    뜻을 잃는다. 그때 `min` 은 제일 싼 쪽을 고르는 셈인데, 그래도 그쪽을 쓴다 —
+    트레이더의 규율이 「거래 한 번에 0.5bp」이고, 다리로 되돌리면 그 규율이 깨진다.
+    다른 자가 필요해지면 **여기 한 곳**을 고치면 된다.
+
+    그 단위 비용을 다리들에 |DV01| 몫으로 나눠 **다리의 칸**에 돌려준다 — 비용을
+    묶음에만 두면 다리 줄이 비용 없는 손익을 적고, 그 둘의 합이 묶음과 안 닫힌다.
+    편도·왕복(1×·2×)은 **다리마다** 다를 수 있으므로(한 다리만 닫을 수 있다)
+    그 배수는 여기서 안 센다 — `score_leg` 의 몫이다.
+    """
+    by: dict[str, list[dict]] = {}
+    for l in legs:
+        by.setdefault(group_key(l), []).append(l)
+    out: dict[int, float] = {}
+    for group in by.values():
+        tot = sum(abs(float(l["dv01"])) for l in group)
+        unit = min(abs(float(l["dv01"])) for l in group)
+        for l in group:
+            out[int(l["n"])] = (0.0 if tot == 0.0
+                                else unit * abs(float(l["dv01"])) / tot)
+    return out
+
+
 def group_legs(rows: list[dict], **series_kw: Any) -> list[dict[str, Any]]:
     """다리들을 **묶음(태그)** 으로 모아 소계를 낸다 [OWNER 2026-09-28 — "각 트레이드
     별과 포트폴리오 전체에서의 PnL"].
@@ -1298,7 +1382,7 @@ def reset(store: dict[str, Any], path: Path | None = None) -> str | None:
 
 
 def score_leg(leg: dict, mark: float | None, cost_bp: float = COST_BP,
-              mark_t: str | None = None) -> dict:
+              mark_t: str | None = None, cost_dv01: float | None = None) -> dict:
     """다리 하나의 손익 — **내 레벨에서 시장 레벨까지**.
 
         손익 = rateSign × (나간 레벨 − 들어온 레벨) × 100bp × DV01 − 비용
@@ -1321,6 +1405,13 @@ def score_leg(leg: dict, mark: float | None, cost_bp: float = COST_BP,
     없는데** 마지막 봉을 마크로 썼다). 종가가 체결일에 닿으면 그날 저절로 매겨진다.
 
     `mark_t` 를 안 주면 종전대로 판다 — 옛 호출부(시험 포함)를 안 깬다.
+
+    ## ★비용은 **거래**의 것이다 [트레이더 2026-10-15]
+
+    `cost_dv01` 은 이 다리가 **거래 비용에서 질 몫**(DV01)이다 — `cost_dv01_of` 가
+    묶음을 보고 한 곳에서 낸다. 안 주면 다리의 DV01 을 그대로 쓴다(옛 호출부와
+    시험을 안 깬다). 커브 두 다리면 몫이 반씩이라 묶음의 편도 비용이 `COST_BP ×
+    계열 DV01` 한 번이 된다 — 「아웃라이트던 커브던 플라이던 한 번 거래에서 0.5bp」.
     """
     out = {**leg, "mark": mark, "markT": mark_t, "open": leg.get("exit") is None}
     end = leg["exitLevel"] if leg.get("exit") else mark
@@ -1335,7 +1426,8 @@ def score_leg(leg: dict, mark: float | None, cost_bp: float = COST_BP,
                        f' (마지막 종가 {mark_t})'}
     bp = (float(end) - float(leg["level"])) * 100.0
     gross = leg["rateSign"] * bp * float(leg["dv01"])
-    cost = cost_bp * float(leg["dv01"]) * (1.0 if out["open"] else 2.0)
+    base = float(leg["dv01"]) if cost_dv01 is None else float(cost_dv01)
+    cost = cost_bp * base * (1.0 if out["open"] else 2.0)
     # ★`mtm` 은 **평가만**의 수다(`gross − cost`). 2026-10-01 까지 이것이 곧 `pnl`
     #   이었고, 그래서 캐리·롤다운·개시·체결차이가 카드에서 통째로 빠져 있었다
     #   (`fold_accrual` 머리의 실측). `pnl` 은 발생액을 접은 뒤 그 함수가 다시 적는다.
@@ -1810,6 +1902,9 @@ def build_sheet(*, leg_of: Callable[..., dict],
     # 곡선을 지어내면 위의 차이 그래프가 거짓말을 한다. 합치는 것은 오너 결정이다.
     pos_legs: list[dict] = []
     mark_days: list[str] = []
+    #: 비용을 매길 DV01 — **거래 한 번에 0.5bp** [트레이더 2026-10-15]. 묶음을 봐야
+    #: 나오는 수라 다리 고리 **앞**에서 한 번 낸다(`cost_dv01_of` 머리).
+    cost_dv01 = cost_dv01_of(st.get("legs", []))
     for lg in st.get("legs", []):
         mark = mark_t = None
         if mark_of is not None:
@@ -1826,15 +1921,38 @@ def build_sheet(*, leg_of: Callable[..., dict],
         # 장중 레벨이 이 계기를 덮으면 **그 값으로** 매긴다 — 날은 오늘이고,
         # 종가가 아니라는 사실은 `live` 가 진다(장부엔 안 적힌다).
         live_lv = (marks or {}).get((lg["kind"], lg["tenor"]))
+        # ── ★청산한 다리는 **장중으로 안 덮는다** [고침 2026-10-15] ──────────
+        #
+        # [트레이더 2026-10-15] "1st랑 2nd는 이미 닫은 거래인데 왜 아직도 손익에
+        # 반영되어있어?" — 실현 손익이 누적 합에 남는 것은 장부가 하는 일이라 맞다.
+        # 틀린 것은 그 수가 **아직도 움직인다**는 것이었다: `score_leg` 는 닫힌
+        # 다리를 청산 레벨로 얼리는데(그 함수 머리), 여기서 `live` 를 켜 놓으면
+        # `fold_accrual` 이 그 위에 **오늘의 장중 이동**을 얹는다
+        # (`(장중 − 종가) × 100bp × DV01`). 즉 10-06 에 닫은 거래의 손익이
+        # 10-15 시세로 매일 바뀌고 있었다 — 재현(닫힌 다리 하나 · DV01
+        # 1,000만원/bp · 종가 4.05 · 장중 4.00): `open=False` 인데 `liveMove`
+        # +5,000만원이 붙는다. 2026-10-15 카드의 「장중 이동 −6,500만원」이 그
+        # 길로 들어온 수이고, 그 장부의 닫힌 다리는 넷이다.
+        # 게다가 묶음의 `clock` 은 열린 다리만 보므로 「종가」라 적혀 있었다
+        # (`sum_legs` 의 그 ⚠ — 거짓이 수가 아니라 이름표였던 그 자리의 재발).
+        #
+        # 마크를 안 덮는 쪽에서 끊는다. 「닫힌 다리엔 오늘의 마크가 없다」가 한
+        # 문장이고, `live`·`mark`·`liveMove`·`track` 이 전부 그 하나에서 따라온다
+        # (`row["track"]` 이 이미 `row["open"]` 으로 같은 규율을 지고 있다).
+        if lg.get("exit"):
+            live_lv = None
         close_mark = mark
         if live_lv is not None:
             mark, mark_t = live_lv, _dt.date.today().isoformat()
-        row = score_leg(lg, mark, cost_bp=cost_bp, mark_t=mark_t)
+        row = score_leg(lg, mark, cost_bp=cost_bp, mark_t=mark_t,
+                        cost_dv01=cost_dv01.get(int(lg["n"])))
         row["live"] = live_lv is not None
         # ── 추적 — **들고 있는 다리만** [OWNER 2026-09-23] ─────────────────
         # 닫힌 다리에 「청산 닿음」을 적는 것은 지난 일을 오늘 일처럼 적는 것이다.
         # 계열이나 조건이 없으면 `None` 이고, 화면이 그 사실을 그대로 적는다.
-        row["track"] = track_leg(lg, marks=marks) if row["open"] else None
+        row["track"] = (track_leg(lg, marks=marks,
+                                  cost_dv01=cost_dv01.get(int(lg["n"])))
+                        if row["open"] else None)
         # 장중으로 덮었어도 **종가 마크를 버리지 않는다** — 발생액을 접을 때
         # 「종가 재평가 위의 이동」을 그 값에서 재야 한다(`fold_accrual`).
         row["closeMark"] = close_mark

@@ -42,7 +42,7 @@ import { FloatingWindow } from '@/ui/window/FloatingWindow';
 import { ReconStack } from '@/ui/window/ReconStack';
 
 import { fetchTrace, type PaperTrace, type PaperTraceRow } from './api';
-import { zWord } from './words';
+import { NOW_WORD, zWord } from './words';
 
 const MINUS = '−';
 
@@ -261,8 +261,12 @@ export function TraceWindow({ ns, title, onClose }: {
                 <Cond k="계열" v={data.group.series} strong />
                 <Cond k="내 레벨" v={`${seriesWord(data.group.myLevel, data.group.unit)}${
                   data.group.myBasis === 'fill' ? ' (내 체결)' : data.group.myBasis === 'close' ? ' (진입일 종가)' : ''}`} />
+                {/* 「지금」이 무엇인가는 **서버가 고른다**(`nowBasis`) — 다 닫힌
+                    트레이드면 내가 적은 청산 레벨이고, 날도 청산일이다. */}
                 <Cond k="지금" v={`${seriesWord(data.group.now, data.group.unit)}${
-                  data.group.asof ? ` (${data.group.asof})` : ''}`} strong />
+                  data.group.asof
+                    ? ` (${data.group.asof}${data.group.nowBasis === 'exit' ? ' 청산' : ''})`
+                    : ''}`} strong />
                 <Cond k="Δ" v={data.group.delta == null ? MINUS
                   : `${data.group.delta >= 0 ? '+' : MINUS}${seriesWord(Math.abs(data.group.delta), data.group.unit)}`} strong />
                 <Cond k="밴드" v={data.group.track?.z == null ? MINUS

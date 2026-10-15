@@ -27,6 +27,17 @@ export function knobWord(k: PaperLegKnobs): string {
   return `${k.lookback}일 · ${z}σ · ${ENTRY_WORD[k.entryMode]}`;
 }
 
+/** 「지금」이 **무엇인가** [고침 2026-10-15] — 서버의 `nowBasis` 를 낱말로.
+ *
+ *  종전에는 표가 `live ? '장중' : '종가'` 로 갈랐고, 그래서 **청산한 묶음**이
+ *  「2026-10-15 장중」이라 섰다 — 그 줄의 손익은 청산 레벨에 얼어 있는데.
+ *  셋째 낱말이 그 자리이고, 고르는 것은 서버다(§16). 표와 추적 창이 같이 쓴다. */
+export const NOW_WORD: Record<'live' | 'close' | 'exit', string> = {
+  live: '장중',
+  close: '종가',
+  exit: '청산',
+};
+
 const MINUS = '−';
 
 /** z 한 글자 — 부호는 이 리포의 «−»(U+2212)다. `toFixed` 의 하이픈을 그대로

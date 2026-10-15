@@ -2581,3 +2581,147 @@ class Test거래간_상관:
         body = src[src.index("def group_legs("):src.index("def score_leg(")]
         assert "group_key(l)" in body and "group_label(" in body
         assert 'f"tag:{' not in body, "열쇠 규칙이 group_legs 안에 복제돼 있다"
+
+
+class Test닫은거래는거기서멈춘다:
+    """★★«대조 문» [트레이더 2026-10-15 — "1st랑 2nd는 이미 닫은 거래인데 왜 아직도
+    손익에 반영되어있어?"].
+
+    실현 손익이 누적 합에 남는 것은 장부가 하는 일이라 맞다. 틀린 것은 그 수가
+    **아직도 움직인다**는 것이었다 — `score_leg` 는 닫힌 다리를 청산 레벨로 얼리는데
+    `build_sheet` 가 `live` 를 켜 놓아서 `fold_accrual` 이 그 위에 오늘의 장중 이동을
+    얹고 있었다. 묶음의 `clock` 은 열린 다리만 보므로 화면엔 「종가」라 적혔다.
+    """
+
+    def _closed(self, **kw) -> dict:
+        st = dict(paper.EMPTY, legs=[])
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2020-03-02",
+                      level=3.0, notional=1e10, dv01=1e7, **kw)
+        paper.close_leg(st, 1, "2020-03-10", 3.10)
+        return st
+
+    def test_닫힌_다리는_장중으로_안_덮인다(self):
+        """장중 레벨이 그 계기를 덮어도 닫힌 다리엔 **오늘의 마크가 없다**."""
+        st = self._closed()
+        sheet = paper.build_sheet(leg_of=lambda *a, **k: {}, store=st,
+                                  mark_of=lambda k, t: ("2020-03-11", 3.05),
+                                  marks={("irs", "2Y"): 2.50})
+        leg = sheet["position"]["legs"][0]
+        assert leg["open"] is False
+        assert leg["live"] is False, "닫힌 다리를 장중이라 적으면 안 된다"
+        assert leg["mark"] == pytest.approx(3.05), "종가 마크가 그대로 남는다"
+
+    def test_닫힌_다리에는_장중_이동이_안_얹힌다(self):
+        """★이 결함의 **돈**. 엔진 줄을 손으로 주입해 접기까지 간다 — 장중 레벨이
+        2.50(종가 3.05 에서 −55bp)인데 손익이 그만큼 안 움직여야 한다."""
+        st = self._closed()
+        acc = {1: {"exec": 0.0, "carry": 1e6, "rolldown": 0.0, "startup": 0.0,
+                   "funding": None, "valuation": 1e7}}
+        kw = dict(leg_of=lambda *a, **k: {}, store=st,
+                  mark_of=lambda k, t: ("2020-03-11", 3.05),
+                  accrual_of=lambda rows: acc)
+        close = paper.build_sheet(**kw)["position"]
+        live = paper.build_sheet(**kw, marks={("irs", "2Y"): 2.50})["position"]
+        assert close["legs"][0]["accrued"] is True
+        assert live["legs"][0]["liveMove"] is None, "닫힌 다리엔 장중 이동이 없다"
+        assert live["pnl"] == pytest.approx(close["pnl"]), \
+            "닫은 거래의 손익은 오늘 시세로 안 움직인다"
+
+    def test_닫힌_묶음의_지금은_내_청산_레벨이다(self):
+        """★한 줄 안에서 두 시계가 돌지 않게 — 「지금」은 청산 스프레드이고 밴드는
+        없다. 종전에는 10-06 에 청산한 줄이 「지금 · 2026-10-15 장중」이라 섰다."""
+        dates = _dates(26)
+        curve = [5.0] * 19 + [-4.0] + [1.0] * 6
+        pts = [{"t": d, "v": v, "legs": [4.16, 4.16 - v / 100.0]} for d, v in zip(dates, curve)]
+        KN = {"lookback": 20, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.0, "entryMode": "level"}
+        base = {"pnl": 1.0, "open": False, "dv01": 1e7, "notional": 1e10,
+                "kind": "irs", "entry": dates[19], "series": "IRC-5Y-10Y", "tag": "T",
+                "exit": dates[22], "knobs": KN}
+        rows = [{**base, "n": 1, "tenor": "5Y", "rateSign": -1, "level": 4.145, "exitLevel": 4.10},
+                {**base, "n": 2, "tenor": "10Y", "rateSign": 1, "level": 4.195, "exitLevel": 4.22}]
+        g = paper.group_series(rows, points_of=lambda _s: pts)
+        assert g["myLevel"] == pytest.approx(5.0) and g["myBasis"] == "fill"
+        # 청산 스프레드 = (4.22 − 4.10) × 100 = 12.0bp — 진입과 **같은 식**이다
+        assert g["now"] == pytest.approx(12.0) and g["nowBasis"] == "exit"
+        assert g["asof"] == dates[22] and g["exitT"] == dates[22] and g["live"] is False
+        assert g["delta"] == pytest.approx(12.0 - 5.0)
+        assert g["track"] is None, "지난 거래에 오늘 밴드를 적지 않는다"
+
+    def test_한_다리라도_열려_있으면_묶음은_지금을_본다(self):
+        """반만 닫은 묶음은 아직 들고 있는 거래다 — 시계를 멈추지 않는다."""
+        dates = _dates(26)
+        curve = [5.0] * 19 + [-4.0] + [1.0] * 6
+        pts = [{"t": d, "v": v, "legs": [4.16, 4.16 - v / 100.0]} for d, v in zip(dates, curve)]
+        KN = {"lookback": 20, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.0, "entryMode": "level"}
+        base = {"pnl": 1.0, "dv01": 1e7, "notional": 1e10, "kind": "irs",
+                "entry": dates[19], "series": "IRC-5Y-10Y", "tag": "T", "knobs": KN}
+        rows = [{**base, "n": 1, "tenor": "5Y", "rateSign": -1, "level": 4.145,
+                 "open": False, "exit": dates[22], "exitLevel": 4.10},
+                {**base, "n": 2, "tenor": "10Y", "rateSign": 1, "level": 4.195,
+                 "open": True, "exit": None, "exitLevel": None}]
+        g = paper.group_series(rows, points_of=lambda _s: pts)
+        assert g["now"] == pytest.approx(1.0) and g["nowBasis"] == "close"
+        assert g["asof"] == dates[-1] and g["exitT"] is None and g["track"] is not None
+
+
+class Test비용은거래한번에매긴다:
+    """★[트레이더 2026-10-15 — "아웃라이트던 커브던 플라이던 한 번 거래에서 비용은
+    0.5bp 그러니까, 왕복은 1bp"].
+
+    종전에는 다리마다 `COST_BP × dv01` 이라 커브가 1bp·플라이가 1.5bp 였다. 그건
+    계획면(`mrmetrics.score` — 계열 한 번에 0.5bp)과 **같은 거래에 다른 돈**이다.
+    """
+
+    def _legs(self, *dv01s: float, tag: str = "T") -> list[dict]:
+        return [{"n": i + 1, "tag": tag, "dv01": d} for i, d in enumerate(dv01s)]
+
+    def test_거래의_DV01_은_계열_1bp_의_돈이다(self):
+        # 아웃라이트 — 몫이 곧 다리의 DV01(종전과 같다)
+        assert paper.cost_dv01_of(self._legs(1e7)) == {1: pytest.approx(1e7)}
+        # 커브 두 다리 — 반씩 져서 합이 계열 DV01 한 번
+        curve = paper.cost_dv01_of(self._legs(1e7, 1e7))
+        assert sum(curve.values()) == pytest.approx(1e7)
+        assert curve[1] == pytest.approx(curve[2])
+        # 플라이(벨리 2w · 윙 w 둘) — 합이 윙 DV01 한 번, 벨리가 절반을 진다
+        fly = paper.cost_dv01_of(self._legs(1e7, 2e7, 1e7))
+        assert sum(fly.values()) == pytest.approx(1e7)
+        assert fly[2] == pytest.approx(5e6) and fly[1] == pytest.approx(2.5e6)
+
+    def test_묶음이_다르면_따로_센다(self):
+        got = paper.cost_dv01_of(self._legs(1e7, 1e7, tag="A")
+                                 + [{"n": 3, "tag": "B", "dv01": 4e6}])
+        assert sum(got[n] for n in (1, 2)) == pytest.approx(1e7)
+        assert got[3] == pytest.approx(4e6)
+
+    def test_장부에서_커브_왕복이_1bp_다(self):
+        """★산 길로 — `build_sheet` 가 그 몫을 `score_leg` 에 넘긴다."""
+        st = dict(paper.EMPTY, legs=[])
+        for tenor, side, lvl in (("5Y", "receive", 4.145), ("10Y", "pay", 4.195)):
+            paper.add_leg(st, kind="irs", tenor=tenor, side=side, entry="2020-03-02",
+                          level=lvl, notional=1e10, dv01=1e7, tag="커브")
+        kw = dict(leg_of=lambda *a, **k: {}, store=st,
+                  mark_of=lambda k, t: ("2020-03-03", 4.2))
+        open_ = paper.build_sheet(**kw)["position"]
+        assert sum(l["cost"] for l in open_["legs"]) == pytest.approx(0.5 * 1e7), \
+            "편도 = 0.5bp × 계열 DV01 — 다리 수와 무관하다"
+        for n in (1, 2):
+            paper.close_leg(st, n, "2020-03-10", 4.2)
+        shut = paper.build_sheet(**kw)["position"]
+        assert sum(l["cost"] for l in shut["legs"]) == pytest.approx(1.0 * 1e7), \
+            "왕복 = 1bp"
+
+    def test_청산선_손익도_같은_몫을_쓴다(self):
+        """`track_leg` 의 「거기까지 가면 얼마」도 다리가 아니라 거래의 비용이다 —
+        두 자리가 다른 비용을 쓰면 카드의 손익과 문 앞의 손익이 안 이어진다."""
+        dates = _dates(26)
+        vals = [5.0] * 19 + [-4.0] + [1.0] * 6
+        pts = [{"t": d, "v": v, "legs": [4.16, 4.16 - v / 100.0]} for d, v in zip(dates, vals)]
+        leg = {"n": 1, "kind": "irs", "tenor": "5Y", "rateSign": -1, "dv01": 1e7,
+               "level": 4.145, "entry": dates[19], "series": "IRC-5Y-10Y",
+               "knobs": {"lookback": 20, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.0,
+                         "entryMode": "level"}}
+        whole = paper.track_leg(leg, lambda _s: pts)
+        half = paper.track_leg(leg, lambda _s: pts, cost_dv01=5e6)
+        # 왕복 비용의 차이만큼만 벌어진다 — 2 × 0.5bp × (1e7 − 5e6)
+        assert (half["mine"]["exitPnl"] - whole["mine"]["exitPnl"]
+                == pytest.approx(2 * paper.COST_BP * 5e6))

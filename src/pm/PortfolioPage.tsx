@@ -77,7 +77,7 @@ const POS_COLS = 11;
 import { suggestLine } from './suggestLine';
 import { RiskHeatmap } from './RiskHeatmap';
 import { TraceWindow } from './TraceWindow';
-import { knobWord, zWord } from './words';
+import { NOW_WORD, knobWord, zWord } from './words';
 
 const MINUS = '−';
 
@@ -562,11 +562,16 @@ function SubtotalRow({ group: g, busy, collapsed, onToggle, onTrace }: {
           </Text>
         )}
       </TableCell>
+      {/* ★`open` 을 **묶음에서 읽는다** [고침 2026-10-15]. 종전에는 `open` 을
+          그냥 켜 두어서, 10-06 에 청산한 묶음 줄이 **오늘 밴드**로 「−1.36σ ·
+          청산 9.18bp」라고 섰다 — 다리 줄은 이미 `open={l.open}` 으로 그 규율을
+          지고 있었고(「닫힌 다리에는 아무것도 안 적는다」), 묶음 줄만 빠져 있었다.
+          서버도 같은 자리에서 닫힌 묶음의 `track` 을 비운다(`group_series`). */}
       <TableCell>
-        <TrackCell track={g.track ?? null} open />
+        <TrackCell track={g.track ?? null} open={g.open > 0} />
       </TableCell>
       <TableCell className="sr-num" justifyContent="flex-end">
-        <LevelCell track={g.track ?? null} open />
+        <LevelCell track={g.track ?? null} open={g.open > 0} />
       </TableCell>
       <TableCell className="sr-num" justifyContent="flex-end">
         {hasSeries && g.myLevel != null ? (
@@ -587,7 +592,10 @@ function SubtotalRow({ group: g, busy, collapsed, onToggle, onTrace }: {
               {seriesWord(g.now, g.unit)}
             </Text>
             <Text font="legal" as="span" color="fgMuted" tabularNumbers noWrap>
-              {g.asof ? `${g.asof} ${g.live ? '장중' : '종가'}` : ''}
+              {/* ★낱말은 **서버가 고른 것**을 읽는다(`nowBasis`) [고침 2026-10-15].
+                  `live ? 장중 : 종가` 는 셋째를 몰라서 청산한 묶음을 「장중」이라
+                  적었다 — 그 줄의 「지금」은 내가 적은 청산 레벨이다. */}
+              {g.asof && g.nowBasis ? `${g.asof} ${NOW_WORD[g.nowBasis]}` : ''}
             </Text>
           </VStack>
         ) : blank}
@@ -1292,7 +1300,11 @@ export function PortfolioPage() {
             <Cond k="마지막 종가" v={sheet.asof} />
           ) : null}
           <Cond k="포지션" v={`${sheet.position.open}다리 · 청산 ${sheet.position.closed}`} />
-          <Cond k="비용" v={`편도 ${sheet.costBp}bp`} />
+          {/* ★**거래 한 번**의 값이다 [트레이더 2026-10-15 — "아웃라이트던 커브던
+              플라이던 한 번 거래에서 비용은 0.5bp 그러니까, 왕복은 1bp"]. 「편도
+              0.5bp」만 적으면 다리마다인지 거래마다인지가 안 적혀 있고, 종전 산술은
+              다리마다였다(커브 1bp · 플라이 1.5bp). */}
+          <Cond k="비용" v={`거래 한 번 ${sheet.costBp}bp · 왕복 ${sheet.costBp * 2}bp`} />
           {/* 규칙 북·수동 북 칩 둘은 그 카드들과 같이 내렸다 [OWNER 2026-09-22].
               `Delta` 칩도 뺀다 — 그건 수동 북의 고정 명목이고, 다리는 명목·DV01 을
               줄마다 스스로 적는다(한 화면에 두 크기 규약이 서면 안 읽힌다). */}
