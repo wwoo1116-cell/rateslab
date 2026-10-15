@@ -54,12 +54,13 @@ import { NumCell, Panel, condWord, fmtRatio, headFont, sameCond } from './parts'
 const OPT_COLS: { k: string; label: string; num?: boolean }[] = [
   { k: 'rank', label: '순위', num: true },
   { k: 'cond', label: '조건' },
-  /* **기본 기준이 첫 지표 열이다** [OWNER 2026-09-09] — 순위를 매긴 자가 표의
-     맨 앞에 서야 「왜 이 줄이 1등인가」가 눈으로 읽힌다. Calmar 는 남는다:
-     자리를 넘겼을 뿐 못 쓰는 값이 된 게 아니고, 둘의 순위가 갈리는 자리를
-     보려면 나란히 있어야 한다(실측 순위상관 0.84). */
-  { k: 'cdarRatio', label: 'CDaR 비', num: true },
+  /* **기본 기준이 첫 지표 열이다** — 순위를 매긴 자가 표의 맨 앞에 서야 「왜 이
+     줄이 1등인가」가 눈으로 읽힌다. 그 자리는 2026-09-09 에 Calmar → CDaR 비로
+     옮겼다가 **2026-10-15 에 돌아왔다** [OWNER — "이제 우선순위는 PnL과 MDD야"].
+     CDaR 비는 남는다: 자리를 넘겼을 뿐 못 쓰는 값이 된 게 아니고, 둘의 순위가
+     갈리는 자리를 보려면 나란히 있어야 한다(실측 순위상관 0.84). */
   { k: 'calmar', label: 'Calmar', num: true },
+  { k: 'cdarRatio', label: 'CDaR 비', num: true },
   { k: 'sortino', label: 'Sortino', num: true },
   { k: 'martin', label: 'Martin', num: true },
   { k: 'gpr', label: 'GPR', num: true },

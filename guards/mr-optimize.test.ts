@@ -389,12 +389,21 @@ describe('TOP 5 의 「채택」은 오른쪽에 **고정**된다', () => {
   });
 });
 
-describe('자동 채택 기준은 **CDaR 비**다 [OWNER 2026-09-09]', () => {
-  /* Calmar 에서 옮겨 왔다. 근거는 평가층 사양의 그 문장 — **MaxDD 는 단일관측
-     추정량**이라(이 표본에서 MaxDD 의 50% 를 넘는 낙폭 사건이 셋뿐이고 1등은
-     코로나 창이다) Calmar 의 표준오차가 넓다. 재 보고 옮겼다: 162칸에서 두
-     기준의 순위상관 0.84 · 1등은 계열에 따라 갈리되 서로의 상위 5 안
-     (`docs/EVAL_LANE_STATE.md` §8). */
+describe('자동 채택 기준은 **Calmar** 다 [OWNER 2026-10-15 — PnL·MDD]', () => {
+  /* > "이제 우선순위는 PnL과 MDD야"
+   *
+   * Calmar = 연환산 손익 ÷ 최대낙폭 — 그 둘을 한 수로 쓰는 자리다.
+   *
+   * 2026-09-09 에 이 자리를 CDaR 비에 넘긴 근거는 「**MaxDD 는 단일관측
+   * 추정량**」이었고 그 말은 그대로 참이다. 되돌리는 근거는 **CDaR 의 우위가
+   * 이 창에서 없다는 실측**이다 [전수조사 2026-10-15]: 1년 창에서 CDaR 로
+   * 채택된 조건의 **6/25 가 꼬리 13점이 전부 한 낙폭 구간에서 온** 칸이었다.
+   * 사건이 하나면 CDaR 도 사실상 단일관측이라, 둘 다 얇으면 읽는 사람이
+   * 되짚을 수 있는 쪽(PnL ÷ MDD)이 낫다. Calmar 로 바꾸니 그 수가 2/25 로
+   * 줄고 채택된 칸의 거래 수가 늘었다(`docs/MR_LANE_STATE.md` 그 절).
+   *
+   * ⚠ 총손익 **단독**은 기준이 아니다(표본밖에서 무작위보다 나빴다) — Calmar 는
+   * 그 분모를 세운다. 낙폭 **단독**도 아니다(1등이 늘 거래 0 건이 된다). */
 
   const win = src('src/mr/OptimizePane.tsx');
   const api2 = src('src/mr/api.ts');
@@ -402,24 +411,42 @@ describe('자동 채택 기준은 **CDaR 비**다 [OWNER 2026-09-09]', () => {
   const bookW = src('src/mr/BookWindow.tsx');
   const mainPy = raw('backend/app/main.py');
 
-  it('두 창의 기본 기준이 CDaR 비다', () => {
+  it('두 창의 기본 기준이 Calmar 이고 **서버와 같다**', () => {
     for (const [f, code] of [['StrategyWindow', stratW], ['BookWindow', bookW]] as const) {
-      expect(code, `${f} 의 기본 기준`).toMatch(/useState<MrRankKey>\('cdarRatio'\)/);
+      expect(code, `${f} 의 기본 기준`).toMatch(/useState<MrRankKey>\('calmar'\)/);
     }
+    /* ★서버가 계획면에서 쓰는 열쇠와 **같은 글자**여야 한다 — 갈리면 화면이
+       고른 1등과 계획면이 채택한 조건이 다른 칸이 된다. */
+    const plan = raw('backend/app/mrplan.py');
+    expect(plan).toMatch(/^PLAN_RANK_KEY = "calmar"$/m);
   });
 
   it('기준 목록의 **첫 칸**이자 표의 첫 지표 열이다', () => {
     /* 순위를 매긴 자가 맨 앞에 서야 「왜 이 줄이 1등인가」가 눈으로 읽힌다. */
-    const first = api2.slice(api2.indexOf('MR_RANK_KEYS = ['), api2.indexOf("{ v: 'calmar'"));
-    expect(first).toMatch(/v: 'cdarRatio'/);
+    const first = api2.slice(api2.indexOf('MR_RANK_KEYS = ['), api2.indexOf("{ v: 'cdarRatio'"));
+    expect(first).toMatch(/v: 'calmar'/);
     const cols = win.slice(win.indexOf('OPT_COLS'), win.indexOf("{ k: 'sortino'"));
-    expect(cols.indexOf("k: 'cdarRatio'")).toBeGreaterThan(0);
-    expect(cols.indexOf("k: 'cdarRatio'")).toBeLessThan(cols.indexOf("k: 'calmar'"));
+    expect(cols.indexOf("k: 'calmar'")).toBeGreaterThan(0);
+    expect(cols.indexOf("k: 'calmar'")).toBeLessThan(cols.indexOf("k: 'cdarRatio'"));
   });
 
-  it('Calmar 는 **안 지운다** — 둘이 갈리는 자리를 보려면 나란히 있어야 한다', () => {
-    expect(api2).toMatch(/v: 'calmar'/);
-    expect(win).toMatch(/k: 'calmar'/);
+  it('CDaR 비는 **안 지운다** — 둘이 갈리는 자리를 보려면 나란히 있어야 한다', () => {
+    expect(api2).toMatch(/v: 'cdarRatio'/);
+    expect(win).toMatch(/k: 'cdarRatio'/);
+  });
+
+  it('Calmar 의 **분모를 감사하는 수**가 카드에 선다', () => {
+    /* 「MaxDD 는 단일관측 추정량」이라는 비판이 이 기준의 약점이다. 창 안의
+       낙폭 사건 수가 그 비판을 눈에 보이게 한다 — MaxDD 는 그 N 개 중 가장
+       깊은 하나다. ⚠순위는 안 바꾼다(평가층의 그 ⚠). */
+    const met = raw('backend/app/mrmetrics.py');
+    expect(met).toMatch(/"ddEpisodes": _dd_episodes_of\(daily\)/);
+    /* 사건 수는 **정규화를 안 지난다** — CDaR 뒤에 두면 MDD 는 서는데 그 감사가
+       안 서는 창이 생긴다. */
+    expect(met).toMatch(/def _dd_episodes_of/);
+    const page = src('src/mr/MrPage.tsx');
+    expect(page).toMatch(/채택 기준 \(Calmar\)/);
+    expect(page).toMatch(/낙폭 사건 \$\{r\.perf1y\.ddEpisodes/);
   });
 
   it('서버가 칸마다 그 값을 싣는다 — 화면이 다시 계산하지 않는다', () => {

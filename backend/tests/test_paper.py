@@ -937,10 +937,22 @@ class Test그날_1등_제안:
 
     @staticmethod
     def _cell(**kw) -> dict:
+        """격자 칸 하나.
+
+        ★순위 열쇠를 **글자로 안 적는다** [고침 2026-10-15]. 이 묶음이 재는 것은
+        「순위 규약이 계획면과 같은가」이므로 그 열쇠도 계획면에서 와야 한다 —
+        `cdarRatio` 라고 적어 두었다가 오너가 기준을 Calmar 로 옮기자
+        (「이제 우선순위는 PnL과 MDD야」) 시험이 **빈 칸을 주고** 1등이 없다고
+        했다. 시험이 결정을 못 따라가면 그 시험은 결정을 막는 쪽이 된다.
+        """
         base = dict(lookback=60, entryZ=2.0, exitZ=0.5, stopZ=2.5, entryMode="level",
-                    cdarRatio=None, totalPnl=0.0, maxDrawdown=0.0, numTrades=0,
-                    winRate=None)
+                    cdarRatio=None, calmar=None, totalPnl=0.0, maxDrawdown=0.0,
+                    numTrades=0, winRate=None)
         base.update(kw)
+        #: 순위 열쇠 하나로 쓰는 값 — 시험이 `score=` 로 주면 계획면의 그 열쇠에 꽂는다.
+        if "score" in kw:
+            base.pop("score")
+            base[mrp.PLAN_RANK_KEY] = kw["score"]      # None 도 그대로 — 「못 잼」
         return base
 
     @staticmethod
@@ -962,7 +974,7 @@ class Test그날_1등_제안:
         아니라 「오늘의 1등을 그날에 붙인 것」이다 — 체결일을 뒤로 적은 다리에서
         그 둘은 다른 칸이다."""
         leg_of, dates, vals = _leg_of(600)
-        grid_of, seen = self._grid_of([self._cell(cdarRatio=1.0)])
+        grid_of, seen = self._grid_of([self._cell(score=1.0)])
         out = paper.suggest("BSS-3Y", "2020-12-31", leg_of=leg_of, grid_of=grid_of)
         got = seen["leg"]
         assert got["dates"][-1] <= "2020-12-31"
@@ -999,7 +1011,7 @@ class Test그날_1등_제안:
 
     def test_진입일_앞에_봉이_없으면_사유를_든다(self):
         leg_of, _dates, _vals = _leg_of(100)
-        grid_of, seen = self._grid_of([self._cell(cdarRatio=1.0)])
+        grid_of, seen = self._grid_of([self._cell(score=1.0)])
         out = paper.suggest("BSS-3Y", "2019-06-01", leg_of=leg_of, grid_of=grid_of)
         assert out["top"] is None and out["list"] == []
         assert "앞서요" in out["why"]
@@ -1007,7 +1019,7 @@ class Test그날_1등_제안:
 
     def test_표본이_룩백보다_짧으면_사유를_든다(self):
         leg_of, dates, _vals = _leg_of(100)
-        grid_of, seen = self._grid_of([self._cell(cdarRatio=1.0)])
+        grid_of, seen = self._grid_of([self._cell(score=1.0)])
         out = paper.suggest("BSS-3Y", dates[9], leg_of=leg_of, grid_of=grid_of)
         assert out["top"] is None
         assert "짧아요" in out["why"]
@@ -1027,16 +1039,18 @@ class Test그날_1등_제안:
         """★두 벌을 둘 수밖에 없으면 대사로 묶는다 — `rank_cells` 의 1등은
         `mrplan.pick_cell` 의 그 칸이어야 한다. 못 잰 칸은 빠지고, 동점은 격자
         차례가 이긴다."""
+        # ★열쇠는 **계획면에서 온다**(글자로 안 적는다 — `_cell` 머리의 그 문단).
+        K = mrp.PLAN_RANK_KEY
         cells = [
-            self._cell(lookback=20, cdarRatio=None),
-            self._cell(lookback=60, cdarRatio=0.8),
-            self._cell(lookback=120, cdarRatio=1.7),
-            self._cell(lookback=20, entryZ=2.5, cdarRatio=1.7),   # 동점 — 뒤 칸
-            self._cell(lookback=60, entryZ=2.5, cdarRatio=-0.2),
+            self._cell(lookback=20, score=None),
+            self._cell(lookback=60, score=0.8),
+            self._cell(lookback=120, score=1.7),
+            self._cell(lookback=20, entryZ=2.5, score=1.7),       # 동점 — 뒤 칸
+            self._cell(lookback=60, entryZ=2.5, score=-0.2),
         ]
         ranked = paper.rank_cells(cells)
         assert [c["rank"] for c in ranked] == [1, 2, 3, 4]
-        assert [c["cdarRatio"] for c in ranked] == [1.7, 1.7, 0.8, -0.2]
+        assert [c[K] for c in ranked] == [1.7, 1.7, 0.8, -0.2]
         assert mrp.knobs_of(ranked[0]) == mrp.knobs_of(mrp.pick_cell(cells))
         assert ranked[0]["lookback"] == 120 and ranked[1]["entryZ"] == 2.5
         assert all(set(paper.SUGGEST_FIELDS) <= set(c) for c in ranked)

@@ -348,3 +348,136 @@ def test_split_closes_on_the_engine_itself():
     # 원의 1/100 이다. 1e-6 으로 잡으면 이 시험이 반올림을 잡는 시험이 된다.
     assert abs(s["total"] - r["summary"]["totalPnl"]) < 0.01
     assert abs(s["mtm"] + s["carry"] + s["cost"] - s["total"]) < 0.01
+
+
+# ── CDaR 은 **창의 봉을 안 잃는다** [전수조사 2026-10-15] ─────────────────────
+#
+# > (트레이더) "MR에서 MDD 계산하는게 이상하다"
+#
+# 범인은 MDD 가 아니라 **그것을 쓰는 쪽**이었다. CDaR 비는 `vol_normalize`
+# (확장창 `min_obs=60`)를 지나는데, 종전에는 **구간을 먼저 자른 뒤** 그 안에서
+# 정규화를 다시 시작했다 — 창의 앞 60봉이 통째로 NaN 이 되어 버려졌다. 1년 창
+# 247봉이 **187봉**으로 줄었고, 하필 그 카드의 최대낙폭이 버려진 60봉 안에 있어서
+# 「같은 카드가 표본 둘을 말한다」가 됐다(`maxDrawdown` 은 247봉, `cdarRatio` 는
+# 187봉). 그 값은 계획면 격자의 **순위 기준**이라 25계열 중 22계열의 1등이 바뀌었다.
+
+
+class TestCdar창의봉을안잃는다:
+    def _daily(self, n: int, seed: int = 11) -> list[float]:
+        """잔물결 + 중간에 낙폭 하나 — 결정적이어야 두 번 불러 같은 수가 나온다."""
+        out = []
+        for i in range(n):
+            x = math.sin(i / 7.0) * 1_000_000 + ((i * seed) % 13 - 6) * 50_000
+            if 70 <= i < 90:
+                x -= 900_000                      # 창 앞머리에 심는 낙폭
+            out.append(x)
+        return out
+
+    def test_구간을_잘라도_그_구간의_봉을_다_쓴다(self):
+        """★이것이 그 결함이다. 창이 247봉이면 CDaR 도 247봉을 본다.
+
+        표본을 400봉으로 두는 이유: 창이 **전 표본의 앞 60봉을 걸치면** 그 봉은
+        정말로 못 잰다(확장창이 배수를 못 내놓는다). 그건 결함이 아니라 추정기의
+        성질이고, 아래 `test_창이_표본_앞머리를_걸치면` 이 그 경우를 따로 잰다.
+        """
+        daily = self._daily(400)
+        dates = _bizdays(dt.date(2023, 1, 2), 400)
+        m = mrm.score(dates, _points(daily), [], 400 - 247, 0.5)
+        assert m["days"] == 247
+        assert m["cdarBars"] == 247, "창의 봉을 하나도 안 잃는다"
+
+    def test_창이_표본_앞머리를_걸치면_그만큼만_못_잰다(self):
+        """창이 첫 60봉에 걸치면 걸친 만큼만 빠진다 — 그리고 **그 사실이 실린다**
+        (`cdarBars` ≠ `days`). 종전 결함은 「창을 어디로 잡든 늘 60봉이 사라지는」
+        것이었다."""
+        m = mrm.score(_bizdays(dt.date(2023, 1, 2), 300),
+                      _points(self._daily(300)), [], 53, 0.5)
+        assert m["days"] == 247
+        assert m["cdarBars"] == 240, "앞 60봉 중 걸친 7봉만 빠진다"
+
+    def test_정규화는_창_앞의_역사를_쓴다(self):
+        """같은 창을 두 번 재는데 **앞의 역사만** 다르면 수가 달라야 한다 —
+        달라지지 않으면 창 안에서 다시 정규화하고 있다는 뜻이다."""
+        win = self._daily(120)
+        quiet = [x * 0.05 for x in self._daily(200, seed=5)]
+        loud = [x * 5.0 for x in self._daily(200, seed=5)]
+        dates = _bizdays(dt.date(2023, 1, 2), 320)
+        a = mrm.score(dates, _points(quiet + win), [], 200, 0.5)
+        b = mrm.score(dates, _points(loud + win), [], 200, 0.5)
+        assert a["cdarBars"] == b["cdarBars"] == 120
+        assert a["cdarRatio"] != b["cdarRatio"], \
+            "앞의 역사가 배수를 정하므로 수가 달라야 한다(창 안 정규화면 같아진다)"
+
+    def test_못_쟀으면_사유가_구분된다(self):
+        """「낙폭이 없어서」와 「봉이 모자라서」는 **다른 사실**이다 — 종전에는
+        둘 다 같은 `None` 으로 뭉쳤다."""
+        short = mrm.score(_bizdays(dt.date(2024, 1, 1), 30),
+                          _points(self._daily(30)), [], 0, 0.5)
+        assert short["cdarRatio"] is None
+        assert short["cdarWhy"] and "봉" in short["cdarWhy"], short["cdarWhy"]
+        # 봉은 넉넉하고 변동도 있는데 **한 번도 물속에 안 간** 계열 — 그때는
+        # 「낙폭이 없다」다. 상수 계열로는 못 잰다(분산이 0 이면 배수가 안 선다).
+        rise = [100_000.0 + (i % 7) * 10_000 for i in range(200)]
+        up = mrm.score(_bizdays(dt.date(2023, 1, 2), 200), _points(rise), [], 0, 0.5)
+        assert up["cdarBars"] and up["cdarBars"] > 60
+        assert up["cdarRatio"] is None
+        assert up["cdarWhy"] and "낙폭" in up["cdarWhy"], up["cdarWhy"]
+
+    def test_비율이_몇_개의_사건_위에_섰나를_싣는다(self):
+        """★평가층이 이미 내던 자기 감사를 **버리지 않는다**. CDaR 을 Calmar
+        대신 고른 근거가 「MaxDD 는 단일관측 추정량」이라, 사건이 하나면 그 근거가
+        그 칸에서 무너진 것이고 그 사실이 보여야 한다. 순위는 안 바꾼다."""
+        m = mrm.score(_bizdays(dt.date(2023, 1, 2), 300),
+                      _points(self._daily(300)), [], 53, 0.5)
+        assert m["cdarTailPoints"] and m["cdarTailPoints"] > 0
+        assert m["cdarTailEpisodes"] is not None
+        assert m["cdarPointsPerEpisode"] is not None
+        assert m["cdarTailPoints"] >= m["cdarTailEpisodes"]
+        # ★채택 기준이 Calmar 로 돌아오면서(OWNER 2026-10-15 — PnL·MDD) 창의
+        # **낙폭 사건 수**가 그 기준의 분모를 감사하는 수가 된다: MaxDD 는 이
+        # N 개 중 가장 깊은 하나다.
+        assert m["ddEpisodes"] is not None and m["ddEpisodes"] >= m["cdarTailEpisodes"]
+
+    def test_낙폭_사건_수는_변동성_추정기에_안_걸린다(self):
+        """★`maxDrawdown` 이 서는 창이면 그 감사도 서야 한다. 사건 수를 CDaR 의
+        `vol_normalize` 뒤에 두면 봉 60개가 안 되는 창에서 **MDD 는 나오는데
+        그 분모의 감사는 None** 이 된다 — 실측으로 그 자리를 밟았다."""
+        daily = [100.0] * 5 + [-50.0] * 4 + [100.0] * 5          # 14봉
+        m = mrm.score(_bizdays(dt.date(2024, 1, 1), 14), _points(daily), [], 0, 0.5)
+        assert m["maxDrawdown"] > 0
+        assert m["cdarRatio"] is None, "60봉이 안 되면 CDaR 비는 못 선다"
+        assert m["ddEpisodes"] == 1, "그래도 사건 수는 선다"
+
+    def test_낙폭_사건_수가_MDD_의_후보_수다(self):
+        """물속에 들어가 전고점을 되찾기까지가 한 사건이다. 한 번만 물속에
+        들어갔다 나온 계열은 사건 하나 — 그때 MaxDD 는 후보가 하나다."""
+        daily = [100.0] * 5 + [-50.0] * 4 + [100.0] * 5    # 물속 한 번
+        m = mrm.score(_bizdays(dt.date(2024, 1, 1), 14), _points(daily), [], 0, 0.5)
+        assert m["ddEpisodes"] == 1
+        twice = [100.0] * 5 + [-50.0] * 4 + [100.0] * 5 + [-60.0] * 4 + [200.0] * 5
+        m2 = mrm.score(_bizdays(dt.date(2024, 1, 1), 23), _points(twice), [], 0, 0.5)
+        assert m2["ddEpisodes"] == 2
+
+
+class TestMDD의자는한벌이다:
+    """★피크 초기값이 갈려 있었다 [맞춤 2026-10-15] — `mrmetrics` 는 `0.0`,
+    `mrbacktest.summarize`·`mrbook._curve` 는 `-inf`. 첫 봉이 손실인 계열에서
+    후자는 그 손실을 낙폭에 안 넣어 **MDD 가 |총손익| 보다 작아진다.**"""
+
+    def test_첫_봉이_손실이면_셋이_같은_수를_낸다(self):
+        from app import mrbook
+
+        daily = [-30.0, 10.0, -5.0, 20.0]
+        pts = [{"dailyPnl": x, "cumulativePnl": sum(daily[: i + 1])}
+               for i, x in enumerate(daily)]
+        a = bt.summarize(pts, [])["maxDrawdown"]
+        b = mrbook._curve(daily)[2]
+        c = mrm._drawdowns(daily)[0]
+        assert a == b == c == 30.0
+
+    def test_손실_계열에서_MDD_가_총손익보다_작지_않다(self):
+        daily = [-10.0] * 20
+        pts = [{"dailyPnl": x, "cumulativePnl": sum(daily[: i + 1])}
+               for i, x in enumerate(daily)]
+        s = bt.summarize(pts, [])
+        assert s["maxDrawdown"] >= -s["totalPnl"]

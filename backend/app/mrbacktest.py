@@ -564,7 +564,13 @@ def summarize(points: list[dict], trades: list[dict]) -> dict[str, Any]:
     total_pnl = points[-1]["cumulativePnl"] if points else 0.0
 
     max_drawdown = 0.0
-    running_max = -math.inf
+    # ★피크는 **0 에서** 시작한다 — `mrmetrics._drawdowns` 와 같은 규약
+    # [맞춤 2026-10-15]. `-inf` 로 두면 첫 봉의 손실이 낙폭에 안 든다(첫 봉의
+    # 누적이 그대로 첫 고점이 되어 버린다). 그러면 첫 봉이 손실인 계열에서
+    # **MDD 가 |총손익| 보다 작아질 수 있다** — 장부에서 그건 말이 안 되는 수다.
+    # 지금 25계열은 전부 `dailyPnl[0] == 0` 이라(엔진이 평평하게 시작한다)
+    # **수는 안 바뀐다**; 바뀌는 것은 자가 두 벌이 아니게 된다는 것이다.
+    running_max = 0.0
     for pt in points:
         running_max = max(running_max, pt["cumulativePnl"])
         max_drawdown = max(max_drawdown, running_max - pt["cumulativePnl"])

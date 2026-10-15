@@ -193,7 +193,16 @@ def _full_key(current_hash: str) -> str:
 # 같은 축이다. v21 과 같은 종류의 승급이다 — 칸은 그대로고 **그 칸의 수가 부호를
 # 바꾼다**. 안 올리면 보드가 옛 부호의 z·레벨을 내주고, 화면은 새 어휘(「IRS 페이 ·
 # 국고 매수」)로 그것을 읽는다. 에러는 안 난다 — 방향만 정확히 거꾸로 읽힌다.
-SCHEMA_VERSION = 22
+#: 23 — 1년 카드가 CDaR 의 **자기 감사**를 싣는다(`cdarTailPoints`·
+#: `cdarTailEpisodes`·`cdarPointsPerEpisode`·`cdarBars`·`cdarWhy`)고, `cdarRatio`
+#: 자체가 **다른 수**가 됐다(정규화를 창 안에서 다시 시작하던 것을 전 표본으로
+#: 옮겼다 — `mrmetrics.score` 의 그 ★★). 모양과 값이 둘 다 바뀌었으므로 옛 칸을
+#: 들고 있으면 화면이 「채택 기준」을 빈칸으로 그리고 격자도 옛 1등을 말한다.
+#: 24 — **채택 기준이 CDaR 비에서 Calmar 로** 바뀐다 [OWNER 2026-10-15 — "이제
+#: 우선순위는 PnL과 MDD야"]. 격자가 **다른 칸을 뽑는다** — 모양은 그대로고 조건·
+#: 레벨·1년 카드가 통째로 달라지는 종류의 승급이라(v22 와 같은 자리) 안 올리면
+#: 화면이 옛 기준으로 고른 조건을 새 기준의 이름으로 내놓는다.
+SCHEMA_VERSION = 24
 
 
 def data_hash(path: Path, asof: "object | None" = None) -> str:

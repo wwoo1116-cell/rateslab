@@ -56,7 +56,24 @@ from . import mrmetrics as mrm
 #: 순위 기준 — 화면(`src/mr/api.ts::MR_RANK_KEYS`)의 기본과 **같은 값**이어야 한다
 #: [OWNER 2026-09-09 「CDaR 비로 옮긴다」]. 갈리면 계획면의 1등과 전략 실험 창의
 #: 1등이 다른 칸이 되고, 창을 열 때마다 조건이 바뀐 것처럼 보인다.
-PLAN_RANK_KEY = "cdarRatio"
+#: ★**PnL 과 MDD** 다 [OWNER 2026-10-15 — "이제 우선순위는 PnL과 MDD야"].
+#:
+#: Calmar = 연환산 손익 ÷ 최대낙폭 — 그 둘을 한 수로 쓰는 자리다. 2026-09-09 에
+#: 이 자리를 CDaR 비에 넘긴 근거는 「**MaxDD 는 단일관측 추정량**」이었고 그 말은
+#: 그대로 참이다. 되돌리는 근거는 **CDaR 의 우위가 이 창에서 없다는 실측**이다
+#: [전수조사 2026-10-15]: 1년 창에서 채택된 조건의 **6/25 가 사건 하나** 위에 서
+#: 있었다(꼬리 13점이 전부 한 낙폭 구간에서 왔다). 사건이 하나면 CDaR 도 사실상
+#: 단일관측이라, 둘 중 하나가 나은 것이 아니라 **둘 다 1년 창에서는 관측이 얇다.**
+#: 그러면 읽는 사람이 되짚을 수 있는 쪽(PnL ÷ MDD)이 낫다.
+#:
+#: ⚠ 총손익 **단독**은 기준이 아니다 — 표본을 반 갈라 재니 그 기준의 1~5등이
+#: 뒤절반에서 162칸 중 71~116등이고 중앙 −2,000만원 대 전체 +4,060만원이었다
+#: (`src/mr/api.ts::MR_RANK_KEYS` 의 그 ⚠ · `scripts/mr_grid_oos.py`). 위험을 안
+#: 보는 기준이라 낙폭이 큰 칸이 그대로 1등이 된다. Calmar 는 그 분모를 세운다.
+#:
+#: ⚠ 낙폭 **단독**도 기준이 아니다 — 「가장 안 아팠던 구성」은 «아무것도 안 한
+#: 구성» 이라 1등이 늘 거래 0 건이 된다(그 목록 머리의 그 문단).
+PLAN_RANK_KEY = "calmar"
 
 #: 성과·트리거를 채점하는 창 — 지난 1년. `mrmetrics.SPANS` 의 그 키·그 달수다.
 PLAN_SPAN = "1y"
@@ -94,7 +111,19 @@ KNOB_KEYS = ("lookback", "entryZ", "exitZ", "stopZ", "entryMode")
 #: 클릭 없이 세운다 [OWNER 2026-09-21 — "내가 클릭따로 안해도 바로 캐리, 롤다운,
 #: 평가 등으로 분해"].
 PERF_KEYS = ("from", "to", "days", "totalPnl", "maxDrawdown", "winRate",
-             "numTrades", "cdarRatio", "split")
+             "numTrades",
+             # ★**채택 기준** [OWNER 2026-10-15] — 이 수가 162칸 중 이 칸을 뽑았다.
+             # 화면의 「채택 기준」 칸이 이것을 읽는다.
+             "calmar",
+             # CDaR 비는 **남긴다** — 전략 창이 고를 수 있는 여섯 중 하나이고,
+             # 둘을 나란히 두면 「기준을 바꾸면 1등이 바뀐다」를 카드에서 본다.
+             "cdarRatio",
+             # ★순위 기준이 **몇 개의 사건 위에 서 있나** [전수조사 2026-10-15].
+             # 평가층이 이미 내던 수인데 `mrmetrics` 가 버리고 있었다. 순위는
+             # 안 바꾼다 — 적기만 한다(그 층의 ⚠ 를 그대로 지킨다).
+             "cdarTailPoints", "cdarTailEpisodes", "cdarPointsPerEpisode",
+             "cdarBars", "cdarWhy", "ddEpisodes",
+             "split")
 
 
 def cache_name(sid: str) -> str:

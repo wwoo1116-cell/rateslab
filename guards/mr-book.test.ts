@@ -311,7 +311,14 @@ describe('서버도 한 자리다', () => {
        올렸을 때 눈에 보이는데(줄이 사라진다), 이 칸은 그쪽 스크립트가 조용히
        못 재는 상태로 남을 뿐이다. 그래서 이 시험이 더 필요하다. */
     const cache = fs.readFileSync(path.join(root, 'backend/app/cache.py'), 'utf8');
-    expect(cache).toMatch(/SCHEMA_VERSION = 22/);
+    /* ★숫자를 **못 박지 않는다** [고침 2026-10-15]. 이 줄은 `= 22` 였고, 그래서
+       뒤에 정당한 승급이 올 때마다(v23 CDaR 감사 · v24 채택 기준 Calmar) 이
+       시험이 깨졌다 — 재려던 것은 「그때 올렸나」이고 「그 뒤로 영영 22 인가」가
+       아니다. **그 승급 이상**인지만 본다. */
+    const AT_LEAST = 22;              // 보드 페이로드가 바뀐 그 판
+    const got = /^SCHEMA_VERSION = (\d+)$/m.exec(cache);
+    expect(got, 'cache.py 가 SCHEMA_VERSION 을 선언한다').not.toBeNull();
+    expect(Number(got![1])).toBeGreaterThanOrEqual(AT_LEAST);
     expect(cache).toMatch(/v22 \(2026-09-22\)/);
     expect(cache).toMatch(/v21 \(2026-09-22\)/);
     expect(cache).toMatch(/v17 \(2026-09-09\)/);

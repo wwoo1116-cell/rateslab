@@ -431,6 +431,23 @@ function PlanStats({ r, place }: { r: MrPlanRow; place: 'strip' | 'card' }) {
           />
           <Stat label="거래" value={`${r.perf1y.numTrades}건`} note={perfNote(r)} />
           <Stat label="최대 낙폭" value={fmtKrw(-r.perf1y.maxDrawdown)} />
+          {/* ★**조건을 고른 수**가 그 조건 옆에 선다 [전수조사 2026-10-15].
+              162칸 중 이 칸을 뽑은 기준이 CDaR 비인데(`mrplan.PLAN_RANK_KEY`)
+              화면에 그 수가 **없었다** — 최대 낙폭만 있었다. 그러면 읽는 사람이
+              「무엇이 이 조건을 골랐나」를 못 되짚는다.
+
+              밑줄은 그 비율이 **몇 개의 사건 위에 섰나**다. CDaR 을 Calmar 대신
+              고른 근거가 「MaxDD 는 단일관측 추정량」이었으니, 사건이 하나면 그
+              근거가 이 칸에서 무너진 것이고 그 사실이 보여야 한다(1년 창에서
+              25계열 중 10계열이 그랬다). 순위는 안 바꾼다 — 적기만 한다. */}
+          <Stat
+            label="채택 기준 (Calmar)"
+            value={r.perf1y.calmar == null ? MINUS : r.perf1y.calmar.toFixed(2)}
+            note={r.perf1y.calmar == null
+              ? '낙폭이 없어 비가 안 서요'
+              : `연환산 ÷ MDD · 낙폭 사건 ${r.perf1y.ddEpisodes ?? '—'}개 중 최악 하나`
+                + ((r.perf1y.ddEpisodes ?? 0) <= 1 ? ' ⚠' : '')}
+          />
         </StatColumn>
       </HStack>
     );

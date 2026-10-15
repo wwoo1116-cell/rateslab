@@ -115,7 +115,12 @@ describe('③ 퓨처스왑은 자기 신선도를 읽는다', () => {
 
   it('백엔드가 그 항목을 정말 낸다 — 늦은 쪽(min)으로', () => {
     const u = read('backend/app/universe.py');
-    expect(u).toMatch(/"futuresswap": \{/);
+    /* ★**철자가 아니라 그 항목이 선다**를 잰다 [고침 2026-10-15]. 이 줄은
+       `"futuresswap": {` 였는데, 출처 칸들이 손잡이 하나(`_src(table, date)`)로
+       모이면서(전수조사 — 신선도의 자를 하나로) 그 중괄호가 사라져 깨졌다.
+       재려던 것은 「백엔드가 이 출처를 정말 내는가」다. */
+    expect(u).toMatch(/"futuresswap":\s*_src\(/);
+    expect(u).toMatch(/daily_ktb_price × mkt_irs_close/);
     expect(u).toMatch(/fsw_asof = \(min\(fut_asof, idate_last\)/);
   });
 });

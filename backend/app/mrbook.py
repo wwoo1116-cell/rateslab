@@ -189,7 +189,9 @@ def _curve(daily: list[float]) -> tuple[list[float], float, float]:
     """(누적, 총손익, 최대낙폭) — `mrbacktest.summarize` 와 같은 정의."""
     cum: list[float] = []
     run = 0.0
-    peak = -math.inf
+    #: 피크는 **0 에서** — `mrbacktest.summarize`·`mrmetrics._drawdowns` 와 한 규약
+    #: [맞춤 2026-10-15]. 그 근거는 엔진 쪽 주석에 한 번만 적는다.
+    peak = 0.0
     mdd = 0.0
     for x in daily:
         run += x

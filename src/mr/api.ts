@@ -431,6 +431,33 @@ export interface MrPerf {
    *  **스케일 불변**이라 자본 기준이 없어도 선다(`docs/EVAL_LANE_STATE.md` §7-4).
    *  낙폭이 없으면 `null` 이다 — 0 이나 큰 수로 채우면 「못 잰 칸」이 1등이 된다. */
   cdarRatio?: number | null;
+  /** ★이 비율이 **몇 개의 사건 위에 서 있나** [전수조사 2026-10-15]. 평가층
+   *  (`evaluation.metrics.drawdown_episodes`)이 처음부터 내던 수인데 서버가
+   *  꺼내지 않고 버리고 있었다.
+   *
+   *  CDaR 을 고른 근거가 「MaxDD 는 **단일관측 추정량**」이었다. 그런데 꼬리
+   *  점들이 **한 낙폭 구간**에서 다 왔으면 CDaR 도 사실상 그 한 사건이고,
+   *  그 근거가 그 칸에서 무너진다 — 실측 1년 창에서 25계열 중 **10계열의
+   *  1등이 사건 하나** 위에 서 있었다(그때 비가 123~185 같은 수가 된다).
+   *
+   *  ⚠**순위를 안 바꾼다 — 적기만 한다.** 사건이 몇 개여야 믿을 만한지는
+   *  사양이 정할 일이고 그건 오너 결정이다(평가층의 그 ⚠ 를 그대로 진다). */
+  cdarTailPoints?: number | null;
+  cdarTailEpisodes?: number | null;
+  cdarPointsPerEpisode?: number | null;
+  /** CDaR 이 실제로 쓴 **봉 수** — 변동성 추정기가 앞머리를 못 재 버린 뒤 남은 것.
+   *  구간의 `days` 와 **다를 수 있다**(「all」 구간은 앞 60봉이 빠진다). */
+  cdarBars?: number | null;
+  /** 왜 안 섰나 — 「낙폭이 없어서」와 「봉이 모자라서」는 **다른 사실**이다.
+   *  종전에는 둘 다 같은 `null` 로 뭉쳤다. */
+  cdarWhy?: string | null;
+  /** ★**창 안의 낙폭 사건 수** — 물속에 들어가 전고점을 되찾기까지가 한 사건.
+   *
+   *  채택 기준이 Calmar 로 돌아오면서(OWNER 2026-10-15 — PnL·MDD) 이 수가 그
+   *  기준의 **분모를 감사하는 수**가 된다: `maxDrawdown` 은 이 N 개 중 **가장
+   *  깊은 하나**이고, 「MaxDD 는 단일관측 추정량」이라는 비판이 바로 그 말이다.
+   *  N 이 작으면 분모가 한 사건의 운이다. ⚠순위는 안 바꾼다 — 적기만 한다. */
+  ddEpisodes?: number | null;
   /** 최대 낙폭의 **골에서** 전고점까지 걸린 영업일. 낙폭이 없으면 null. */
   recoveryDays: number | null;
   /** 구간 안에서 되찾았는가 — 일수만 보면 아직 물속인 구간이 회복한 구간처럼
@@ -1161,7 +1188,14 @@ export interface MrOptimizeRun {
  *  1등이 늘 거래 0 건이 된다), 필드를 두는 이유는 그 사실이 목록에 적혀
  *  있어야 다음 사람이 낙폭을 넣을 때 부호를 안 뒤집기 때문이다. */
 export const MR_RANK_KEYS = [
-  /* ★**기본은 CDaR 비다** [OWNER 2026-09-09 — 「CDaR 비로 옮긴다」].
+  /* ★**기본이 다시 Calmar 다** [OWNER 2026-10-15 — "이제 우선순위는 PnL과 MDD야"].
+   *  2026-09-09 에 CDaR 비에 자리를 넘긴 근거(「MaxDD 는 단일관측 추정량」)는
+   *  그대로 참이지만, 1년 창에서는 **CDaR 도 관측이 얇다** — 전수조사 실측으로
+   *  채택 조건의 6/25 가 꼬리 13점이 전부 한 낙폭 구간에서 온 칸이었다. 둘 다
+   *  얇으면 읽는 사람이 되짚을 수 있는 쪽이 낫다. */
+  { v: 'calmar', label: 'Calmar', higher: true,
+    help: '연환산 손익을 최대 낙폭으로 나눈 값이에요 — PnL 과 MDD 를 한 수로 봐요. 절대수익형의 표준이고 지금 계획면의 자동 채택 기준이에요.' },
+  /* CDaR 비 — **2026-09-09~10-15 의 기본**이었다 [OWNER 「CDaR 비로 옮긴다」].
    *
    *  Calmar 를 대신한 근거는 평가층 사양의 그 문장이다: **MaxDD 는 단일관측
    *  추정량**이라(이 표본에서 MaxDD 의 50% 를 넘는 낙폭 사건이 셋뿐이고 1등은
@@ -1172,9 +1206,7 @@ export const MR_RANK_KEYS = [
    *  BSS-10Y 는 1등이 같고 BSS-2Y 는 갈리되 서로의 상위 5 안) —
    *  `docs/EVAL_LANE_STATE.md` §8. */
   { v: 'cdarRatio', label: 'CDaR 비', higher: true,
-    help: '변동성을 5%로 맞춘 뒤 연환산 수익을 최악 5% 낙폭의 평균으로 나눈 값이에요. 최대낙폭은 관측 하나라 표준오차가 넓어서, 낙폭 여럿의 평균으로 대신해요.' },
-  { v: 'calmar', label: 'Calmar', higher: true,
-    help: '연환산 손익을 최대 낙폭으로 나눈 값이에요. 절대수익형의 표준이었고 2026-09-09 에 CDaR 비에 자리를 넘겼어요 — 최대낙폭이 관측 하나여서예요.' },
+    help: '변동성을 5%로 맞춘 뒤 연환산 수익을 최악 5% 낙폭의 평균으로 나눈 값이에요. 낙폭 여럿의 평균이라 최대낙폭보다 관측이 두터워요 — 다만 1년 창에서는 그 꼬리가 한 사건에서 다 오는 칸이 많아요(카드의 「사건」 수를 보세요).' },
   { v: 'sortino', label: 'Sortino', higher: true,
     help: '손실 쪽 변동만 벌해요. 상승 변동성을 안 깎는 샤프예요.' },
   { v: 'martin', label: 'Martin', higher: true,
@@ -1405,7 +1437,10 @@ export interface MrPlanRow extends MrRow {
   /** 지난 1년의 성적과 **분해**. 클릭 없이 화면에 선다 [OWNER 2026-09-21]. */
   perf1y: Pick<MrPerf,
     'from' | 'to' | 'days' | 'totalPnl' | 'maxDrawdown' | 'winRate'
-    | 'numTrades' | 'cdarRatio' | 'split'>;
+    | 'numTrades' | 'cdarRatio' | 'split'
+    | 'calmar'
+    | 'cdarTailPoints' | 'cdarTailEpisodes' | 'cdarPointsPerEpisode'
+    | 'cdarBars' | 'cdarWhy' | 'ddEpisodes'>;
   /** 이 계열의 돈이 실가격 회계인가 엔진 근사인가 — 분해의 «—» 가 그 값이다. */
   real: boolean;
 }

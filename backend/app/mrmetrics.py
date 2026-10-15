@@ -200,6 +200,8 @@ def score(dates: list[str], points: list[dict], trades: list[dict],
     win = points[start:]
     wdates = dates[start:]
     daily = [p["dailyPnl"] for p in win]
+    #: 창 **앞**까지 포함한 전 봉 — CDaR 의 변동성 정규화가 이것을 쓴다(아래 §).
+    daily_all = [p["dailyPnl"] for p in points]
     n = len(daily)
     total = sum(daily)
     max_dd, dd_path, rec_days, recovered = _drawdowns(daily)
@@ -251,7 +253,33 @@ def score(dates: list[str], points: list[dict], trades: list[dict],
     # 위에 한 번 더 걸려 **스케일 불변**이다(`docs/EVAL_LANE_STATE.md` §7-4) —
     # 그래서 원(₩) 손익을 그대로 넣어도 같은 수가 나오고, 액면을 못 세운 계열
     # (통합 장부·커브·플라이)에서도 이 칸이 선다.
-    cdar_ratio = _cdar_ratio_of(daily)
+    # ★★**정규화는 전 표본에서, 창은 그 뒤에 자른다** [고침 2026-10-15].
+    #
+    # 종전에는 `_cdar_ratio_of(daily)` — **창을 먼저 자른 뒤** 그 안에서
+    # `vol_normalize` 를 다시 시작했다. 그 추정기는 `min_obs=60` 확장창이라
+    # **창의 앞 60봉이 통째로 NaN 이 되어 버려진다.** 실측(IRC-1Y-3Y · 1년 창):
+    #
+    #     구간 all  3,395봉 → 3,335봉   CDaR 비 −0.027
+    #     구간 1y     247봉 → **187봉**  CDaR 비 **+33.58**
+    #     구간 1q      61봉 → **1봉**    None
+    #     구간 1m      19봉 → **0봉**    None
+    #
+    # 1년 카드가 **같은 카드 안에서 표본 둘**을 말하고 있었다 — `days`·
+    # `maxDrawdown`·`totalPnl` 은 247봉의 수이고 `cdarRatio` 만 187봉의 수다.
+    # 그리고 하필 **그 카드의 최대낙폭(2,763만원 · 2025-12-11 · 창의 43번째 봉)이
+    # 버려지는 60봉 안에 있었다.** CDaR 이 보는 낙폭은 전체의 82%뿐이었다.
+    #
+    # 그 값은 계획면 격자의 **순위 기준**이다(`mrplan.PLAN_RANK_KEY`). 162칸을
+    # 두 방식으로 다 돌려 보면 **1등이 바뀐다**: 종전 1등 `60/2.0/1.0/3.0/level`
+    # (CDaR 비 34.59)이 제대로 재면 **12위**이고, 제대로 1등은
+    # `60/2.5/1.0/2.5/level`(1.73)이다. 값의 범위도 −1.22~34.59 에서
+    # −1.00~1.73 으로 돌아온다 — Calmar 류 통계가 34 를 낼 수는 없다.
+    #
+    # 룩어헤드는 **안 생긴다**: `vol_normalize` 는 확장창 + `shift(1)` 이라 어느
+    # 봉의 배수도 그 봉 **앞**의 자료만 쓴다. 전 표본에서 돌린다는 것은 그 확장창이
+    # 창 앞의 역사를 **쓴다**는 뜻이고, 그게 애초에 확장창을 쓰는 이유다.
+    cdar = _cdar_of(daily_all, start)
+    cdar_ratio = cdar["cdar_ratio"]
 
     since = wdates[0] if wdates else None
     wt = [t for t in trades if since is not None and t["exitDate"] >= since]
@@ -290,6 +318,28 @@ def score(dates: list[str], points: list[dict], trades: list[dict],
         # 화면의 **자동 채택 기준**이자 평가층의 순위 지표. 낙폭이 없으면 None 이다
         # (0 이나 큰 수로 채우면 「낙폭이 없어서 못 잰 칸」이 1등으로 올라온다).
         "cdarRatio": _r(cdar_ratio, 4),
+        # ★평가층이 **이미 내던** 자기 감사 — 종전에는 `["cdar_ratio"]` 하나만
+        # 꺼내고 버렸다(09-22 전수조사의 「페이로드는 알고 있었고 화면이 안 물었다」
+        # 와 같은 모양). 「이 비율이 몇 개의 사건 위에 서 있나」를 읽는 사람이 봐야
+        # 한다 — 실측 1년 창에서 꼬리 10점이 사건 **7개** 위에 선다.
+        #
+        # ⚠**순위를 안 바꾼다 — 적기만 한다.** 사건이 몇 개여야 믿을 만한지는
+        #   사양이 정할 일이고 그건 오너 결정이다(`evaluation.metrics.
+        #   drawdown_episodes` 머리의 그 ⚠ 를 여기서도 지킨다).
+        "cdarTailPoints": cdar["tail_points"],
+        "cdarTailEpisodes": cdar["tail_episodes"],
+        "cdarPointsPerEpisode": _r(cdar["points_per_episode"], 2),
+        # 왜 안 섰나 — 「낙폭이 없어서」와 「봉이 모자라서」는 **다른 사실**인데
+        # 종전에는 둘 다 같은 `None` 으로 뭉쳤다.
+        "cdarWhy": cdar["why"],
+        "cdarBars": cdar["bars"],
+        # ★**창 안의 낙폭 사건 수** — 물속에 들어가 전고점을 되찾기까지가 한 사건
+        # 이다. 채택 기준이 Calmar 로 돌아오면서(OWNER 2026-10-15) 이 수가 그
+        # 기준의 **분모를 감사하는 수**가 된다: MaxDD 는 이 N 개 중 **가장 깊은
+        # 하나**이고, 「MaxDD 는 단일관측 추정량」이라는 비판이 바로 그 말이다.
+        # N 이 작으면 Calmar 의 분모가 한 사건의 운이다 — 화면이 그 사실을 적는다.
+        # ⚠순위를 안 바꾼다(평가층의 그 ⚠ 를 그대로 진다).
+        "ddEpisodes": _dd_episodes_of(daily),
         # **연환산 수익률**(비율) — 액면 대비. Ulcer% 와 짝이라 Martin 을 무단위로
         # 다시 세울 수 있고, 평가층의 «정규화 안 한 수익률 금지» 규율이 여기서 산다.
         "annReturnPct": _r(ann / capital, 6) if (capital and capital > 0) else None,
@@ -313,15 +363,23 @@ def _r(v: float | None, nd: int) -> float | None:
     return None if v is None else round(v, nd)
 
 
-def _cdar_ratio_of(daily: list[float]) -> float | None:
-    """일별 손익 → **변동성 정규화 CDaR 비**. 산술은 평가층 한 곳이 진다.
+#: CDaR 이 안 섰을 때의 빈 답 — 모양이 하나라 부르는 쪽이 분기하지 않는다.
+_CDAR_BLANK = {"cdar_ratio": None, "tail_points": None, "tail_episodes": None,
+               "points_per_episode": None, "total_episodes": None,
+               "bars": 0, "why": None}
 
-    `evaluation.metrics` 를 부르는 이유는 정의를 두 벌 두지 않기 위해서다 — 화면이
-    고르는 기준과 평가층이 순위 매기는 기준이 갈리면, 화면이 고른 칸을 평가층이
-    다른 자로 다시 재게 된다.
 
-    평가층이 없는 환경(그 패키지를 안 깐 자리)에서는 **None** 이다 — 없는 값을
-    0 으로 채우면 그 칸이 순위의 바닥으로 서고, 그건 「못 쟀다」와 다른 말이다.
+def _dd_episodes_of(daily: list[float]) -> int | None:
+    """창 안의 **낙폭 사건 수** — 물속에 들어가 전고점을 되찾기까지가 한 사건.
+
+    ★**정규화를 안 지난다.** 사건 수는 경로의 성질이고 배수에 안 걸리므로 원
+    계열에서 그대로 센다 — CDaR 비처럼 `vol_normalize` 뒤에 두면 봉 60개가 안
+    되는 창에서 **MDD 는 서는데 그 감사는 안 서는** 자리가 생긴다(실측으로 그
+    자리를 밟았다: 14봉 창에서 `maxDrawdown` 은 나오고 `ddEpisodes` 는 None).
+
+    「사건」의 정의는 **평가층 것 하나**다(`evaluation.metrics.drawdown_episodes`)
+    — 여기서 네 줄로 다시 쓰면 두 벌이 되고, 그쪽이 「물속 구간」을 바꾸는 날
+    화면의 감사만 옛 정의로 남는다.
     """
     if len(daily) < 2:
         return None
@@ -331,8 +389,46 @@ def _cdar_ratio_of(daily: list[float]) -> float | None:
         from evaluation import metrics as ev
     except ImportError:                                   # pragma: no cover
         return None
-    scaled, _name = ev.vol_normalize(pd.Series(daily, dtype=float))
-    return ev.cdar_ratio(scaled)["cdar_ratio"]
+    return ev.drawdown_episodes(pd.Series(daily, dtype=float))["total_episodes"]
+
+
+def _cdar_of(daily_all: list[float], start: int = 0) -> dict[str, Any]:
+    """일별 손익 → **변동성 정규화 CDaR 비** + 그 비율의 자기 감사.
+
+    산술은 평가층 한 곳이 진다. `evaluation.metrics` 를 부르는 이유는 정의를 두 벌
+    두지 않기 위해서다 — 화면이 고르는 기준과 평가층이 순위 매기는 기준이 갈리면,
+    화면이 고른 칸을 평가층이 다른 자로 다시 재게 된다.
+
+    ★`daily_all` 은 **전 봉**이고 `start` 가 창의 시작이다. 정규화를 전 표본에서
+    돌린 **뒤에** 창을 자르는 것이 이 함수의 요점이다(`score` 안의 그 § — 종전에는
+    창을 먼저 잘라 앞 60봉을 잃었다).
+
+    평가층이 없는 환경(그 패키지를 안 깐 자리)에서는 **전부 None** 이다 — 없는 값을
+    0 으로 채우면 그 칸이 순위의 바닥으로 서고, 그건 「못 쟀다」와 다른 말이다.
+    """
+    if len(daily_all) - start < 2:
+        return {**_CDAR_BLANK, "why": "봉이 둘도 안 돼요"}
+    try:
+        import pandas as pd
+
+        from evaluation import metrics as ev
+    except ImportError:                                   # pragma: no cover
+        return {**_CDAR_BLANK, "why": "평가층이 없어요"}
+    scaled, _name = ev.vol_normalize(pd.Series(daily_all, dtype=float))
+    win = scaled.iloc[start:]
+    bars = int(win.notna().sum())
+    if bars < 2:
+        # 「낙폭이 없다」가 아니라 **「봉이 없다」**다. 확장창 추정기가 앞
+        # `min_obs` 봉을 못 재고 버리므로, 창이 그 안에 들어가면 이 자리가 된다.
+        return {**_CDAR_BLANK, "bars": bars,
+                "why": f"변동성을 못 재요 — 창에 쓸 수 있는 봉이 {bars}개예요"}
+    got = ev.cdar_ratio(win)
+    return {"cdar_ratio": got["cdar_ratio"], "bars": bars,
+            "tail_points": got.get("tail_points"),
+            "tail_episodes": got.get("tail_episodes"),
+            "points_per_episode": got.get("points_per_episode"),
+            "total_episodes": got.get("total_episodes"),
+            "why": got.get("why")}
 
 
 def dv_net(dv: float, cost: float, direction: int, notional: float) -> float | None:
