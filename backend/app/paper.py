@@ -776,7 +776,20 @@ def add_leg(store: dict[str, Any], *, kind: str, tenor: str, side: str,
     sid = check_series(series)
     store.setdefault("legs", [])
     store["legs"] = [*store["legs"], {
-        "n": len(store["legs"]) + 1,
+        # ★번호는 **쓰인 적 없는 다음 수**다 — `len + 1` 이 아니다 [고침 2026-10-15].
+        #
+        # 번호에 구멍이 생길 수 있다. 쓰기 라우트에 삭제는 없지만(그 규율은 그대로다)
+        # 오너가 **잘못 적은 거래를 취소**하면 데스크 상태에서 그 다리가 빠진다
+        # [OWNER 2026-10-15 — "3rd를 세틀 미스로 아예 취소했다고 생각해야하니까"].
+        # 실제로 그날 장부가 `[1, 2, 3, 4, 8, 9]` 가 됐고, 그때 `len + 1` 은 **7**
+        # 을 내준 다음 **8** 을 내준다 — 살아 있는 n=8 과 같은 번호다. 번호는
+        # 다리의 **이름**이라(`/api/paper/leg/close`·`knobs`·`trace` 가 그것으로
+        # 다리를 찾고 `_legs_fingerprint` 가 그것으로 캐시를 가른다) 둘이 같아지면
+        # 닫으라는 다리와 닫히는 다리가 달라질 수 있다.
+        #
+        # 번호를 다시 매겨 구멍을 메우는 길도 있었지만 안 고른다 — 화면에 이미 적힌
+        # 번호가 하룻밤에 딴 다리를 가리키게 된다. 번호는 한 번 쓰면 그 다리의 것이다.
+        "n": max((int(l["n"]) for l in store["legs"]), default=0) + 1,
         "kind": kind, "tenor": tenor, "side": side,
         "rateSign": SIDE_SIGN[(kind, side)],
         "entry": entry, "level": float(level),

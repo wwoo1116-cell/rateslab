@@ -2725,3 +2725,35 @@ class Test비용은거래한번에매긴다:
         # 왕복 비용의 차이만큼만 벌어진다 — 2 × 0.5bp × (1e7 − 5e6)
         assert (half["mine"]["exitPnl"] - whole["mine"]["exitPnl"]
                 == pytest.approx(2 * paper.COST_BP * 5e6))
+
+
+class Test다리번호는한번쓰면그다리의것이다:
+    """★[OWNER 2026-10-15 — "3rd를 세틀 미스로 아예 취소했다고 생각해야하니까 그냥
+    바로 4th로 가는게 맞아"].
+
+    쓰기 라우트에 삭제는 없다(그 규율은 그대로다). 그래도 잘못 적은 거래를 오너가
+    취소하면 데스크 상태에서 그 다리가 빠지고 **번호에 구멍**이 남는다. 그날 장부가
+    `[1, 2, 3, 4, 8, 9]` 가 됐고, `len + 1` 은 7 다음에 **8** 을 내준다 — 살아 있는
+    n=8 과 같은 번호다. 번호는 다리의 이름이라(닫기·조건·추적이 그것으로 찾는다)
+    둘이 같아지면 닫으라는 다리와 닫히는 다리가 달라질 수 있다.
+    """
+
+    def _add(self, st, tag):
+        paper.add_leg(st, kind="irs", tenor="2Y", side="pay", entry="2026-09-01",
+                      level=3.0, notional=1e10, dv01=1e7, tag=tag)
+
+    def test_구멍이_있어도_쓰인_번호를_다시_안_내준다(self):
+        st = dict(paper.EMPTY, legs=[])
+        for i in range(4):
+            self._add(st, f"T{i}")
+        # 가운데를 취소한 뒤에도 번호는 앞으로만 간다(그날 장부와 같은 모양).
+        st["legs"] = [l for l in st["legs"] if int(l["n"]) not in (2, 3)]
+        self._add(st, "다음")
+        ns = [int(l["n"]) for l in st["legs"]]
+        assert ns == [1, 4, 5], ns
+        assert len(ns) == len(set(ns)), "같은 번호가 둘이면 닫을 다리를 못 가린다"
+
+    def test_빈_장부는_1_에서_시작한다(self):
+        st = dict(paper.EMPTY, legs=[])
+        self._add(st, "첫")
+        assert int(st["legs"][0]["n"]) == 1
