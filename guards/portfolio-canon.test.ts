@@ -146,6 +146,53 @@ describe('자를 두 벌 만들지 않는다', () => {
     expect(p).not.toMatch(/0\.5bp['"`]/);
   });
 
+  it('비용의 자는 **한 곳에서 온다** — 주석이 아니라 import 가 지킨다', () => {
+    /* ★전수조사 둘째 판 2026-10-15. `COST_BP = 0.5` 가 **세 곳**에 따로 선언돼
+       있었다(`mrplan.py` · `paper.py` · `src/mr/api.ts`). `paper.py` 의 머리는
+       「계획면과 같은 비용이다, 다르면 두 화면이 같은 거래에 다른 돈을 매긴다」고
+       적고 있었지만 그것을 지키는 것은 **주석뿐**이었다 — 09-22 의 「캐시 열쇠를
+       다섯 자리가 각자 만들고 있었다」와 같은 모양이다.
+
+       계획면이 정본이다(격자가 안 흔드는 값이고 근거가 그쪽에 있다). 파이썬은
+       import 로 묶었고, 프런트의 기본값은 **서버에 보내는 노브**라 지울 수 없으니
+       (사용자가 바꾸는 칸이다) 여기서 **수를 대사**한다. */
+    const plan = src('backend/app/mrplan.py');
+    const pyPlan = /^COST_BP\s*=\s*([0-9.]+)/m.exec(plan);
+    expect(pyPlan, 'mrplan 이 정본이다').not.toBeNull();
+
+    /* 페이퍼 북은 **다시 적지 않는다** — 정본을 가리킨다. */
+    expect(py()).toMatch(/^COST_BP\s*=\s*mrp\.COST_BP\s*$/m);
+    expect(py()).not.toMatch(/^COST_BP\s*=\s*[0-9]/m);
+    expect(py()).toMatch(/^NOTIONAL\s*=\s*mrp\.NOTIONAL\s*$/m);
+
+    /* 프런트의 기본 노브가 정본과 **같은 수**다. */
+    const mrApi = src('src/mr/api.ts');
+    const ts = /costBp:\s*([0-9.]+)/.exec(mrApi);
+    expect(ts, '전략 창의 기본 노브').not.toBeNull();
+    expect(Number(ts![1])).toBe(Number(pyPlan![1]));
+  });
+
+  it('신선도의 자도 **한 곳에서** — 달력을 다시 구현하지 않는다', () => {
+    /* ★같은 전수조사의 둘째 결함. `universe._age` 가 `staleness.py` 를 요일로
+       다시 구현해서(휴일을 모르고 기준일이 하루 밀렸다) 설 연휴 뒤 첫 영업일에
+       완전히 신선한 자료를 「stale」이라 적었다 — Main 의 칩이 그 복제본을 읽는다.
+       `staleness.py` 머리가 이미 「엔진 것을 재사용하고 다시 구현하지 않는다」고
+       적고 있었다. */
+    const uni = src('backend/app/universe.py');
+    expect(uni).toMatch(/staleness\.dataset_freshness\(/);
+    expect(uni).not.toMatch(/cur\.weekday\(\)\s*<\s*5/);
+    /* 라벨을 나이에서 **두 번째로** 유도하던 손잡이가 아예 없다 — 그 유도가
+       문턱이 갈린 자리였다. 산문이 아니라 **선언**을 본다(설명은 남아 있어도
+       된다). 출처 한 칸은 `_src` 가 한 번에 낸다. */
+    expect(uni).not.toMatch(/def _age\(/);
+    expect(uni).not.toMatch(/def _level\(/);
+    expect(uni).toMatch(/def _src\(/);
+    /* 그리고 프런트는 달력을 TS 로 다시 쓰지 않는다(매니페스트의 엔진 영업일). */
+    const fr = src('src/lib/freshness.ts');
+    expect(fr).toMatch(/businessDaysAfter/);
+    expect(fr).toMatch(/freshnessThresholds/);
+  });
+
   it('손익 공식이 화면에도 `paper.py` 에도 **없다**', () => {
     /* 규칙 북은 엔진의 봉을 자르고 수동 북은 대사 경로를 지난다(레인 §10-10).
        두 번째 정의를 만들면 페이퍼 북과 계획면이 다른 수를 말한다. */

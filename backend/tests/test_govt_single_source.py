@@ -88,3 +88,82 @@ def test_긴_표본이_2020_이전을_그대로_잇는다(sources):
     got = b["ktb"]["3Y"]
     assert min(got) < "2015-01-01", "긴 표본이 안 이어졌다"
     assert len(got) > 3000, f"표본이 {len(got)}일뿐이다 — 긴 꼬리가 끊겼다"
+
+
+# ── 장이 쉰 날의 행은 종가가 아니다 [전수조사 2026-10-15] ─────────────────────
+#
+# 전수조사 둘째 판에서 나온 것: `mkt_irs_close` 의 휴일 복사 행을 자르는 컷이
+# `dataset._finalize` 에만 있고 이 **긴 표본** 로더에는 없었다. 그래서 IRC·IRF
+# 12계열이 전영업일의 복사본 9행을 관측으로 세고 있었다(최근 260일의 3.1%).
+#
+# BSS·FUT 가 깨끗했던 것은 규칙이 아니라 사고였다 — `legs()` 가 국고 ∩ 스왑을
+# 교집합하고 국고에 휴일 행이 없어서 떨어졌을 뿐이다. 그래서 이 시험이 재는 것은
+# 「BSS 가 깨끗한가」가 아니라 **로더가 자르는가**다.
+
+def test_컷은_달력을_다시_구현하지_않는다():
+    """★엔진 달력 하나다. 요일로 세면 달력이 둘이 되고, 그것이 같은 전수조사에서
+    잡힌 둘째 결함(`universe._age` — 휴일을 모르는 복제본)이다."""
+    import inspect
+
+    src = inspect.getsource(mrs._cut_holidays)
+    assert "_is_kr_business_day" in src
+    assert "weekday" not in src, "요일로 세면 휴일을 모르는 둘째 달력이 생긴다"
+
+
+def test_로더가_비영업일_행을_버린다():
+    """달력은 엔진 것을 그대로 쓰고, 세 가족 전부에서 버린다 — 교집합이 지켜
+    주기를 기대하지 않는다(그것이 BSS 를 지켜 준 「사고」였다)."""
+    import datetime as dt
+
+    holiday = "2026-05-05"          # 어린이날 — 엔진 달력의 비영업일
+    biz = "2026-05-04"
+    from app.engine_port import _is_kr_business_day
+    assert not _is_kr_business_day(dt.date.fromisoformat(holiday))
+    assert _is_kr_business_day(dt.date.fromisoformat(biz))
+
+    got = mrs._cut_holidays({
+        "ktb": {"3Y": {biz: 3.0, holiday: 3.0}},
+        "irs": {"3Y": {biz: 3.1, holiday: 3.1}, "10Y": {biz: 3.5, holiday: 3.5}},
+        "cd":  {biz: 3.25, holiday: 3.25},
+    })
+    assert list(got["ktb"]["3Y"]) == [biz]
+    assert list(got["irs"]["3Y"]) == [biz] and list(got["irs"]["10Y"]) == [biz]
+    assert list(got["cd"]) == [biz]
+
+
+def test_긴_표본에_비영업일_행이_하나도_없다(sources):
+    """산 SQL 로 — 세 가족 전부. 종전에는 `irs` 에 9행이 살아 있었다."""
+    import datetime as dt
+
+    from app.engine_port import _is_kr_business_day
+    b, _m, _dates = sources
+    bad: dict[str, list[str]] = {}
+    for fam in ("ktb", "irs"):
+        days = {d for ser in b[fam].values() for d in ser}
+        out = sorted(d for d in days
+                     if not _is_kr_business_day(dt.date.fromisoformat(d)))
+        if out: bad[fam] = out
+    out = sorted(d for d in b["cd"]
+                 if not _is_kr_business_day(dt.date.fromisoformat(d)))
+    if out: bad["cd"] = out
+    shown = {k: v[:5] for k, v in bad.items()}
+    assert not bad, f"휴일 행이 살아 있어요: {shown}"
+
+
+def test_커브_플라이도_깨끗하다(sources):
+    """★여기가 종전에 새던 자리다 — `combo_points` 는 스왑 ∩ 스왑이라 교집합이
+    아무것도 안 떨어뜨린다."""
+    import datetime as dt
+
+    from app import mr as mr_mod
+    from app.engine_port import _is_kr_business_day
+    checked = 0
+    for sid, _label, kind in mr_mod.SERIES:
+        if kind not in ("irc", "irf"):
+            continue
+        pts = mr_mod.series_points(sid)["points"]
+        bad = [p["t"] for p in pts
+               if not _is_kr_business_day(dt.date.fromisoformat(p["t"]))]
+        assert not bad, f"{sid} 에 휴일 행 {len(bad)}개: {bad[:5]}"
+        checked += 1
+    assert checked == 12, f"IRC 8 + IRF 4 를 다 봐야 한다 (봤다: {checked})"

@@ -30,6 +30,7 @@ import datetime as dt
 import logging
 from typing import Any, Iterable
 
+from . import staleness
 from .derive import MA_WINDOWS, moving_averages
 from .mysqldb import engine
 from sqlalchemy import text
@@ -305,24 +306,51 @@ def build_universe() -> dict[str, Any]:
         [cdates[-1] if cdates else dt.date.min, idates[-1] if idates else dt.date.min],
     )
 
-    # Freshness is computed HERE, per source, for the same reason the swap monitor
-    # computes its own: a browser that decides what "stale" means is a second opinion,
-    # and the two will disagree on the day it matters. Business days, Seoul.
-    def _age(d: dt.date | None) -> int | None:
+    # ── 신선도는 **정본 하나**가 센다 [전수조사 둘째 판 2026-10-15] ──────────
+    #
+    # 「브라우저가 stale 을 정하면 둘째 의견이 되고, 하필 중요한 날 둘이 어긋난다」
+    # 는 종전 주석의 판단은 맞다. 틀린 것은 그 뒤에 **여기서 다시 구현한 것**이다.
+    # `staleness.py` 머리가 그 규율을 이미 적어 두었다 — 「KR 영업일 판정은 얼린
+    # 엔진 것을 **재사용하고 다시 구현하지 않는다**, 그래야 지연 칩과 커브가 달력
+    # 하나를 쓴다」. 복제본은 셋이 달랐다:
+    #
+    #                   달력            기준일      문턱
+    #   staleness(정본) 엔진 영업일     today − 1   behind 1 · stale 2
+    #   여기(종전)      요일만(휴일 X)  today       current ≤1 · behind ≤3
+    #
+    # 오늘조차 안 맞았다 — 같은 (2026-10-14, 2026-10-15)에 정본 age 0 · 여기 1.
+    # 라벨이 같아 보인 것은 문턱의 `≤1` 이 off-by-one 을 **가려 주고** 있었기
+    # 때문이다(결함 둘이 서로를 덮는다). 휴일이 끼면 안 가려진다 — 설 연휴
+    # (2026-02-14~18 전부 비영업일) 뒤 첫 영업일:
+    #
+    #   asof 2026-02-13 · today 2026-02-19 → 정본 age 0 / current
+    #                                        여기(종전) age 4 / **stale**
+    #
+    # 완전히 신선한 자료에 「stale」 칩을 달고 있었고, Main 의 칩은 govt·credit·
+    # bss·futures·futuresswap 가족에서 **이 복제본**을 읽는다(`page.tsx:465`).
+    # 프런트의 `src/lib/freshness.ts` 는 같은 함정을 알고 피했다(달력을 TS 로 다시
+    # 쓰지 않고 매니페스트가 실어 주는 엔진 영업일을 센다) — 셋 중 둘은 규율을
+    # 지키고 하나만 어긋나 있었다.
+    #
+    # ⚠ 문턱이 정본으로 통일되면서 **age 2 가 `behind` → `stale`** 로 바뀐다.
+    #   그것이 정본의 뜻이다(「그 이상은 놓칠 수 없게」 — `staleness._STALE_AT`).
+    def _fresh(d: dt.date | None) -> tuple[int | None, str]:
+        """(age, level) — 정본을 그대로 부른다. 날짜가 없으면 못 잰 것이다."""
         if d is None:
-            return None
-        n, cur = 0, d
-        today = dt.date.today()
-        while cur < today:
-            cur += dt.timedelta(days=1)
-            if cur.weekday() < 5:
-                n += 1
-        return n
+            return None, "stale"
+        f = staleness.dataset_freshness(d)
+        return f["ageBusinessDays"], f["level"]
 
-    def _level(age: int | None) -> str:
-        if age is None:
-            return "stale"
-        return "current" if age <= 1 else ("behind" if age <= 3 else "stale")
+    def _src(table: str, d: dt.date | None) -> dict[str, Any]:
+        """출처 한 칸 — 날짜·나이·라벨을 **한 번에** 낸다.
+
+        ⚠종전에는 `_age(d)` 와 `_level(_age(d))` 가 따로 있어서 같은 날짜를
+        칸마다 두 번 재고, 라벨은 나이에서 **두 번째로** 유도되고 있었다. 그
+        유도가 정본과 문턱이 갈린 바로 그 자리다. 한 번만 묻는다.
+        """
+        age, level = _fresh(d)
+        return {"table": table, "asof": d.isoformat() if d else None,
+                "ageBusinessDays": age, "level": level}
 
     fut_asof = None
     for code in futures_raw:
@@ -338,38 +366,15 @@ def build_universe() -> dict[str, Any]:
         "asof": asof.isoformat(),
         "rows": rows,
         "sources": {
-            "govt": {
-                "table": "sim_portfolio.credit_matrix",
-                "asof": cdates[-1].isoformat() if cdates else None,
-                "ageBusinessDays": _age(cdates[-1] if cdates else None),
-                "level": _level(_age(cdates[-1] if cdates else None)),
-            },
-            "credit": {
-                "table": "sim_portfolio.credit_matrix",
-                "asof": cdates[-1].isoformat() if cdates else None,
-                "ageBusinessDays": _age(cdates[-1] if cdates else None),
-                "level": _level(_age(cdates[-1] if cdates else None)),
-            },
-            "bss": {
-                "table": "credit_matrix × mkt_irs_close",
-                "asof": asof.isoformat(),
-                "ageBusinessDays": _age(asof),
-                "level": _level(_age(asof)),
-            },
-            "futures": {
-                "table": "infomax.daily_ktb_price / daily_lktb_price",
-                "asof": fut_asof.isoformat() if fut_asof else None,
-                "ageBusinessDays": _age(fut_asof),
-                "level": _level(_age(fut_asof)),
-            },
+            "govt": _src("sim_portfolio.credit_matrix",
+                         cdates[-1] if cdates else None),
+            "credit": _src("sim_portfolio.credit_matrix",
+                           cdates[-1] if cdates else None),
+            "bss": _src("credit_matrix × mkt_irs_close", asof),
+            "futures": _src("infomax.daily_ktb_price / daily_lktb_price", fut_asof),
             # 두 다리 중 **늦은 쪽**이 이 행의 나이다 — 둘을 평균 내면 한쪽이
             # 멈춘 날 화면이 조용히 신선해 보인다(이 파일 위 주석의 그 결함).
-            "futuresswap": {
-                "table": "daily_ktb_price × mkt_irs_close",
-                "asof": fsw_asof.isoformat() if fsw_asof else None,
-                "ageBusinessDays": _age(fsw_asof),
-                "level": _level(_age(fsw_asof)),
-            },
+            "futuresswap": _src("daily_ktb_price × mkt_irs_close", fsw_asof),
         },
         # Named so the screen can say WHY a class is empty rather than just being bare.
         "absent": [

@@ -118,7 +118,72 @@ def _bundle(_watermark_key: str) -> dict[str, Any]:
             irs.setdefault(want_i[item], {})[day] = float(val)
         elif cat == CAT_CD and item == CD_ITEM:
             cd[day] = float(val)
-    return {"ktb": _merge_govt(ktb), "irs": irs, "cd": cd}
+    return _cut_holidays({"ktb": _merge_govt(ktb), "irs": irs, "cd": cd})
+
+
+def _cut_holidays(b: dict[str, Any]) -> dict[str, Any]:
+    """장이 쉰 날의 행을 **버린다** — 그것은 종가가 아니다 [전수조사 2026-10-15].
+
+    ## 컷은 이미 있었다. 이 로더에만 없었다
+
+    `mkt_irs_close` 가 휴일에 **전영업일 커브를 복사한 행**을 만드는 성질은
+    2026-10-07 에 진단되고 `dataset._finalize` 에서 잘렸다. 그 주석이 결과까지
+    적어 두었다 — 「복사본이 관측 하나로 세어져 수익률 0 인 가짜 거래일이 역사에
+    끼고, **그 위에서 변동성·백테스트가 돈다**」.
+
+    그 컷은 `dataset` 로더에만 있었고, MR·Strategy·Portfolio 가 읽는 이 **긴
+    표본**에는 없었다. 실측(2026-10-15):
+
+        bundle["irs"]  3,404일 · 휴일 행 **9** (2025-06-03 ~ 2026-08-22)
+        bundle["ktb"]  3,388일 · 휴일 행  0
+        최근 260일     IRC·IRF 에 8행 = 관측의 3.1% · 24/24 가 전영업일의 복사본
+
+    9개는 `dataset.py` 주석이 「보충 출처에도 9개 있다」고 적은 **바로 그 9개**다.
+    한 로더는 버리고 다른 로더는 그대로 내주고 있었다.
+
+    ## BSS·FUT 가 깨끗했던 것은 규칙이 아니라 **사고**다
+
+    `legs()` 는 국고 ∩ 스왑을 교집합하고 국고에 휴일 행이 없어서 떨어진다.
+    `combo_points()` 는 스왑 ∩ 스왑이라 **남는다**. 교집합이 지켜 준 것이지
+    아무도 자르지 않았다 — 그래서 컷이 교집합 **앞**, 로더에 있어야 한다.
+
+    ## 산 결과 — 살아 있는 3rd Trade(IRC-1Y-3Y · 60/2.5/1.0/2.5)
+
+                      z      중심선      σ      청산선     손절선   손절까지
+        있는 채로   −2.403  38.6542  5.1618  33.4924  25.7497  0.50bp
+        컷          −2.359  38.7708  5.3075  33.4634  25.5021  0.75bp
+
+    판정(`hit`)은 그날 양쪽 다 `None` 이라 뒤집히지 않았다. 그러나 문까지의
+    거리 **3분의 1이 유령 행에서 왔다** — 같은 화면이 14:19 에 「손절까지
+    0.06bp 남음」을 적고 있었고, 그 거리에서는 0.25bp 가 판정을 가른다.
+
+    달력은 **엔진 것 하나뿐이다**(`engine_port._is_kr_business_day`) — 여기서
+    요일로 다시 세면 달력이 둘이 되고, 그것이 같은 전수조사에서 잡힌 둘째 결함
+    (`universe._age`)이다. 지연 import 인 이유는 `dataset.py` 의 그것과 같다.
+    """
+    from .engine_port import _is_kr_business_day          # 지연 import
+
+    def ok(day: str) -> bool:
+        return _is_kr_business_day(dt.date.fromisoformat(day))
+
+    dropped: set[str] = set()
+    for fam in ("ktb", "irs"):
+        for t, ser in b[fam].items():
+            bad = [d for d in ser if not ok(d)]
+            dropped.update(bad)
+            for d in bad:
+                del ser[d]
+    for d in [d for d in b["cd"] if not ok(d)]:
+        dropped.add(d)
+        del b["cd"][d]
+    if dropped:
+        shown = ", ".join(sorted(dropped)[:6])
+        if len(dropped) > 6:
+            shown += f", … (+{len(dropped) - 6})"
+        log.warning("[mrseries] 비영업일 행 %d일을 버렸어요 (%s) — 휴일 행은 "
+                    "전영업일 커브의 복사본이라 수익률 0 인 가짜 거래일이 "
+                    "역사에 낀다", len(dropped), shown)
+    return b
 
 
 #: 민평이 국고를 갖는 첫날. 그 앞은 긴 표본만 있고, 그 뒤는 민평이 정본이다.
