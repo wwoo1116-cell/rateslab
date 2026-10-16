@@ -335,3 +335,58 @@ class TestTheKrdTableKeepsBondTenors:
         body = _run(client, [p])
         cols = [t for t in body["pvbpSensitivity"][0]["tenors"] if t != "합계"]
         assert "30Y" not in cols
+
+
+# ── ⑤ 두 표가 **같은 요일에** 튄다 [OWNER 2026-08-11 · 전수조사 2026-10-16] ────
+# 「결제일 기준이 아니라 평가일 기준으로 계산하기 때문에, 금요일날 토일월의
+# 캐리롤다운이 반영되어야 … 월요일에 값이 튀는 게 아니라 금요일에 튀어야」.
+# 그 규약은 백테스트 recon(`app/backtest._book_recon`)과 이 응답의 채권 표가
+# 지키고 있었는데 **스왑 표만** 한 행 앞서 있었다(궤적이 결제일 색인이라 차분이
+# 다음 행의 밤이었다 — `recon.py::_fwd_theta` 의 그 ★). 요일로 드러난 결함이라
+# 요일로 잰다: 세 표면이 한 기준이라는 말이 참인지 한 응답 안에서 확인한다.
+class TestBothTablesJumpOnTheSameWeekday:
+    """주말 사흘치는 **금요일** 행에 선다 — 스왑 표도, 채권 표도."""
+
+    @staticmethod
+    def _by_weekday(rows, pick):
+        import collections
+        import datetime as _dt
+
+        agg = collections.defaultdict(list)
+        for r in rows:
+            wd = _dt.date.fromisoformat(r["date"]).strftime("%a")
+            agg[wd].append(pick(r))
+        # **크기**로 잰다 — 이 픽스처의 채권 줄은 조달이 캐리보다 커서 순액이
+        # 음수다(`carry` 는 조달 차감 전이라는 그 각주). 부호로 최대를 찾으면
+        # 「사흘치가 어디 섰나」가 아니라 「어느 날이 덜 아팠나」를 재게 된다.
+        return {wd: abs(sum(v) / len(v)) for wd, v in agg.items() if v}
+
+    def test_the_swap_table_jumps_on_friday(self, client):
+        body = _run(client, [dict(SWAP), dict(BOND)])
+        m = self._by_weekday(
+            _swap_rows(body),
+            lambda r: (r.get("carryPnl") or 0) + (r.get("rolldownPnl") or 0),
+        )
+        # 금요일이 가장 크고 목요일보다 뚜렷이 크다. ★배수를 3 으로 조이지
+        # 않는다 — 30일 창에 휴일이 끼면 그 앞 영업일(목요일인 주도 있다)이
+        # 이틀·사흘을 지므로, 「주말은 금요일이 진다」는 명제를 **요일 순위**로
+        # 재는 것이 맞다(뒤집히면 이 둘이 다 빨개진다: 종전에는 목요일이 최대였다).
+        assert m["Fri"] == max(m.values()), m
+        assert m["Fri"] > 1.3 * m["Thu"], m
+
+    def test_the_bond_table_jumps_on_friday(self, client):
+        body = _run(client, [dict(SWAP), dict(BOND)])
+        m = self._by_weekday(
+            _bond_rows(body),
+            lambda r: (r.get("carry") or 0) + (r.get("rolldown") or 0) + (r.get("funding") or 0),
+        )
+        assert m["Fri"] == max(m.values()), m
+        assert m["Fri"] > 1.3 * m["Thu"], m
+
+    def test_the_first_row_books_no_theta_and_the_last_one_books_its_own_night(self, client):
+        """D+0 은 거래일→발효일 한 밤이라 **0** 이고(스왑이 아직 시작 전 —
+        백테스트의 `startup` 과 같은 자리), 마지막 행은 자기 밤을 진다(이월되는
+        몫 — 열린 포지션의 YTD 가 같은 크기만큼 앞서가는 그 자리)."""
+        rows = _swap_rows(_run(client, [dict(SWAP), dict(BOND)]))
+        assert rows[0]["thetaPnl"] == 0 and rows[0]["carryPnl"] == 0
+        assert rows[-1]["thetaPnl"] != 0

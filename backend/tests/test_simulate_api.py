@@ -94,6 +94,24 @@ REPRESENTATIVE_REQUEST = json.loads(
 #
 # 골든 파일도 `irsDailyReconciliation` **한 키만** 갈아 끼웠다 — 나머지가 표류할
 # 자리를 만들지 않는다.
+# [RE-PINNED 2026-10-16 — 전수조사 셋째 판] 스왑 표의 **세타 귀속이 한 행 당겨졌다**
+# (`recon.py::_fwd_theta`). 궤적이 결제일(T+1) 색인이라 종전 차분은 «다음 행의 밤»
+# 이었고, 그래서 주말 사흘치가 금요일이 아니라 **목요일** 행에 섰다(이 대표 요청
+# 실측: 목 43,345 대 나머지 ~11,000 — 같은 응답의 채권 표는 금 695,304 로 제대로
+# 섰다). [OWNER 2026-08-11] 「결제일 기준이 아니라 평가일 기준 … 금요일에 튀어야」
+# 와 백테스트 recon 이 둘 다 금요일이므로 시뮬의 스왑 표만 어긋나 있었다.
+# blast-radius 를 기계로 센 변경 범위(= 골든 diff 와 정확히 같은 211 자리):
+#
+#   움직인 필드 — `irsDailyReconciliation` 의 thetaPnl(61) · totalActual(61) ·
+#                 rolldownPnl(61) · carryPnl(28). **그 밖의 모든 키는 딥-동일**
+#                 (headline·chartData·decomposition·채권/선물 표·pvbp 포함 —
+#                 갈아 끼우기 전에 그 사실을 단언하고 바꿨다).
+#   불변       — 네 열의 **세로합**: theta 1,131,257 · carry 1,957,744 ·
+#                 rolldown −826,487 · totalActual 26,167,884. 이동이라 망원경
+#                 합이 그대로다. 그래서 `finalSwap` 핀도 바이트 동일이다.
+#   날짜 끝    — D+0 행의 세타가 **0** 이 됐다(거래일→발효일 한 밤은 스왑이 시작
+#                 전이라 쌓이는 것이 없다 — 백테스트의 `startup` 과 같은 자리),
+#                 마지막 행이 자기 밤(4,607)을 지게 됐다(종전 0).
 GOLDEN_RESPONSE = json.loads(
     (DATA / "simulate_golden_dv01_response.json").read_text(encoding="utf-8")
 )

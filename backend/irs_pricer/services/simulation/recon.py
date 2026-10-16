@@ -199,7 +199,7 @@ def build_irs_daily_recon(
 
     # ── 세타 귀속: 평가일 기준 **포워드** [OWNER, 2026-08-11 — "금요일날
     # 토일월의 캐리롤다운이 반영되어야 … 금요일에 튀어야" · "같이 맞춰"] ──
-    # 행 t 의 캐리/롤다운/세타 = (t → 다음 영업일) 구간의 궤적 증분 — 금요일
+    # 행 t 의 캐리/롤다운/세타 = (t → 다음 영업일) 구간의 **그 행의** 몫 — 금요일
     # 행이 주말 사흘치를 싣는다. 평가(마켓무브)는 여전히 전일 대비(백워드,
     # 실제 증분 − 백워드 세타). 그날 손익(totalActual)은 평가 + 포워드 세타
     # — 백테스트 recon(app/backtest.py _book_recon)과 같은 데스크 관행이고,
@@ -210,11 +210,33 @@ def build_irs_daily_recon(
     _cals = [c for (_d, c, _dt) in bizday_schedule]
 
     def _fwd_theta(j: int) -> tuple[int, int, int]:
-        """행 j 의 (theta, carry, rolldown) — (cal_j → cal_{j+1}) 증분, 라운딩
-        잔차로 가산성 보존. 마지막 행은 (0, 0, 0)."""
-        if j + 1 >= len(_cals):
+        """행 j 의 (theta, carry, rolldown) — **그 행의 밤** 몫.
+
+        ★2026-10-16 (프로덕트 전수조사 셋째 판) — 종전에는 `(cal_j → cal_{j+1})`
+        증분이었다. 그런데 이 궤적들은 **결제일(T+1) 기준**이다
+        (`carry_split.base_cash_carry_path` 의 `settle_d = next_kr_business_day(...)`
+        와 엔진의 세타 궤적이 같은 기준): 색인 `cal_j` 의 값이 이미 「영업일
+        d_{j+1} 시점의 액크루얼」이라, 그 차분은 **다음 행의 밤**이었다.
+
+        요일이 그것을 드러냈다 — 주말 사흘치가 금요일이 아니라 **목요일** 행에
+        섰다(100억 3Y 0bp 90일 실측: 목 평균 609,606 대 나머지 ~225,000).
+        [OWNER 2026-08-11] 규약은 「결제일 기준이 **아니라** 평가일 기준 … 금요일에
+        튀어야」이고, 백테스트(`app/backtest._book_recon`)와 **이 응답의 채권 표**가
+        둘 다 금요일에 선다. 시뮬의 스왑 표 하나만 어긋나 있었고, 이 함수의 머리
+        주석은 그 규약을 인용하면서 반대로 내고 있었다.
+
+        수리 = **한 행 당기기**. 행 j 의 밤 = V(d_{j+1}) − V(d_j)
+        = `A[cal_j] − A[cal_{j-1}]` (A = 그 궤적, cal_{-1} = 0).
+
+        ★합은 보존된다 — 이동이라 망원경 합이 그대로 `A[cal_{m-1}]` 이다. 그래서
+        헤드라인·차트·일별 분해·세로합(`test_simulate_mixed_recon` 의 그 단언)은
+        **한 자도 안 움직이고** 표의 날짜만 맞는다. 첫 행(j=0)은 `A[cal_0] − 0`
+        (= 발효일의 밤)이고, D+0 앵커 행은 **0** 이다(아래 그 자리의 주석).
+        """
+        if j >= len(_cals):
             return 0, 0, 0
-        a, b = _cals[j], _cals[j + 1]
+        a = _cals[j - 1] if j >= 1 else 0
+        b = _cals[j]
         theta = round(float(irs_fm_mtm_theta[b] - irs_fm_mtm_theta[a]))
         carry = (
             round(float(irs_fm_carry_cash[b] - irs_fm_carry_cash[a]))
@@ -224,14 +246,14 @@ def build_irs_daily_recon(
         return theta, carry, theta - carry
 
     irs_daily_recon: list[dict] = []
-    # D+0 앵커 행 — 위 주석 참조. (0 → 첫 영업일의 세타)
+    # D+0 앵커 행 — 위 주석 참조. 세타는 **0** 이다 [2026-10-16]: 이 행의 밤은
+    # 거래일 → 발효일(T+1) 한 밤이고, 스왑은 아직 시작하지 않아 쌓이는 것이
+    # 없다(백테스트의 `startup` 과 같은 자리 — 「평가도 캐리도 아닌 한 밤」).
+    # 종전에는 여기가 `A[cal_0] − A[0]`(= 발효일의 밤)을 싣고 있었고, 그래서
+    # 표 전체가 한 행 앞서 있었다. 그 몫은 이제 첫 영업일 행이 진다.
     if _cals:
-        _t0 = round(float(irs_fm_mtm_theta[_cals[0]] - irs_fm_mtm_theta[0]))
-        _c0 = (
-            round(float(irs_fm_carry_cash[_cals[0]] - irs_fm_carry_cash[0]))
-            if irs_fm_carry_cash is not None
-            else 0
-        )
+        _t0 = 0
+        _c0 = 0
         irs_daily_recon.append({
             "date":         base_date.isoformat(),
             "day":          0,
