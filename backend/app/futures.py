@@ -322,6 +322,23 @@ def instrument_label(kind: str, tenor: str) -> str:
     return (FUT_LABELS if kind == KIND_FUT else FSW_LABELS)[tenor]
 
 
+def _swap_par_at(dataset, tenor: str, d: dt.date) -> float | None:
+    """그 날(또는 직전 거래일) IRS par(%) — FSW 의 청산 수준용.
+
+    `backtest._quoted_value` 와 같은 읽기지만 색인이 **선물 달력의 날짜**라
+    여기서 `dataset.dates` 로 옮겨 앉는다. 없는 테너·빈 칸은 `None` 이고,
+    부르는 쪽이 줄표로 떨어진다(공란 정책 — 0 이라고 말하지 않는다).
+    """
+    vals = dataset.series.get(tenor)
+    if not vals:
+        return None
+    i = _index_on_or_before(dataset.dates, d)
+    if i < 0:
+        return None
+    v = vals[i]
+    return None if v is None else float(v)
+
+
 def implied_at_index(fs: FuturesSeries, i: int, tenor: str) -> float:
     """그 날의 내재금리(%) — **벤더가 낸 값을 읽는다.**
 
@@ -679,11 +696,20 @@ def run_one(
         "matured": bool(swap_rec and swap_rec.get("matured")),
         "legs": legs,
         # 표시값 = 내재금리(%) — 스왑 아웃라이트의 % 표기와 같은 축.
-        # FSW 는 스프레드(bp) = IRS 진입 par − 내재 [부호 규약 2026-09-22].
+        # FSW 는 스프레드(bp) = IRS par − 내재 [부호 규약 2026-09-22].
+        # ★청산 수준도 **같은 식으로 센다** [전수조사 2026-10-16]: 종전에 FSW 의
+        # `exitValue` 는 통째로 `None` 이라 진입 −9.85bp 옆에 줄표가 섰다. 그런데
+        # 같은 수가 MR 보드의 `FSW-3Y` 에 −7.8bp 로 **이미 서 있었고**(그쪽도
+        # IRS par − 벤더 내재), 두 항 다 이 함수 안에 있다. 없는 수가 아니라
+        # 안 센 수였다 — 진입만 세고 청산을 안 세면 「얼마에서 얼마로」가 반쪽이다.
         "entryValue": round(y_entry, 4) if pos.kind == KIND_FUT else round(
             (swap_rec["legs"][0]["entryRate"] - y_entry) * 100.0, 2
         ),
-        "exitValue": round(y_exit, 4) if pos.kind == KIND_FUT else None,
+        "exitValue": round(y_exit, 4) if pos.kind == KIND_FUT else (
+            None if _swap_par_at(dataset, pos.tenor, exit_date) is None else round(
+                (_swap_par_at(dataset, pos.tenor, exit_date) - y_exit) * 100.0, 2
+            )
+        ),
         "pnl": round(last, 0),
         # 성분: 선물 다리는 전부 평가다(캐리·롤·개시 없음 — 모듈 doc). FSW 는
         # 스왑 다리의 4분해가 그대로 얹힌다 — 합이 pnl 로 닫힌다.

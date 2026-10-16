@@ -78,3 +78,18 @@ def test_env_regex_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SAURON_ALLOWED_ORIGIN_REGEX", r"\Ahttps://only-this\.example\.com\Z")
     assert cors.origin_allowed("https://only-this.example.com")
     assert not cors.origin_allowed("https://rateslab.vercel.app")
+
+
+# ── 공개 포트에 **죽은 라우트를 남기지 않는다** [전수조사 2026-10-16] ──────────
+# 이 파일이 지는 명제와 같은 자리다: 배포되면 이 백엔드는 Funnel 로 공개되고
+# 인증이 없다. `irs_pricer.api.routers.positions` 는 v1 업로드 화면의
+# `data/Portfolio Data.xlsx` 파서인데 v2 엔 그 워크북도 그 화면도 없고, 프런트·
+# 시험 어디서도 안 부르면서 404 본문에 **서버 절대경로**를 실어 보냈다.
+# 모듈은 v1 대사용으로 남기고 **꽂지 않는 것**이 결정이라, 다시 꽂히는 날을
+# 여기서 잡는다.
+def test_dead_v1_positions_routes_are_not_mounted() -> None:
+    from app.main import app
+
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert "/api/positions" not in paths
+    assert "/api/positions/summary" not in paths

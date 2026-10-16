@@ -411,6 +411,30 @@ class TestFsw:
         assert own[DATES[-1]] == pytest.approx(expected, rel=0.05)
         assert own[DATES[-1]] < 0
 
+    def test_exit_level_is_measured_the_same_way_as_entry(self):
+        """FSW 의 **청산 수준**도 `IRS par − 내재`(bp) 다 [전수조사 2026-10-16].
+
+        종전에는 `exitValue` 가 통째로 `None` 이라 시트의 FSW 줄이 「진입 −9.85bp
+        → 줄표」였다. 같은 수가 MR 보드의 `FSW-3Y` 에 이미 서 있었고(그쪽도 같은
+        식) 두 항이 다 그 함수 안에 있었으니 **없는 수가 아니라 안 센 수**였다.
+        이 시험이 지는 것은 「청산도 진입과 **같은 식**으로 센다」 하나다 — 그래야
+        시트의 「얼마에서 얼마로」가 한 자로 읽힌다.
+        """
+        p0 = 104.0
+        y0 = implied_yield(p0, 3)
+        p1 = synth_price(y0 + 0.10, 3)              # +10bp
+        path = [p0] * 2 + [p1] * (len(DATES) - 2)
+        fut = _futdata(path)
+        ds = _dataset()
+        pos = ft.as_position("FSW:3Y", 1, 1e10, DATES[0], None)
+        rec, _own, _prev = ft.run_one(fut, ds, pos, DATES)
+        y_exit = implied_yield(p1, 3)
+        assert rec["exitValue"] == pytest.approx(round((FLAT - y_exit) * 100.0, 2))
+        assert rec["entryValue"] == pytest.approx(round((FLAT - y0) * 100.0, 2))
+        # 내재가 10bp 올랐으니 스프레드(IRS − 내재)는 10bp 줄어 있어야 한다 —
+        # 두 칸이 같은 자로 섰는지는 **차이**가 말한다.
+        assert rec["entryValue"] - rec["exitValue"] == pytest.approx(10.0, abs=0.02)
+
     def test_recon_puts_both_legs_in_the_futures_table(self):
         """FSW 의 IRS 다리는 **선물 표 안에 다리로** 선다 [OWNER 2026-09-04].
 

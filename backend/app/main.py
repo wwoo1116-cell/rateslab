@@ -70,7 +70,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from irs_pricer.api.routers import credit_curve, market_data, positions, simulate
+from irs_pricer.api.routers import credit_curve, market_data, simulate
 from irs_pricer.config import DATA_DIR
 from irs_pricer.core import data_watch, ttl_cache
 from irs_pricer.core.errors import CurveBootstrapError
@@ -4260,10 +4260,15 @@ def paper_close(body: dict) -> dict:
 #     market_data   /api/market-data/range  /api/market-data/live
 #                   /api/market-data/{valuation_date}
 #     credit_curve  /api/credit-curve/taxonomy  /api/credit-curve/series
-#     positions     /api/positions  /api/positions/summary
 #     simulate      /api/simulate
+#
+# ★`irs_pricer.api.routers.positions` 는 **안 꽂는다** [전수조사 2026-10-16].
+# v1 의 업로드 화면이 쓰던 `data/Portfolio Data.xlsx` 파서인데 v2 에는 그 워크북도
+# 그 화면도 없다 — 프런트·시험 어디서도 안 부르고(`grep api/positions` = 0),
+# 부르면 404 본문에 **서버 절대경로**를 실어 보냈다. 이 포트는 Funnel 로 열려
+# 있는 자리라 경로를 흘리는 404 를 남겨 둘 이유가 없다. v1 리포의 앱은 자기
+# 라우터를 그대로 들고 있으므로 모듈은 지우지 않는다(대사용).
 app.include_router(router)
 app.include_router(market_data.router)
 app.include_router(credit_curve.router)
-app.include_router(positions.router)
 app.include_router(simulate.router)

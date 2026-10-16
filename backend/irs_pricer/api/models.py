@@ -28,10 +28,19 @@ from ..core.market_data import MarketSnapshot, RateQuote
 #
 # NOT for percent-convention fields (BondCashflowIn.coupon_rate) or basis
 # points (funding_spread_bp).
-DecimalRate = Annotated[float, Field(ge=-0.10, le=0.30)]
+DecimalRate = Annotated[float, Field(
+    ge=-0.10, le=0.30,
+    # ★단위를 **스키마가 말한다** [전수조사 2026-10-16]: 경계만 있으면 OpenAPI
+    # 를 읽는 쪽은 0.0387 이 3.87%인지 3.87bp 인지 모른다 — 그 모름이 이 리포가
+    # 두 번 밟은 함정이다(모듈마다 금리 단위가 달랐다, 2026-09-22).
+    description="소수 금리 — 0.0387 = 3.87% (퍼센트·bp 아님)",
+)]
 
 # Same ceiling, but keeps an existing `gt=0` where a field already had one.
-PositiveDecimalRate = Annotated[float, Field(gt=0, le=0.30)]
+PositiveDecimalRate = Annotated[float, Field(
+    gt=0, le=0.30,
+    description="소수 금리 — 0.0387 = 3.87% (퍼센트·bp 아님)",
+)]
 
 
 class RateQuoteIn(BaseModel):

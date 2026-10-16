@@ -98,8 +98,20 @@ def _grid_of(cells: list[dict]):
 
 
 def _cell(**kw) -> dict:
+    """격자 칸 하나. ★점수 칸의 이름은 **`mrp.PLAN_RANK_KEY` 가 정한다**
+    [2026-10-16].
+
+    10-15 에 채택 기준이 `cdarRatio` → `calmar` 로 옮겨갔는데 이 파일만 옛 글자를
+    철자로 박아 두어 **7건이 빨간 채**였다(`pick_cell` 이 후보를 하나도 못 찾아
+    `None` 을 주고 `None[...]` 에서 터진다). 같은 날 `test_paper.py` 가 바로 이
+    함정을 밟고 상수에 꽂는 쪽으로 고쳤는데(`paper.rank_cells` 는 처음부터 상수를
+    따라갔다) 이 파일이 빠졌다 — **시험이 결정을 못 따라가면 그 시험은 결정을
+    막는 쪽이 된다.** 그래서 점수는 `score=` 로 주고 이름은 상수가 짓는다.
+    """
     base = {"lookback": 60, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 2.5,
-            "entryMode": "level", "cdarRatio": None}
+            "entryMode": "level", mrp.PLAN_RANK_KEY: None}
+    if "score" in kw:
+        base[mrp.PLAN_RANK_KEY] = kw.pop("score")
     base.update(kw)
     return base
 
@@ -109,18 +121,18 @@ class TestPickCell:
     def test_못_잰_칸은_후보가_아니다(self):
         """`None` 은 「그 구간에서 안 선다」이지 「0 이다」가 아니다 — 0 으로 채워
         정렬하면 못 잰 칸이 한복판에 끼어든다(화면 `rankCells` 와 같은 규약)."""
-        cells = [_cell(cdarRatio=None, entryZ=1.5), _cell(cdarRatio=-0.4, entryZ=2.0),
-                 _cell(cdarRatio=None, entryZ=2.5)]
+        cells = [_cell(score=None, entryZ=1.5), _cell(score=-0.4, entryZ=2.0),
+                 _cell(score=None, entryZ=2.5)]
         assert mrp.pick_cell(cells)["entryZ"] == 2.0
 
     def test_클수록_이긴다(self):
-        cells = [_cell(cdarRatio=0.2, entryZ=1.5), _cell(cdarRatio=1.7, entryZ=2.0),
-                 _cell(cdarRatio=0.9, entryZ=2.5)]
+        cells = [_cell(score=0.2, entryZ=1.5), _cell(score=1.7, entryZ=2.0),
+                 _cell(score=0.9, entryZ=2.5)]
         assert mrp.pick_cell(cells)["entryZ"] == 2.0
 
     def test_동점은_격자_차례가_이긴다(self):
         """같은 자료에서 두 번 부르면 같은 칸이 나와야 한다 — 엄격한 `>` 비교."""
-        cells = [_cell(cdarRatio=1.0, stopZ=2.5), _cell(cdarRatio=1.0, stopZ=3.0)]
+        cells = [_cell(score=1.0, stopZ=2.5), _cell(score=1.0, stopZ=3.0)]
         assert mrp.pick_cell(cells)["stopZ"] == 2.5
 
     def test_후보가_없으면_None(self):
@@ -128,13 +140,15 @@ class TestPickCell:
         assert mrp.pick_cell([]) is None
 
     def test_기준을_바꿔_고를_수_있다(self):
+        """부르는 쪽이 기준을 주면 그 글자로 고른다 — 기본값이 어느 쪽이든."""
         cells = [_cell(cdarRatio=2.0, calmar=0.1, entryZ=1.5),
                  _cell(cdarRatio=0.1, calmar=2.0, entryZ=2.5)]
         assert mrp.pick_cell(cells, "calmar")["entryZ"] == 2.5
+        assert mrp.pick_cell(cells, "cdarRatio")["entryZ"] == 1.5
 
     def test_룩백은_정수다(self):
         """엔진이 색인으로 쓴다 — 실수로 넘어가면 `range` 에서 터진다."""
-        k = mrp.knobs_of(_cell(lookback=120.0, cdarRatio=1.0))
+        k = mrp.knobs_of(_cell(lookback=120.0, score=1.0))
         assert k["lookback"] == 120 and isinstance(k["lookback"], int)
         assert set(k) == set(mrp.KNOB_KEYS)
 
@@ -300,10 +314,10 @@ class TestBuildSeries:
             vals_u = [v / 100.0 for v in vals_u]
         leg_of, calls, dates, vals = _leg_of(sid, "BSS 3Y", kind, unit, vals_u)
         grid_of, seen = _grid_of(cells if cells is not None else
-                                 [_cell(cdarRatio=0.4, lookback=20, entryZ=2.0),
-                                  _cell(cdarRatio=1.9, lookback=60, entryZ=2.5,
+                                 [_cell(score=0.4, lookback=20, entryZ=2.0),
+                                  _cell(score=1.9, lookback=60, entryZ=2.5,
                                         exitZ=1.0, stopZ=3.0, entryMode="touch"),
-                                  _cell(cdarRatio=None, lookback=120)])
+                                  _cell(score=None, lookback=120)])
         out = mrp.build_series(sid, leg_of=leg_of, grid_of=grid_of)
         return out, calls, seen, dates, vals
 
@@ -324,7 +338,7 @@ class TestBuildSeries:
         out, _c, _s, _d, _v = self._built()
         cond = out["cond"]
         assert cond["lookback"] == 60 and cond["entryZ"] == 2.5
-        assert cond["basis"] == "cdarRatio" and cond["span"] == mrp.PLAN_SPAN
+        assert cond["basis"] == mrp.PLAN_RANK_KEY and cond["span"] == mrp.PLAN_SPAN
         assert cond["cells"] == 3 and cond["fallback"] is None
 
     def test_격자가_순위를_못_매기면_기본_조건으로_떨어지고_사유를_적는다(self):
@@ -413,7 +427,7 @@ class TestBuildSeries:
         vals_u[-1] = vals_u[-1] - 12.0            # |z| ≥ 2 → 그 봉에 진입
         leg_of, calls, _d, vals = _leg_of("BSS-3Y", "BSS 3Y", "bss", "bp", vals_u)
         # 손절을 아주 멀리 둬서 같은 봉에 손절로 안 닫히게 한다(우선순위: 손절 > 청산).
-        grid_of, _seen = _grid_of([_cell(cdarRatio=1.0, lookback=60, entryZ=2.0,
+        grid_of, _seen = _grid_of([_cell(score=1.0, lookback=60, entryZ=2.0,
                                          exitZ=0.5, stopZ=99.0, entryMode="level")])
         out = mrp.build_series("BSS-3Y", leg_of=leg_of, grid_of=grid_of)
         pos = out["position"]
@@ -500,7 +514,7 @@ class TestBuildPlan:
         got = mrp.build_plan([], total=25, excluded=[], building=True)
         p = got["params"]
         assert p["span"] == "1y" and p["months"] == 12
-        assert p["rankKey"] == "cdarRatio" and p["gridSpan"] == p["span"]
+        assert p["rankKey"] == mrp.PLAN_RANK_KEY and p["gridSpan"] == p["span"]
         assert p["costBp"] == 0.5 and p["notional"] == 1_000_000.0
         assert got["rows"] == [] and got["watch"] is None
 

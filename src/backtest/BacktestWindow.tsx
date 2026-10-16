@@ -1432,9 +1432,11 @@ export function BacktestWindow({
                       {fmtLevel(p.exitValue, p.legs.length === 1 ? '%' : 'bp')}
                     </TextCaption>
                   ) : p.kind === 'futures' ? (
-                    /* 표시값 = 내재금리(FUT, %) 또는 진입 스프레드(FSW, bp) —
-                       서버 기록 그대로(entryValue). FSW 의 청산 스프레드는
-                       서버가 안 실어 — 가 선다(모르는 값). */
+                    /* 표시값 = 내재금리(FUT, %) 또는 스프레드(FSW, bp) — 서버
+                       기록 그대로다. ★FSW 의 청산 스프레드도 2026-10-16 부터
+                       **서버가 싣는다**(진입과 같은 식 `IRS par − 내재`, 전수조사
+                       셋째 판). 종전에는 통째로 null 이라 — 가 섰다. 호가가 없는
+                       날은 여전히 null 이고 그때만 — 다(공란 정책). */
                     <TextCaption as="span" color="fgMuted" tabularNumbers noWrap>
                       {fmtLevel(p.entryValue, p.id.startsWith('FUT:') ? '%' : 'bp')} →{' '}
                       {fmtLevel(p.exitValue, p.id.startsWith('FUT:') ? '%' : 'bp')}
