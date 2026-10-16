@@ -1042,7 +1042,8 @@ def _mr_neighbors(dates: list[str], vals: list[float], base: dict,
 #: 아니라 **전 경우**(둘)다 — 값이 아니라 규칙이라 「이웃」이라는 말이 안 선다.
 MR_ENTRY_MODES_ALL: tuple[str, ...] = ("level", "touch")
 
-#: 격자가 낼 수 있는 최대 칸 수 — 3×3×3×3×2 = 162 가 프리셋 그대로의 값이다.
+#: 격자가 낼 수 있는 최대 칸 수 — 프리셋 그대로면 3×3×3×3×2 = 162 중
+#: 손절선이 진입선 안쪽인 18칸을 빼 **144칸**이다(`mr.grid_excludes`).
 #: 현재 노브가 프리셋 밖이면(자유 룩백) 칸이 하나씩 늘어 최대 4×4×4×4×2 = 512.
 #: 그 위는 라우트가 막는다 — 화면에 안 쓰는 계산에 몇 초를 쓰지 않는다.
 MR_OPT_MAX_CELLS = 512
@@ -1070,7 +1071,7 @@ def _mr_optimize(dates: list[str], vals: list[float], base: dict,
 
     ## 회계는 **엔진 근사**다 — 그 사실을 화면이 적는다
 
-    162칸을 실가격(자산스왑 재가격)으로 매기면 한 칸이 초 단위라 못 돈다.
+    144칸을 실가격(자산스왑 재가격)으로 매기면 한 칸이 초 단위라 못 돈다.
     그래서 여기서는 `mrbacktest.simulate` 의 수를 그대로 쓴다 — 머리 카드가
     실가격일 때 이 표의 숫자는 그것과 **다르다**(BSS 실측: 실가격이 거래당
     +0.7~+3.5백만원 크다). 화면은 최적 칸을 «채택» 버튼으로 노브에 꽂고,
@@ -1117,6 +1118,20 @@ def _mr_optimize(dates: list[str], vals: list[float], base: dict,
             for xz in opts["exitZ"]:
                 for sz in opts["stopZ"]:
                     for md in modes:
+                        # 지금 노브가 어느 칸인가 — 순위를 매기는 쪽이 「내 칸」을
+                        # 표에서 못 찾으면 이 표의 목적이 없다.
+                        cur = (lb == base["lookback"] and ez == base["entryZ"]
+                               and xz == base["exitZ"] and sz == base["stopZ"]
+                               and md == base["entryMode"])
+                        # ★손절선이 진입선 안쪽이거나 같은 칸은 **안 만든다**
+                        # (`mr.grid_excludes` 머리 — 프리셋에선 2.5/2.5 하나).
+                        # 칸 수가 162 → 144 로 줄고 페이로드의 `cells` 가 그 수를
+                        # 말한다. ⚠**내 칸은 예외**다: 손으로 그 조합을 고른
+                        # 사람에게 「내 칸이 표에 없는 표」를 주지 않는다. 자동
+                        # 채택(`mrplan`)은 `BASE_KNOBS` 에서 출발하므로 그 길로는
+                        # 이 칸이 아예 서지 않는다.
+                        if mr_mod.grid_excludes(ez, sz) and not cur:
+                            continue
                         r = mrbt.simulate(
                             dates, vals, lookback=lb, entry_z=ez, exit_z=xz,
                             stop_z=sz, cost_bp=base["costBp"],
@@ -1130,11 +1145,7 @@ def _mr_optimize(dates: list[str], vals: list[float], base: dict,
                         cells.append({
                             "lookback": lb, "entryZ": ez, "exitZ": xz,
                             "stopZ": sz, "entryMode": md,
-                            # 지금 노브가 어느 칸인가 — 순위를 매기는 쪽이
-                            # 「내 칸」을 표에서 못 찾으면 이 표의 목적이 없다.
-                            "current": (lb == base["lookback"] and ez == base["entryZ"]
-                                        and xz == base["exitZ"] and sz == base["stopZ"]
-                                        and md == base["entryMode"]),
+                            "current": cur,
                             **{k: m[k] for k in (
                                 "totalPnl", "maxDrawdown", "sortino", "calmar",
                                 "gpr", "omega", "profitFactor", "ulcer",
@@ -1222,6 +1233,13 @@ def _mr_book_optimize(legs: list[dict], base: dict, *, span: str,
             for xz in opts["exitZ"]:
                 for sz in opts["stopZ"]:
                     for md in modes:
+                        cur = (lb == base["lookback"] and ez == base["entryZ"]
+                               and xz == base["exitZ"] and sz == base["stopZ"]
+                               and md == base["entryMode"])
+                        # 낱개 격자와 **같은 제외·같은 예외**다 — 자를 두 벌
+                        # 만들지 않는다(`mr.grid_excludes` 머리).
+                        if mr_mod.grid_excludes(ez, sz) and not cur:
+                            continue
                         daily = [0.0] * len(dates)
                         bcost = [0.0] * len(dates)
                         raw: list[dict] = []
@@ -1249,9 +1267,7 @@ def _mr_book_optimize(legs: list[dict], base: dict, *, span: str,
                             "lookback": lb, "entryZ": ez, "exitZ": xz,
                             "stopZ": sz, "entryMode": md,
                             # 「내 칸」을 표에서 못 찾으면 순위가 아무 말도 못 한다.
-                            "current": (lb == base["lookback"] and ez == base["entryZ"]
-                                        and xz == base["exitZ"] and sz == base["stopZ"]
-                                        and md == base["entryMode"]),
+                            "current": cur,
                             # 몇 만기가 실제로 섰나 — 룩백이 길면 짧은 계열이
                             # 빠질 수 있고, 그때 그 칸은 **다른 장부**다.
                             "legs": len(usable),
@@ -2610,7 +2626,7 @@ def mr_optimize(id: str, span: str = "all",
     화면이 «이걸 켜 보면 좋아질까» 를 다시 묻게 된다.
 
     `/api/mr/strategy` 와 **같은 준비 자리**(`_mr_leg`)를 지난다. 별도 라우트인
-    이유는 `/api/mr/recon` 이 갈라져 있는 이유와 같다: 162칸이 본체보다 비싸서
+    이유는 `/api/mr/recon` 이 갈라져 있는 이유와 같다: 격자가 본체보다 비싸서
     누를 때만 돈다.
     """
     labels = {s: l for s, l, _ in mr_mod.SERIES}
@@ -2649,7 +2665,7 @@ def mr_optimize(id: str, span: str = "all",
 #
 # ## 왜 배경에서 굽나 — 실측
 #
-# 계열 하나가 «격자 162칸 + 회계 붙인 실행» 이라 라이브에서 2~3초, 퓨처스왑은
+# 계열 하나가 «격자 144칸 + 회계 붙인 실행» 이라 라이브에서 2~3초, 퓨처스왑은
 # 9초다(2026-09-21 실측 `/api/mr/strategy?id=FSW-3Y`). 25계열이면 **약 1분**이라
 # (같은 날 실측: 빈 캐시에서 66초)
 # 한 요청 안에서 못 끝낸다. 그래서 라우트는 **구워진 것만** 내주고 나머지는

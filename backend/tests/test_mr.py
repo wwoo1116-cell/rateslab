@@ -294,3 +294,33 @@ def test_assemble_trigger_levels_are_the_bands_themselves():
     assert row["triggerBlocked"] == mr.BLOCKED_WHY
     # 「지금 거리」와 z 가 같은 밴드를 말한다 — 문턱을 지났으면 z 도 그쪽이다.
     assert row["triggers"][0]["reached"] == (row["v"] <= row["lower"])
+
+
+# ── 격자가 **못 쓰는 조건을 추천하지 않는다** [트레이더·OWNER 2026-10-16] ──────
+# 「막는건 추천으로」 — 손절선이 진입선 안쪽이거나 같은 칸(프리셋에서 2.5/2.5
+# 하나)은 격자가 만들지 않는다. 그 칸이 돌아오면 계획면이 다시 「진입 X · 손절
+# X」를 적고, `pick_cell` 의 동점 규칙(격자 차례 = stopZ 오름차순)이 1년 창에서
+# 손절이 안 물린 계열마다 그 칸을 뽑는다(전수조사 셋째 판: 채택 25칸 중 9칸).
+def test_grid_excludes_a_stop_at_or_inside_the_entry():
+    assert mr.grid_excludes(2.5, 2.5) is True          # 겹치는 그 한 조합
+    assert mr.grid_excludes(2.5, 2.0) is True          # 안쪽(프리셋엔 없다)
+    assert mr.grid_excludes(2.5, 3.0) is False
+    assert mr.grid_excludes(1.5, 2.5) is False
+
+
+def test_preset_grid_is_162_minus_18():
+    """프리셋 전개 = 162칸, 제외 18칸, 남는 144칸. **수를 손으로 적지 않는다** —
+    프리셋이 늘면 이 시험이 같이 따라오게 곱셈으로 센다."""
+    P = mr.STRATEGY_PRESETS
+    modes = 2                                           # level · touch
+    full = len(P["lookback"]) * len(P["entryZ"]) * len(P["exitZ"]) * len(P["stopZ"]) * modes
+    kept = sum(
+        1
+        for _lb in P["lookback"]
+        for ez in P["entryZ"]
+        for _xz in P["exitZ"]
+        for sz in P["stopZ"]
+        for _md in range(modes)
+        if not mr.grid_excludes(ez, sz)
+    )
+    assert full == 162 and kept == 144 and full - kept == 18

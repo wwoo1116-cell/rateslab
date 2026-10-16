@@ -207,12 +207,42 @@ BASE = {"lookback": 60, "entryZ": 2.0, "exitZ": 0.5, "stopZ": 3.5,
         "costBp": 0.5, "notional": 1_000_000.0, "entryMode": "level"}
 
 
+def _expected_cells(lookbacks: int, base: dict | None = None) -> int:
+    """프리셋 전개에서 **제외 칸을 뺀** 수. 수를 손으로 적지 않는다 [2026-10-16] —
+    프리셋이나 제외 규칙이 바뀌면 이 셈이 같이 따라와야 하고, 그래야 이 시험이
+    「162」라는 철자 때문에 결정을 막는 쪽이 되지 않는다(`test_mrplan` 이 그걸로
+    7건 빨간 채였다)."""
+    from app import mr as mr_mod
+
+    P = mr_mod.STRATEGY_PRESETS
+    lbs = list(P["lookback"])
+    if base and base["lookback"] not in lbs:
+        lbs.append(base["lookback"])
+    assert len(lbs) == lookbacks
+    n = 0
+    for lb in lbs:
+        for ez in P["entryZ"]:
+            for sz in P["stopZ"]:
+                for xz in P["exitZ"]:
+                    for md in ("level", "touch"):
+                        cur = bool(base) and (lb == base["lookback"] and ez == base["entryZ"]
+                                              and sz == base["stopZ"] and xz == base["exitZ"]
+                                              and md == base["entryMode"])
+                        if not mr_mod.grid_excludes(ez, sz) or cur:
+                            n += 1
+    return n
+
+
 def test_grid_is_the_preset_cross_product_and_marks_exactly_one_current_cell():
     from app import main as M
+    from app import mr as mr_mod
 
     dates, vals = _walk()
     got = M._mr_optimize(dates, vals, dict(BASE), (-1, 1), span="all")
-    assert len(got["cells"]) == 3 * 3 * 3 * 3 * 2, "프리셋 넷 × 진입 규칙 둘"
+    # 프리셋 넷 × 진입 규칙 둘 **− 제외 칸**(손절선이 진입선 안쪽: 2.5/2.5).
+    assert len(got["cells"]) == _expected_cells(3) == 144
+    # ★성질 자체를 잰다 — 수가 맞아도 엉뚱한 칸이 남아 있으면 이 단언이 잡는다.
+    assert not [c for c in got["cells"] if mr_mod.grid_excludes(c["entryZ"], c["stopZ"])]
     cur = [c for c in got["cells"] if c["current"]]
     assert len(cur) == 1, "지금 노브가 표에서 한 칸으로 서야 순위를 읽을 수 있다"
     c = cur[0]
@@ -230,9 +260,30 @@ def test_a_free_knob_value_joins_the_grid_as_its_own_cell():
     dates, vals = _walk()
     base = dict(BASE, lookback=45)                    # 프리셋 밖(자유 룩백)
     got = M._mr_optimize(dates, vals, base, (-1, 1), span="all")
-    assert len(got["cells"]) == 4 * 3 * 3 * 3 * 2
+    assert len(got["cells"]) == _expected_cells(4, base) == 192
     assert sum(1 for c in got["cells"] if c["current"]) == 1
     assert 45 in {c["lookback"] for c in got["cells"]}
+
+
+def test_my_own_cell_stays_in_the_table_even_when_the_grid_excludes_it():
+    """⚠제외의 **예외**: 손으로 2.5/2.5 를 고른 사람에게 「내 칸이 없는 표」를
+    주지 않는다 [2026-10-16]. 자동 채택은 `mrplan.BASE_KNOBS`(2.0/2.5)에서
+    출발하므로 그 길로는 이 칸이 아예 서지 않는다 — 여기 서는 것은 **사람이 그
+    조합을 직접 고른 경우** 하나뿐이고, 그러면 표가 그 칸의 등수를 말해야 한다."""
+    from app import main as M
+    from app import mr as mr_mod
+
+    dates, vals = _walk()
+    base = dict(BASE, entryZ=2.5, stopZ=2.5)          # 제외 대상 그 칸
+    got = M._mr_optimize(dates, vals, base, (-1, 1), span="all")
+    assert len(got["cells"]) == _expected_cells(3, base) == 145   # 144 + 내 칸
+    cur = [c for c in got["cells"] if c["current"]]
+    assert len(cur) == 1
+    assert (cur[0]["entryZ"], cur[0]["stopZ"]) == (2.5, 2.5)
+    # 그 하나 말고는 제외 규칙이 그대로 지켜진다.
+    others = [c for c in got["cells"]
+              if mr_mod.grid_excludes(c["entryZ"], c["stopZ"]) and not c["current"]]
+    assert others == []
 
 
 def test_grid_cell_matches_a_standalone_simulate_of_the_same_knobs():

@@ -1071,7 +1071,11 @@ class Test그날_1등_제안:
 
         entry = dates[399]
         out = paper.suggest("BSS-3Y", entry, leg_of=leg_of, grid_of=grid_of)
-        assert out["cells"] == 162, "프리셋 그대로면 162칸이다"
+        # ★144 = 162 − 18 [2026-10-16]: 손절선이 진입선 안쪽인 칸(2.5/2.5)은
+        # 격자가 **안 만든다**(`mr.grid_excludes` 머리 — 계획면이 「진입 X ·
+        # 손절 X」를 적던 자리). 이 수가 바뀌면 격자 구성이 바뀐 것이므로
+        # 캐시(`cache.SCHEMA_VERSION`)도 같이 올라가 있어야 한다.
+        assert out["cells"] == 144, "프리셋 그대로면 144칸이다(162 − 제외 18)"
         assert out["asof"] == entry
         assert out["top"] is not None and out["top"]["rank"] == 1
         assert out["list"][0] == out["top"]
