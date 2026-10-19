@@ -109,7 +109,53 @@ describe('④ 두 원천의 asof 를 따로 적는다', () => {
   });
 });
 
-describe('⑤ 화면 문장은 해요체다', () => {
+describe('⑤ 리드아웃 스트립이 범례를 흡수한다', () => {
+  /* 범례를 따로 두면 「지금 그려진 것」과 「끄는 손잡이」가 갈릴 수 있다 —
+     그 셋을 한 칸에 모으는 것이 `ChartReadoutStrip` 이 생긴 이유다. */
+  it('스트립을 쓰고 손수 만든 범례는 없다', () => {
+    expect(FLOW_PAGE).toContain('<ChartReadoutStrip');
+    expect(FLOW_PAGE, '범례를 손으로 또 만들고 있어요 — 스트립이 그 일을 해요')
+      .not.toMatch(/sr-casedash|범례/);
+  });
+
+  it('스트립이 `sr-plot` 보다 **먼저** 선다 — 그림 밖·위', () => {
+    const strip = FLOW_PAGE.indexOf('<ChartReadoutStrip');
+    const plot = FLOW_PAGE.indexOf('className="sr-plot"');
+    expect(strip).toBeGreaterThan(0);
+    expect(plot).toBeGreaterThan(strip);
+  });
+
+  it('칸마다 **값과 토글**을 든다 — 범례이자 값이자 손잡이', () => {
+    const i = FLOW_PAGE.indexOf('const slots');
+    const body = FLOW_PAGE.slice(i, i + 900);
+    expect(body).toMatch(/value: fmt\(/);
+    expect(body).toMatch(/toggle: \{ on:/);
+    expect(body).toMatch(/chars/);          // 값 자리를 미리 비운다
+  });
+
+  it('★감싸는 상자가 **세로**다 — 가로면 스트립이 내용 폭으로 줄어 잘린다', () => {
+    /* 실측 2026-10-19: `Box`(가로 flex) 안에서 상자 618px · 스트립 141px ·
+       계열 영역 16px 이 되어 값이 DOM 에만 있고 안 보였다. */
+    const i = FLOW_PAGE.indexOf('<ChartReadoutStrip');
+    const before = FLOW_PAGE.slice(Math.max(0, i - 200), i);
+    expect(before, '스트립을 `Box` 로 감쌌어요 — `VStack` 이어야 폭을 찹니다')
+      .toMatch(/<VStack[^>]*width="100%"/);
+  });
+
+  it('두 그림이 **한 커서**를 나눈다', () => {
+    expect(FLOW_PAGE).toContain('onHoverIndex={onCum}');
+    expect(FLOW_PAGE).toContain('onHoverIndex={onDay}');
+    expect(FLOW_PAGE).toMatch(/syncIndex=\{cursor\?\.src === 'day'/);
+    expect(FLOW_PAGE).toMatch(/syncIndex=\{cursor\?\.src === 'cum'/);
+  });
+
+  it('누적 그림도 **시간축**을 세운다 — 두 그림 사이에 제목 줄이 끼어서', () => {
+    expect(FLOW_PAGE, 'hideTimeAxis 가 있으면 누적에서 날짜를 못 읽어요')
+      .not.toContain('hideTimeAxis');
+  });
+});
+
+describe('⑥ 화면 문장은 해요체다', () => {
   /* 판정은 `backend/tests/test_register.py::FORMAL` 과 같은 자다. 그 가드의
      범위(`COVERED`)가 아직 이 레인을 안 덮으므로 여기서 잰다. */
   const FORMAL = /(니다|한다\.|이다\.|않는다\.)/;

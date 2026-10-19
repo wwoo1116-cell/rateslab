@@ -88,8 +88,12 @@ export function FlowTable({
                       얼마나 움직이나. */}
                   <span className="sr-rv-stack">
                     <span className="sr-rv-name">{r.label}</span>
+                    {/* ★소속은 **카드 제목**이 이미 말한다(「기관계 세분 순위」).
+                        여기 또 적으면 열 폭만 먹고(실측 90px) 오른쪽 카드의
+                        리드아웃 칸 하나가 값을 떨군다. 아랫줄은 **모집단**만
+                        좁힌다 — 「평소에 얼마나 움직이나」. */}
                     <span className="sr-rv-sub">
-                      {r.group} · 일평균 {val(Math.abs(r.avgAbs), side).replace('+', '')}
+                      일평균 {val(Math.abs(r.avgAbs), side).replace('+', '')}
                       {unitOf(side, 'day')}
                     </span>
                   </span>

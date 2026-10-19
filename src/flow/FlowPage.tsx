@@ -33,6 +33,7 @@ import { Text } from '@coinbase/cds-web/typography';
 import { TimeChart, useStackedScales, type TimeLine } from '@/chart/TimeChart';
 import { BacktestUnavailable } from '@/lib/api';
 import { fmtContracts, fmtEok } from '@/lib/format';
+import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 import { Cond } from '@/ui/Cond';
 import { Segmented } from '@/ui/ControlCard';
 import { ErrorState, LoadingState } from '@/ui/DataState';
@@ -132,6 +133,22 @@ export function FlowPage() {
   const [busy, setBusy] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
   const [span, setSpan] = useState<Span>('1Y');
+  /* 두 그림이 **한 커서**를 나눈다 — 어느 쪽을 짚어도 같은 날을 읽는다
+     (`backtest/LinkedCharts.tsx` 의 그 문법). `src` 를 들고 있는 이유는
+     자기가 세운 커서를 자기에게 되돌려 주면 깜빡이기 때문이다. */
+  const [cursor, setCursor] = useState<{ i: number; src: 'cum' | 'day' }>();
+  const onCum = useCallback(
+    (i: number | null) => setCursor(i == null ? undefined : { i, src: 'cum' as const }), []);
+  const onDay = useCallback(
+    (i: number | null) => setCursor(i == null ? undefined : { i, src: 'day' as const }), []);
+  /* 계열 끄기 — 손잡이는 **스트립의 토글**이다(`StripSlot.toggle`). 새 컨트롤을
+     안 만든다는 캐논 규칙 1 의 자리이고, 끄는 손잡이와 값이 한 칸에 있어야
+     둘이 갈릴 수 없다(`ChartReadoutStrip` 머리). */
+  const [off, setOff] = useState<Record<string, true>>({});
+  const toggle = useCallback(
+    (k: string) => setOff((o) => (o[k] ? Object.fromEntries(
+      Object.entries(o).filter(([x]) => x !== k)) as Record<string, true> : { ...o, [k]: true })),
+    []);
 
   const { side, tenor } = FACE[face];
 
@@ -189,15 +206,20 @@ export function FlowPage() {
   /** 누적 선 넷 + 일별 막대 하나. 막대는 **부호마다 색**이다. */
   const lines: TimeLine[] = useMemo(() => {
     if (!win) return [];
-    return win.cum.map((s, i) => ({
-      id: s.key,
-      values: s.values,
-      color: (p) => p.resolve(`var(${INK[i % INK.length]})`),
-      width: 2 as const,
-      format: fmt,
-      beacon: i === 0,
-    }));
-  }, [win, fmt]);
+    /* ★색은 **계열의 차례**가 정한다, 그려지는 차례가 아니라 — 하나를 끄면
+       나머지가 색을 갈아입는 것을 막는다(dataviz 의 「색은 개체를 따른다」). */
+    return win.cum
+      .map((s, i) => ({ s, i }))
+      .filter(({ s }) => !off[s.key])
+      .map(({ s, i }) => ({
+        id: s.key,
+        values: s.values,
+        color: (p) => p.resolve(`var(${INK[i % INK.length]})`),
+        width: 2 as const,
+        format: fmt,
+        beacon: i === 0,
+      }));
+  }, [win, fmt, off]);
 
   const daily: TimeLine[] = useMemo(() => {
     if (!win?.daily) return [];
@@ -211,6 +233,34 @@ export function FlowPage() {
       format: fmt,
     }];
   }, [win, fmt]);
+
+  /** 커서가 짚은 자리. 그림 밖이면 **마지막 봉**을 읽는다 — 「비어 있는 상태」가
+   *  없어야 줄이 생겼다 사라지며 그림 높이를 흔들지 않는다. */
+  const at = useMemo(() => {
+    const n = win?.dates.length ?? 0;
+    const i = cursor && cursor.i >= 0 && cursor.i < n ? cursor.i : n - 1;
+    return { i, date: win?.dates[i] ?? '' };
+  }, [cursor, win]);
+
+  /** 스트립 칸 — **범례이자 값이자 손잡이**다. 셋을 한 자리에 모으는 것이
+   *  이 부품이 생긴 이유다(`ChartReadoutStrip` 머리). 그래서 따로 범례를 안 둔다. */
+  const slots = useMemo<StripSlot[]>(() => {
+    if (!win) return [];
+    const chars = slotChars(
+      fmt,
+      ...win.cum.flatMap((c) => [Math.max(...c.values), Math.min(...c.values)]),
+    );
+    return win.cum.map((c, i) => ({
+      key: c.key,
+      label: c.label,
+      value: fmt(c.values[at.i] ?? 0),
+      color: `var(${INK[i % INK.length]})`,
+      chars,
+      /* 좁아지면 **값만** 떨군다 — 칸은 남는다. 뒤 계열부터 떨어진다. */
+      drop: (Math.min(i + 1, 6) as 1 | 2 | 3 | 4 | 5 | 6),
+      toggle: { on: !off[c.key], onToggle: () => toggle(c.key) },
+    }));
+  }, [win, at.i, fmt, off, toggle]);
 
   if (down) {
     return <ErrorState what="투자자별 수급" onRetry={() => load()} retrying={busy}
@@ -323,8 +373,11 @@ export function FlowPage() {
       <HStack gap={2} alignItems="stretch" minHeight={560} width="100%"
         flexShrink={0} flexWrap="wrap">
         {/* 표가 일곱 열을 진다 — 640 에서는 20일·올해가 잘렸다(실측). */}
-        <VStack className="sr-card" flexBasis={900} flexGrow={2} flexShrink={1}
-          minWidth={0} minHeight={0}>
+        {/* 표는 **자연폭까지만** 먹는다(실측 1,207 → 부제 축약 뒤 1,117).
+            남는 폭은 오른쪽으로 보낸다 — 리드아웃 칸 넷이 값을 다 들려면
+            계열 영역이 480px 를 넘어야 한다(`type.css` 의 떨굼 사다리). */}
+        <VStack className="sr-card" flexBasis={1120} flexGrow={0} flexShrink={1}
+          maxWidth={1180} minWidth={0} minHeight={0}>
           <VStack paddingX={2} paddingTop={1.5} paddingBottom={1} gap={1}>
             <Text as="h3" font="label1">
               {side === 'cash' ? '주체별 순매수' : '기관계 세분 순위'}
@@ -349,16 +402,24 @@ export function FlowPage() {
                 고른 구간의 첫날부터 다시 세요
               </Text>
             </HStack>
-            {/* 범례 — 색 단독으로 식별하지 않게(WCAG 2.2 §1.4.1). */}
-            <HStack gap={1.5} flexWrap="wrap">
-              {got.series.cum.map((s, i) => (
-                <HStack key={s.key} gap={0.5} alignItems="center">
-                  <Box width={11} height={3} borderRadius={100}
-                    style={{ background: `var(${INK[i % INK.length]})` }} />
-                  <Text as="span" font="legal" color="fgMuted">{s.label}</Text>
-                </HStack>
-              ))}
-            </HStack>
+          </VStack>
+          {/* ★리드아웃 스트립은 **그림 밖·위**에 선다 [OWNER 2026-09-21] —
+              범례·값·끄는 손잡이 셋을 한 칸에 모은다. 따로 범례를 두면
+              「지금 그려진 것」과 「끄는 손잡이」가 갈릴 수 있다. */}
+          {/* ★`width="100%"` 가 있어야 한다 — 없으면 `VStack` 안에서 칸 폭만큼만
+              서서(실측 141px · 계열 영역 16px) 스트립이 통째로 잘린다. 값은
+              DOM 에 다 들어 있는데 **안 보이는** 고장이라 눈으로만 잡힌다. */}
+          {/* ★감싸는 상자는 **세로**여야 한다. `Box` 는 CDS 기본이 가로 flex 라
+              `width="100%"` 를 줘도 **상자만** 늘고 안의 스트립은 제 내용 폭으로
+              줄어든다(실측: 상자 618px · 스트립 141px · 계열 영역 16px — 값은
+              DOM 에 다 있는데 안 보였다). 세로 상자는 교차축이 stretch 라 찬다.
+              오늘 같은 뿌리를 두 번 밟았다(카드도 `Box` 였다). */}
+          <VStack width="100%" paddingBottom={0.5}>
+            <ChartReadoutStrip
+              date={at.date}
+              slots={slots}
+              ariaLabel={`${FACE[face].label} 누적 순매수 — 커서가 짚은 날의 값`}
+            />
           </VStack>
           {/* 그림 둘이 **남는 높이를 나눠 갖는다** — 고정 높이로 두면 카드 아래가
               빈다(실측). 누적이 둘, 일별이 하나 몫이다. */}
@@ -368,7 +429,14 @@ export function FlowPage() {
                 dates={win?.dates ?? []}
                 lines={lines}
                 precision={0}
-                hideTimeAxis
+                /* ★시간축을 **둘 다** 세운다. 쌓인 차트는 보통 위쪽 축을 숨기는데
+                   (`hideTimeAxis`), 여기는 두 그림 사이에 제목 줄이 끼어 있어
+                   아래 축이 위 그림의 것으로 안 읽힌다 — 날짜를 못 읽겠다는
+                   지적이 그 자리였다 [OWNER 2026-10-19]. */
+                onHoverIndex={onCum}
+                syncIndex={cursor?.src === 'day' ? cursor.i : null}
+                hoverLabel={(i) => `${win?.dates[i] ?? ''} · `
+                  + (win?.cum ?? []).map((c) => `${c.label} ${fmt(c.values[i] ?? 0)}`).join(', ')}
                 accessibilityLabel={`${FACE[face].label} 누적 순매수 — ${got.series.cum.map((s) => s.label).join(', ')}`}
                 {...stack}
               />
@@ -385,6 +453,10 @@ export function FlowPage() {
                 lines={daily}
                 precision={0}
                 priceLines={[{ value: 0, color: (p) => p.line }]}
+                onHoverIndex={onDay}
+                syncIndex={cursor?.src === 'cum' ? cursor.i : null}
+                hoverLabel={(i) => `${win?.dates[i] ?? ''} · ${win?.daily?.label ?? ''} `
+                  + fmt(win?.daily?.values[i] ?? 0)}
                 accessibilityLabel={`${win?.daily?.label ?? ''} 일별 순매수`}
                 {...stack}
               />
