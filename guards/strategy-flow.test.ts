@@ -128,7 +128,10 @@ describe('⑤ 리드아웃 스트립이 범례를 흡수한다', () => {
   it('칸마다 **값과 토글**을 든다 — 범례이자 값이자 손잡이', () => {
     const i = FLOW_PAGE.indexOf('const slots');
     const body = FLOW_PAGE.slice(i, i + 900);
-    expect(body).toMatch(/value: fmt\(/);
+    /* 서식 **이름**이 아니라 「칸이 값을 든다」를 잰다. 리터럴 `fmt(` 로
+       박아 뒀더니 누적 자를 `fmtCum` 으로 가르는 순간 탐지가 샜다
+       (2026-10-19 — `chart-stability` 가 `addLine(` 로 샌 것과 같은 과). */
+    expect(body).toMatch(/value: fmt\w*\(/);
     expect(body).toMatch(/toggle: \{ on:/);
     expect(body).toMatch(/chars/);          // 값 자리를 미리 비운다
   });

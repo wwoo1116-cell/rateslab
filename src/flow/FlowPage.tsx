@@ -32,7 +32,7 @@ import { Text } from '@coinbase/cds-web/typography';
 
 import { TimeChart, useStackedScales, type TimeLine } from '@/chart/TimeChart';
 import { BacktestUnavailable } from '@/lib/api';
-import { fmtContracts, fmtEok } from '@/lib/format';
+import { fmtContracts, fmtEok, fmtJo } from '@/lib/format';
 import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 import { Cond } from '@/ui/Cond';
 import { Segmented } from '@/ui/ControlCard';
@@ -181,8 +181,18 @@ export function FlowPage() {
     (v: number) => (unitIsCash ? fmtEok(v) : fmtContracts(v)),
     [unitIsCash],
   );
-  /** 칸 옆에 붙는 단위 말. */
+  /** ★**누적 자는 다르다** — 현물 누적은 억으로 적으면 열 자리가 된다
+   *  (실측 2026-10-19: 금융투자 1년 누적 −680,061,101백만원 = `−6,800,611억`).
+   *  그 길이가 리드아웃 스트립을 넘쳐 **넷째 값이 밀려 나갔다**. 조로 적으면
+   *  `−680.1` 여섯 자다. 표가 이미 같은 판단을 했고(`FlowTable::val` — 일별 억 ·
+   *  올해 조), 그 규칙이 그림·스트립·사실 칸에는 안 와 있었다. */
+  const fmtCum = useCallback(
+    (v: number) => (unitIsCash ? fmtJo(v) : fmtContracts(v)),
+    [unitIsCash],
+  );
+  /** 칸 옆에 붙는 단위 말. 일별과 누적이 다르다. */
   const unitWord = unitIsCash ? '억' : '계약';
+  const cumWord = unitIsCash ? '조' : '계약';
 
   /** 창 안의 날짜와 **다시 센 누적**.
    *
@@ -216,10 +226,10 @@ export function FlowPage() {
         values: s.values,
         color: (p) => p.resolve(`var(${INK[i % INK.length]})`),
         width: 2 as const,
-        format: fmt,
+        format: fmtCum,
         beacon: i === 0,
       }));
-  }, [win, fmt, off]);
+  }, [win, fmtCum, off]);
 
   const daily: TimeLine[] = useMemo(() => {
     if (!win?.daily) return [];
@@ -247,20 +257,20 @@ export function FlowPage() {
   const slots = useMemo<StripSlot[]>(() => {
     if (!win) return [];
     const chars = slotChars(
-      fmt,
+      fmtCum,
       ...win.cum.flatMap((c) => [Math.max(...c.values), Math.min(...c.values)]),
     );
     return win.cum.map((c, i) => ({
       key: c.key,
       label: c.label,
-      value: fmt(c.values[at.i] ?? 0),
+      value: fmtCum(c.values[at.i] ?? 0),
       color: `var(${INK[i % INK.length]})`,
       chars,
       /* 좁아지면 **값만** 떨군다 — 칸은 남는다. 뒤 계열부터 떨어진다. */
       drop: (Math.min(i + 1, 6) as 1 | 2 | 3 | 4 | 5 | 6),
       toggle: { on: !off[c.key], onToggle: () => toggle(c.key) },
     }));
-  }, [win, at.i, fmt, off, toggle]);
+  }, [win, at.i, fmtCum, off, toggle]);
 
   if (down) {
     return <ErrorState what="투자자별 수급" onRetry={() => load()} retrying={busy}
@@ -279,20 +289,23 @@ export function FlowPage() {
       {/* ── 조건 스트립 ─────────────────────────────────────────────────── */}
       <VStack className="sr-rv-bar" width="100%" gap={0.5}>
         <HStack gap={2} flexWrap="wrap" alignItems="baseline" width="100%">
-          {/* ★둘을 **따로** 적는다 — 어긋나는 것이 정상이고 경고가 아니다. */}
-          <Cond k="선물수급" v={got.asof.fut ?? '—'} />
-          <Cond k="현물수급" v={got.asof.cash ?? '—'} />
+          {/* ★둘을 **따로** 적는다 — 어긋나는 것이 정상이고 경고가 아니다.
+              다만 **그 면이 읽는 원천만** 적는다: 현물 면에서 서버는 선물표를
+              아예 안 읽어 `asof.fut` 이 `null` 로 온다. 거기에 `—` 를 세우면
+              「선물 자료가 빠졌다」로 읽히는데, 안 빠졌고 안 물어본 것이다
+              (실측 2026-10-19 — 현물 면에 「선물수급 —」 이 서 있었다). */}
+          {got.asof.fut ? <Cond k="선물수급" v={got.asof.fut} /> : null}
+          {got.asof.cash ? <Cond k="현물수급" v={got.asof.cash} /> : null}
           {/* 서버가 말하는 원단위(계약·백만원)와 **화면의 자**가 다르다 —
               백만원으로 적으면 일별이 여섯 자리라 억으로 줄여 읽는다. */}
-          <Cond k="단위" v={unitIsCash ? '억 (올해는 조)' : '계약'} strong />
+          <Cond k="단위" v={unitIsCash ? '일별 억 · 누적 조' : '계약'} strong />
           <Cond k="순위"
             v={`${side === 'cash' ? '주체별' : '기관계 세분'} · 하한 ${fmt(got.rankFloor).replace('+', '')}${unitWord}`} />
           <Cond k="표본" v={`${got.days.toLocaleString('ko-KR')}일`} />
-          <Box style={{ marginInlineStart: 'auto' }}>
-            <Text as="span" font="legal" color="fgMuted">
-              집계예요 — 새 판단이 아니에요.
-            </Text>
-          </Box>
+          {/* ★「집계예요 — 새 판단이 아니에요.」를 여기 또 적지 않는다. 바로
+              아랫줄의 `got.basis` 가 이미 그 말로 시작한다(`flow.py:388`) —
+              같은 문장이 두 줄 연속으로 서 있었다(실측 2026-10-19). 기준을
+              말하는 것은 **서버 한 곳**이다. */}
         </HStack>
         {/* 한 줄로 합친다 — 회색 문장 셋이 쌓이면 벽처럼 읽혀서 아무도 안
             읽는다(실측 2026-10-19). 뺀 것은 괄호로 이어 붙인다. */}
@@ -397,7 +410,10 @@ export function FlowPage() {
           minWidth={0} minHeight={0}>
           <VStack paddingX={2} paddingTop={1.5} paddingBottom={0.5} gap={0.75}>
             <HStack alignItems="baseline" justifyContent="space-between" gap={1}>
-              <Text as="h3" font="label1">누적 순매수</Text>
+              {/* 단위는 **제목이 진다** — 표의 열 머리가 하는 그 일
+                  (`FlowTable::unitOf`). 스트립·사실 칸의 값은 민짜라 단위를
+                  읽을 자리가 여기 말고 없고, 누적(조)과 일별(억)이 다르다. */}
+              <Text as="h3" font="label1">누적 순매수 ({cumWord})</Text>
               <Text as="span" font="legal" color="fgMuted">
                 고른 구간의 첫날부터 다시 세요
               </Text>
@@ -436,13 +452,15 @@ export function FlowPage() {
                 onHoverIndex={onCum}
                 syncIndex={cursor?.src === 'day' ? cursor.i : null}
                 hoverLabel={(i) => `${win?.dates[i] ?? ''} · `
-                  + (win?.cum ?? []).map((c) => `${c.label} ${fmt(c.values[i] ?? 0)}`).join(', ')}
+                  + (win?.cum ?? []).map((c) => `${c.label} ${fmtCum(c.values[i] ?? 0)}${cumWord}`).join(', ')}
                 accessibilityLabel={`${FACE[face].label} 누적 순매수 — ${got.series.cum.map((s) => s.label).join(', ')}`}
                 {...stack}
               />
             </Box>
             <HStack alignItems="baseline" justifyContent="space-between" gap={1}>
-              <Text as="span" font="label2">일별 — {win?.daily?.label ?? ''}</Text>
+              <Text as="span" font="label2">
+                일별 — {win?.daily?.label ?? ''} ({unitWord})
+              </Text>
               <Text as="span" font="legal" color="fgMuted">
                 빨강이 순매수, 파랑이 순매도예요
               </Text>
@@ -468,7 +486,12 @@ export function FlowPage() {
       {/* ── 사실 스트립 ─────────────────────────────────────────────────── */}
       <Box flexShrink={0} width="100%">
         <HStack className="sr-stats" width="100%" flexWrap="wrap">
-          <StatColumn title="오늘">
+          {/* ★제목이 **모집단**을 말한다. 둘은 시간만 다른 것이 아니라 보는
+              주체가 다르다 — 왼쪽은 순위 위 셋(기관계 세분), 오른쪽은 그림이
+              그리는 넷(외국인이 끼어 있다). 「오늘 / 고른 구간」만 적으면 같은
+              주체의 두 지평으로 읽혀서, 이름 셋과 넷이 어긋나 보인다
+              (실측 2026-10-19). */}
+          <StatColumn title="오늘 · 순위 위 셋">
             {got.sub.filter((r) => r.ranked).slice(0, 3).map((r) => (
               <Stat
                 key={r.key}
@@ -482,14 +505,14 @@ export function FlowPage() {
           </StatColumn>
           {/* 그림이 말하는 것을 **수로** 받는 칸 — 선을 눈으로 재지 않게.
               누적은 고른 구간의 첫날부터라 이 수가 곧 「이 구간에 얼마나 샀나」다. */}
-          <StatColumn title={`고른 구간 (${span === 'ALL' ? '전체' : span})`}>
+          <StatColumn title={`고른 구간 ${span === 'ALL' ? '전체' : span} · 그림 넷`}>
             {(win?.cum ?? []).map((c) => {
               const last = c.values[c.values.length - 1] ?? 0;
               return (
                 <Stat
                   key={c.key}
                   label={c.label}
-                  value={fmt(last)}
+                  value={fmtCum(last)}
                   tone={last > 0 ? 'up' : last < 0 ? 'down' : undefined}
                 />
               );

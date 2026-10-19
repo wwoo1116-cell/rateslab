@@ -74,15 +74,19 @@ export function fmtEok(mil: number | null | undefined): string {
   return `${head}${Math.abs(v).toLocaleString("ko-KR")}`;
 }
 
-/** 조원 — 현물 수급의 **누적(올해)** 칸이 쓴다. 서버가 **백만원**으로 주므로 1e6 으로 나눈다.
+/** 조원 — 현물 수급의 **누적** 칸이 쓴다. 서버가 **백만원**으로 주므로 1e6 으로 나눈다.
  *
  *  조 단위로 적는 이유: 2026 누적이 −93조~+60조라 백만원으로 적으면 자릿수가
- *  여덟이고, 트레이더가 세는 단위가 아니다. 소수 한 자리면 1,000억 해상도다. */
+ *  여덟이고, 트레이더가 세는 단위가 아니다. 소수 한 자리면 1,000억 해상도다.
+ *
+ *  ★**단위를 안 붙인다** — `fmtEok` 과 같은 규약이고, 붙이는 것은 부르는 쪽이다.
+ *  초판은 여기서 「조」를 붙였고, 그래서 `FlowTable` 의 올해 열이 머리에 `(조)`,
+ *  칸마다 또 `조` 를 적었다 — 그 파일이 스스로 금지한 반복이다(실측 2026-10-19). */
 export function fmtJo(mil: number | null | undefined): string {
   if (mil == null) return EMDASH;
   const v = mil / 1e6;
   const head = v > 0 ? "+" : v < 0 ? MINUS : "";
-  return `${head}${Math.abs(v).toFixed(1)}조`;
+  return `${head}${Math.abs(v).toFixed(1)}`;
 }
 
 /** Level, unit-aware: % → 4dp, bp → 1dp, ratio → 2dp. Null → em dash. */
