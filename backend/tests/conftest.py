@@ -20,9 +20,27 @@ from __future__ import annotations
 import pytest
 
 from app import futures as _futures_mod
+from app import flow as _flow_mod
 from irs_pricer.core import ttl_cache
 from irs_pricer.loaders import irsdata as _irsdata_loader
 from irs_pricer.services.simulation import bond_roll
+
+
+@pytest.fixture(autouse=True)
+def flow_data_off():
+    """투자자별 수급 주입본을 매 테스트 앞뒤에서 내린다 [2026-10-19].
+
+    `futures_data_off` 와 **같은 규율**이고 이유도 같다: 주입이 없으면
+    `flow.load()` 가 SQL 로 가므로, 결정적이어야 하는 테스트는 자기 페이크를
+    `set_data` 로 주입한 뒤 이 픽스처가 되돌린다.
+
+    ★이 모듈은 캐시도 **따로** 들고 있다(`_cached`, 워터마크 열쇠). 주입만
+    내리고 캐시를 안 지우면 앞 테스트가 SQL 로 떠 온 것이 뒤 테스트에 남는다."""
+    _flow_mod.set_data(None)
+    _flow_mod.reset_cache()
+    yield
+    _flow_mod.set_data(None)
+    _flow_mod.reset_cache()
 
 
 @pytest.fixture(autouse=True)

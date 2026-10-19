@@ -30,7 +30,9 @@ import type { AreaFill } from './dottedArea';
 import type { LwPalette } from './palette';
 import { VerticalLines } from './verticalLines';
 import type { ScalePriceLine } from './ScaleChart';
-import { addLine, removeLines, type LineAxis, type PlacedLine } from './series';
+import {
+  addHistogram, addLine, removeLines, type LineAxis, type PlacedLine,
+} from './series';
 import {
   sameLines,
   sameMarkLines,
@@ -59,6 +61,15 @@ export type TimeLine = {
   format?: (v: number) => string;
   /** 커서 구슬 — **주선 하나만** 켠다(`series.ts::addLine` 의 그 주석). */
   beacon?: boolean;
+  /**
+   * **막대**로 그린다 [2026-10-19]. 기본은 선이다.
+   *
+   * 일별 순매수처럼 **이산 일별값**은 column 이 맞는 유형이다(FT Visual
+   * Vocabulary · CLAUDE.md 규칙 8). 점과 점을 이으면 거래되지 않은 값을 그린다.
+   */
+  kind?: 'line' | 'histogram';
+  /** 점마다 색 — 막대에만. 부호마다 색이 달라야 하는 자리(순매수/순매도). */
+  colorAt?: (v: number, p: LwPalette) => string;
 };
 
 /** 세로선의 결 — 색을 직접 주지 않고 **뜻**을 준다(`theme/tint.ts` 의 규율).
@@ -207,8 +218,10 @@ export function TimeChart({
   }, [handle, scaleWidth, hideTimeAxis, sDates, sLines]);
 
   const markerApi = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
-  /** 크로스헤어를 세울 계열 — 첫 줄(주선)이다. */
-  const anchor = useRef<ISeriesApi<'Line', Time> | null>(null);
+  /** 크로스헤어를 세울 계열 — 첫 줄(주선)이다.
+   *  ★2026-10-19: 막대 계열이 들어와 **유니온**이다. 크로스헤어가 쓰는
+   *  `coordinateToPrice`/`dataByIndex` 는 둘 다 가진다. */
+  const anchor = useRef<ISeriesApi<'Line', Time> | ISeriesApi<'Histogram', Time> | null>(null);
   const vlines = useRef<VerticalLines<Time> | null>(null);
   /** 지금 서 있는 계열들 — 겉모습 이펙트가 여기로 색을 갈아입힌다. */
   const placedRef = useRef<PlacedLine<Time>[] | null>(null);
@@ -227,8 +240,10 @@ export function TimeChart({
     /* 함수는 최신 것 — `sLines` 와 모양이 같으므로 순번이 맞는다. */
     const src = latest.current;
 
+    /* ★계열 유형마다 세우는 함수가 다르다 [2026-10-19]. 재료는 **같다** —
+       갈리는 것은 `addSeries` 한 줄뿐이라 옵션 조립을 둘로 안 나눈다. */
     const placed: PlacedLine<Time>[] = sLines.map((ln, i) =>
-      addLine(
+      (ln.kind === 'histogram' ? addHistogram : addLine)(
         chart,
         palette,
         {
@@ -245,6 +260,7 @@ export function TimeChart({
              차트에서 첫 줄이 주선이고(`anchor` 도 그 규약을 쓴다), 그래야 아홉
              호출부가 한 줄씩 더 적지 않아도 구슬이 하나 남는다. */
           beacon: ln.beacon ?? (sLines.some((l) => l.beacon) ? false : i === 0),
+          colorAt: src.lines[i]?.colorAt ?? ln.colorAt,
           data: sDates.map((t, k) => {
             const v = ln.values[k];
             return (v == null ? { time: t as Time } : { time: t as Time, value: v }) as

@@ -91,6 +91,8 @@ type LineShape = {
   area?: string;
   axis?: string;
   beacon?: boolean;
+  /** 계열 **유형** — 선이냐 막대냐 [2026-10-19]. */
+  kind?: string;
 };
 
 export function sameLines(
@@ -109,6 +111,11 @@ export function sameLines(
       x.axis === y.axis &&
       /* 구슬도 «모양» 이다 — 빼 두면 주선이 바뀌어도 계열을 다시 안 세운다. */
       x.beacon === y.beacon &&
+      /* ★유형은 **가장** 모양이다 [2026-10-19]. 빼 두면 선↔막대를 바꿔도
+         계열을 다시 안 세워서 화면이 옛 유형으로 남는다 — 색이나 폭과 달리
+         «겉모습» 이펙트가 고칠 수 있는 것이 아니다(`addSeries` 를 다시 불러야
+         한다). 막대를 들이면서 같이 더했다. */
+      x.kind === y.kind &&
       sameValues(x.values, y.values),
   );
 }

@@ -84,6 +84,8 @@ from . import df_cache
 from . import momentum
 from . import paper
 from . import carryroll
+from . import flow
+from . import mysqldb
 from . import mr as mr_mod
 from . import mrbacktest as mrbt
 from . import mrbook
@@ -3187,6 +3189,46 @@ def momentum_book() -> dict:
     탭에 그대로 남는다.
     """
     return cached("momentum-book", _dataset.data_key, momentum.build_book)
+
+
+# ── 투자자별 수급 (Strategy 네 번째 세입자) [OWNER 2026-10-16] ──────────────
+#
+# 산술은 `app/flow.py` 가 진다(그 머리에 함정 다섯과 순위 키의 근거). 여기 있는
+# 것은 배관뿐이다. **라이브 전용**이고 디스크 캐시를 안 쓴다 — 두 원천 합 2.6초라
+# 모듈의 워터마크 캐시로 충분하다(`/api/lab/creditdts`·`/api/rv/analysis` 선례).
+
+
+@router.get("/api/flow/board")
+def flow_board(side: str = "fut", tenor: str = "3Y") -> dict:
+    """한 면 — 대분류 대조 + 기관계 세분 순위 + 누적·일별 계열.
+
+    `side` 는 `fut`(선물)·`cash`(현물)다. **단위가 달라 한 축에 못 겹친다**
+    (계약 대 백만원) — 그래서 겹치는 그림이 아니라 **갈라지는 면**이다.
+
+    두 원천의 `asof` 가 **다른 것이 정상**이다 [OWNER 2026-10-19] — 현물이 늦게
+    들어온다. 응답의 `asof` 가 둘을 따로 싣는 이유가 그것이고, 화면이 그 둘을
+    따로 적어야 한다.
+    """
+    try:
+        return flow.board(side=side, tenor=tenor)
+    except flow.FlowError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except mysqldb.MissingCredentials as exc:
+        # ★반드시 잡는다 — 안 잡으면 전역 핸들러가 500 「계산 오류」로 바꾼다.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/api/flow/history/{key}")
+def flow_history(key: str, side: str = "fut", tenor: str = "3Y") -> dict:
+    """한 주체 한 계열의 전구간 — 미리보기용."""
+    try:
+        return flow.history(key, side=side, tenor=tenor)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"모르는 주체예요: {key}") from exc
+    except flow.FlowError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except mysqldb.MissingCredentials as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 # ── 모멘텀 **슬리브** 집행면 [OWNER 2026-09-21] ──────────────────────────────

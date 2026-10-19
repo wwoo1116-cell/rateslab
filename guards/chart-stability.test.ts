@@ -82,12 +82,20 @@ describe('비교 — 내용이 같으면 같다고 말한다', () => {
 /** 계열을 세우는 이펙트의 의존성 배열을 소스에서 꺼낸다. */
 function structureDeps(file: string): string[] {
   const src = stripComments(fs.readFileSync(path.join(process.cwd(), file), 'utf8'));
-  /* `addLine(` 을 부르는 이펙트가 «구조» 이펙트다. 그 블록의 끝에 붙은
-     `}, [ … ]);` 를 읽는다. */
+  /* 계열을 **세우는** 이펙트가 «구조» 이펙트다. 그 블록의 끝에 붙은
+     `}, [ … ]);` 를 읽는다.
+
+     ★탐지를 이름으로 한다, 호출 모양이 아니라 [2026-10-19]. 종전에는 문자열
+     `'addLine('` 를 찾았는데 막대 계열이 들어오면서 호출이
+     `(ln.kind === 'histogram' ? addHistogram : addLine)(` 가 됐다 — 그 순간
+     `addLine(` 이 **문자열로 없어져** 탐지가 샜다. 아래 `deps.length > 0` 이
+     그것을 잡아 주긴 했지만(빈 목록이면 실패), 실패 문장이 「의존성이 없다」라
+     진짜 원인을 안 말했다. 세우는 함수가 더 늘어도 안 새도록 이름으로 센다. */
+  const ADDERS = /\badd(Line|Histogram)\b/;
   const chunks = src.split('useEffect(');
   const found: string[] = [];
   for (const c of chunks) {
-    if (!c.includes('addLine(')) continue;
+    if (!ADDERS.test(c)) continue;
     const m = /\}\s*,\s*\[([^\]]*)\]\s*\)/.exec(c);
     if (m) found.push(...m[1].split(',').map((s) => s.trim()).filter(Boolean));
   }
