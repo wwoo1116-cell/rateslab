@@ -14,10 +14,10 @@
     "e2e": "playwright test"
   },
   "dependencies": {
-    "@coinbase/cds-common": "9.22.0",
-    "@coinbase/cds-icons": "5.22.0",
-    "@coinbase/cds-illustrations": "4.48.0",
-    "@coinbase/cds-web": "9.22.0",
+    "@coinbase/cds-common": "9.29.0",
+    "@coinbase/cds-icons": "5.26.0",
+    "@coinbase/cds-illustrations": "4.49.0",
+    "@coinbase/cds-web": "9.29.0",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/react-virtual": "^3.14.9",
     "framer-motion": "^10.18.0",

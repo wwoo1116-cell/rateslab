@@ -9,17 +9,17 @@ importers:
   .:
     dependencies:
       '@coinbase/cds-common':
-        specifier: 9.22.0
-        version: 9.22.0(@types/node@22.20.1)(react@19.1.2)
+        specifier: 9.29.0
+        version: 9.29.0(@types/node@22.20.1)(react@19.1.2)
       '@coinbase/cds-icons':
-        specifier: 5.22.0
-        version: 5.22.0
+        specifier: 5.26.0
+        version: 5.26.0
       '@coinbase/cds-illustrations':
-        specifier: 4.48.0
-        version: 4.48.0
+        specifier: 4.49.0
+        version: 4.49.0
       '@coinbase/cds-web':
-        specifier: 9.22.0
-        version: 9.22.0(@types/node@22.20.1)(@types/react@19.2.18)(framer-motion@10.18.0(react-dom@19.1.2(react@19.1.2))(react@19.1.2))(react-dom@19.1.2(react@19.1.2))(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))
+        specifier: 9.29.0
+        version: 9.29.0(@types/node@22.20.1)(@types/react@19.2.18)(framer-motion@10.18.0(react-dom@19.1.2(react@19.1.2))(react@19.1.2))(react-dom@19.1.2(react@19.1.2))(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))
       '@tanstack/react-table':
         specifier: ^8.21.3
         version: 8.21.3(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
@@ -171,29 +171,29 @@ packages:
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
 
-  '@coinbase/cds-common@9.22.0':
-    resolution: {integrity: sha512-dRnaQp8xIJpmvuUnbIriWfNOsfB4on8rGHZatZ/MC1lhfbOzTJbLHt/Koj/1iU9FHTuEeyR2WqxOFe5E4e4KkQ==}
+  '@coinbase/cds-common@9.29.0':
+    resolution: {integrity: sha512-nWIJCVddfWpXDGb4giOztt5xpXjiqVaNR1e8xcVnO1Hs3tEn5OuNtJ1TimUfEyXuBqFpIVOr34m+rcLFYjNkVQ==}
     peerDependencies:
       react: ^18.0.0 || ~19.1.2
 
-  '@coinbase/cds-icons@5.22.0':
-    resolution: {integrity: sha512-l6f54DB+hQ2uv6lnI1nbgg5IoAsEYRf2to2m0lDM//qv15W5Wg92GWKlmbjESVBf2UYmCCXkvGVKGMg/P/bHlQ==}
+  '@coinbase/cds-icons@5.26.0':
+    resolution: {integrity: sha512-fJGcN3dP0YzBOhYYUHCxD6gjlo9MDdpZAmklOrMMmb495yYCi/WnCM4+322eEJT9ZTtZ+RSyuzU/j6ODahwXWA==}
 
-  '@coinbase/cds-illustrations@4.48.0':
-    resolution: {integrity: sha512-wiqNgRrGQOsmd0w5fthBSzBU6QLhYBFCUjRr9xhLQ9qRQ8Q0ZnHXM+mUWe9+y3kdTNNDTEc8Il7hhy6Nu1Kdyw==}
+  '@coinbase/cds-illustrations@4.49.0':
+    resolution: {integrity: sha512-1cembZ6TEer+eunUYY1bzICVsUV+BrjhffoRCm2XZ+6b58q8UkBVFWUbWfIxmuV6s7yxg7nLthV/SqcQTJOOtg==}
 
   '@coinbase/cds-lottie-files@3.3.4':
     resolution: {integrity: sha512-SOWW97zwSgzrT7oKanwC/CfIB2MWJbyZduZzb3dSc8ACFy/qc5GN/IjH/Efty0p7zp+rUdEwOJj4d8/XhT/FKA==}
 
-  '@coinbase/cds-mcp-server@9.22.0':
-    resolution: {integrity: sha512-ViiS26FKil9/OaEw5l/FXmbVG/LXdkWNQMniPHfgpNC5JwOsQaqaLAbHn0QHnIKcsMf23iBZfsLKITB4dqouUg==}
+  '@coinbase/cds-mcp-server@9.29.0':
+    resolution: {integrity: sha512-7xaQVm2+Virra9mHCD8Ssfd94oTqmPIzRds60/YLMmM2aehzY4sVP5qsC8dTSzh8Oc7lm/IRGufpalZVQgRWbg==}
     hasBin: true
 
   '@coinbase/cds-utils@2.3.5':
     resolution: {integrity: sha512-wyAAm54HtslDzcXkrT0MnBd5dKmYWSrxEE7mpTBUzJRQeeBH3kmcYEEZIR2+K7Lrp5FpDE5TObR1DPleWNybFg==}
 
-  '@coinbase/cds-web@9.22.0':
-    resolution: {integrity: sha512-7OpGyfZUyTPhxPNoesimAuFny+GG3jczX1PHu1B1PUhPAUhwQbIAaYB4vnykL/SHL6fU+LZhg5kui4eh0Y1CzQ==}
+  '@coinbase/cds-web@9.29.0':
+    resolution: {integrity: sha512-8HOCTpnWE47Ew6h8AzxjF1tpIzmz8iXa2HJey1yFF9XcfuDFidD297tIzackpTyiWO2ShiynP9cKF87CqgyvVA==}
     peerDependencies:
       framer-motion: ^10.18.0
       react: ^18.0.0 || ~19.1.2
@@ -3403,11 +3403,11 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@coinbase/cds-common@9.22.0(@types/node@22.20.1)(react@19.1.2)':
+  '@coinbase/cds-common@9.29.0(@types/node@22.20.1)(react@19.1.2)':
     dependencies:
-      '@coinbase/cds-icons': 5.22.0
-      '@coinbase/cds-illustrations': 4.48.0
-      '@coinbase/cds-mcp-server': 9.22.0(@types/node@22.20.1)
+      '@coinbase/cds-icons': 5.26.0
+      '@coinbase/cds-illustrations': 4.49.0
+      '@coinbase/cds-mcp-server': 9.29.0(@types/node@22.20.1)
       '@coinbase/cds-utils': 2.3.5
       '@modelcontextprotocol/sdk': 1.30.0(zod@3.25.76)
       d3-array: 3.2.4
@@ -3425,13 +3425,13 @@ snapshots:
       - '@types/node'
       - supports-color
 
-  '@coinbase/cds-icons@5.22.0': {}
+  '@coinbase/cds-icons@5.26.0': {}
 
-  '@coinbase/cds-illustrations@4.48.0': {}
+  '@coinbase/cds-illustrations@4.49.0': {}
 
   '@coinbase/cds-lottie-files@3.3.4': {}
 
-  '@coinbase/cds-mcp-server@9.22.0(@types/node@22.20.1)':
+  '@coinbase/cds-mcp-server@9.29.0(@types/node@22.20.1)':
     dependencies:
       '@inquirer/prompts': 7.10.1(@types/node@22.20.1)
       '@modelcontextprotocol/sdk': 1.30.0(zod@3.25.76)
@@ -3446,11 +3446,11 @@ snapshots:
       humps: 2.0.1
       type-fest: 2.19.0
 
-  '@coinbase/cds-web@9.22.0(@types/node@22.20.1)(@types/react@19.2.18)(framer-motion@10.18.0(react-dom@19.1.2(react@19.1.2))(react@19.1.2))(react-dom@19.1.2(react@19.1.2))(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))':
+  '@coinbase/cds-web@9.29.0(@types/node@22.20.1)(@types/react@19.2.18)(framer-motion@10.18.0(react-dom@19.1.2(react@19.1.2))(react@19.1.2))(react-dom@19.1.2(react@19.1.2))(react@19.1.2)(use-sync-external-store@1.6.0(react@19.1.2))':
     dependencies:
-      '@coinbase/cds-common': 9.22.0(@types/node@22.20.1)(react@19.1.2)
-      '@coinbase/cds-icons': 5.22.0
-      '@coinbase/cds-illustrations': 4.48.0
+      '@coinbase/cds-common': 9.29.0(@types/node@22.20.1)(react@19.1.2)
+      '@coinbase/cds-icons': 5.26.0
+      '@coinbase/cds-illustrations': 4.49.0
       '@coinbase/cds-lottie-files': 3.3.4
       '@coinbase/cds-utils': 2.3.5
       '@floating-ui/react-dom': 2.1.9(react-dom@19.1.2(react@19.1.2))(react@19.1.2)
@@ -3939,8 +3939,8 @@ snapshots:
       cross-spawn: 7.0.6
       eventsource: 3.0.7
       eventsource-parser: 3.1.1
-      express: 5.2.1(supports-color@7.2.0)
-      express-rate-limit: 8.6.2(express@5.2.1(supports-color@7.2.0))
+      express: 5.2.1
+      express-rate-limit: 8.6.2(express@5.2.1)
       hono: 4.13.1
       jose: 6.2.8
       json-schema-typed: 8.0.2
@@ -4569,7 +4569,7 @@ snapshots:
 
   baseline-browser-mapping@2.11.13: {}
 
-  body-parser@2.3.0(supports-color@7.2.0):
+  body-parser@2.3.0:
     dependencies:
       bytes: 3.1.2
       content-type: 2.0.0
@@ -5191,18 +5191,18 @@ snapshots:
 
   expect-type@1.4.0: {}
 
-  express-rate-limit@8.6.2(express@5.2.1(supports-color@7.2.0)):
+  express-rate-limit@8.6.2(express@5.2.1):
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
-      express: 5.2.1(supports-color@7.2.0)
+      express: 5.2.1
       ip-address: 10.5.0
     transitivePeerDependencies:
       - supports-color
 
-  express@5.2.1(supports-color@7.2.0):
+  express@5.2.1:
     dependencies:
       accepts: 2.0.0
-      body-parser: 2.3.0(supports-color@7.2.0)
+      body-parser: 2.3.0
       content-disposition: 1.1.0
       content-type: 1.0.5
       cookie: 0.7.2
@@ -5212,7 +5212,7 @@ snapshots:
       encodeurl: 2.0.0
       escape-html: 1.0.3
       etag: 1.8.1
-      finalhandler: 2.1.1(supports-color@7.2.0)
+      finalhandler: 2.1.1
       fresh: 2.0.0
       http-errors: 2.0.1
       merge-descriptors: 2.0.0
@@ -5223,8 +5223,8 @@ snapshots:
       proxy-addr: 2.0.7
       qs: 6.15.3
       range-parser: 1.3.0
-      router: 2.2.0(supports-color@7.2.0)
-      send: 1.2.1(supports-color@7.2.0)
+      router: 2.2.0
+      send: 1.2.1
       serve-static: 2.2.1
       statuses: 2.0.2
       type-is: 2.1.0
@@ -5266,7 +5266,7 @@ snapshots:
     dependencies:
       to-regex-range: 5.0.1
 
-  finalhandler@2.1.1(supports-color@7.2.0):
+  finalhandler@2.1.1:
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
       encodeurl: 2.0.0
@@ -6056,7 +6056,7 @@ snapshots:
       '@rollup/rollup-win32-x64-msvc': 4.62.4
       fsevents: 2.3.3
 
-  router@2.2.0(supports-color@7.2.0):
+  router@2.2.0:
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
       depd: 2.0.0
@@ -6105,7 +6105,7 @@ snapshots:
 
   semver@7.8.5: {}
 
-  send@1.2.1(supports-color@7.2.0):
+  send@1.2.1:
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
       encodeurl: 2.0.0
@@ -6126,7 +6126,7 @@ snapshots:
       encodeurl: 2.0.0
       escape-html: 1.0.3
       parseurl: 1.3.3
-      send: 1.2.1(supports-color@7.2.0)
+      send: 1.2.1
     transitivePeerDependencies:
       - supports-color
 

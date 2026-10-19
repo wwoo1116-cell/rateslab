@@ -434,16 +434,6 @@ export function InstrumentTable({
    * row — which is correct: nothing is under the pointer. */
   const handleMouseLeave = useCallback(() => emitHover(undefined), [emitHover]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key !== 'Enter' && e.key !== ' ') return;
-      const row = rowFromEvent(e.target);
-      if (!row) return;
-      e.preventDefault();
-      onSelect(row);
-    },
-    [rowFromEvent, onSelect],
-  );
 
   /**
    * Focus survival across virtualization.
@@ -456,6 +446,11 @@ export function InstrumentTable({
    * to the end of the document.
    */
   const focusedId = useRef<string | null>(null);
+  /** ★**화살표가 막 움직였다**는 깃발. 아래 복원 효과는 「초점이 표 안에 있으면
+   *  건드리지 않는다」가 기본인데(그래야 남의 초점을 안 훔친다), 화살표 이동은
+   *  바로 그 «표 안에서 표 안으로» 다 — 깃발이 없으면 그 이른 반환이 이동을
+   *  삼킨다. 옮기고 나면 내린다. */
+  const wantFocus = useRef(false);
   const onFocusCapture = useCallback(
     (e: React.FocusEvent) => {
       const tr = (e.target as HTMLElement).closest?.(ROW_SELECTOR);
@@ -487,13 +482,128 @@ export function InstrumentTable({
     const host = hostRef.current;
     if (!host) return;
     const active = document.activeElement;
-    if (active && active !== document.body && host.contains(active)) return;
+    if (!wantFocus.current && active && active !== document.body && host.contains(active)) return;
     const el = host.querySelector<HTMLTableRowElement>(
       `${ROW_SELECTOR}[${ROW_ATTR}="${CSS.escape(want)}"]`,
     );
-    if (el) el.focus({ preventScroll: true });
-    else host.focus({ preventScroll: true });
+    if (el) {
+      el.focus({ preventScroll: true });
+      wantFocus.current = false;
+    } else if (!wantFocus.current) {
+      host.focus({ preventScroll: true });
+    }
+    /* 못 찾았고 화살표가 부른 것이면 **다음 렌더에서 다시** — 방금 건 스크롤이
+       그 줄을 만들었을 테고, 그 렌더가 `items` 를 바꿔 이 효과를 다시 부른다.
+       되풀이가 안 닫히는 일은 없다: 이 효과는 `items` 가 바뀔 때만 돈다. */
   }, [items]);
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * ★**roving tabindex** — 표 전체가 탭 정지 **한 칸**이다 [2026-10-19].
+   *
+   * 여기는 행마다 `tabIndex={0}` 이었다. 그러면 줄 사이 이동이 **Tab** 이고,
+   * 터미널 레인이 2026-08-27 에 같은 꼴을 진단한 문장이 그대로 적용된다
+   * (`terminal/apps/TableApp.tsx:34`): 「탭 348번이고, 가상 스크롤이라 탭이 아직
+   * 그려지지 않은 행에는 닿지도 못한다 — 즉 탭만으로는 348개 중 스물 몇 개만
+   * 닿는 **반쪽 키보드**」. 그 레인이 고친 것을 **배운 원본인 이 표에는 안
+   * 돌려놨었다**. 이 블록이 그 역이식이다.
+   *
+   * 표준 문법은 WAI-ARIA Authoring Practices 의 grid 패턴이다 — 탭 정지 하나,
+   * 안에서는 화살표. 파일 관리자·메일 목록이 쓰는 그 문법이고 가상 스크롤과도
+   * 맞는다(움직이는 것은 «어느 줄» 이라는 값이어서, 안 그려졌으면 그리로 스크롤한
+   * 다음 초점을 준다).
+   *
+   * ⚠ 캐논(`TableApp`)은 커서를 **색인**으로 들지만 이 파일은 초점을 **id** 로
+   * 든다(`focusedId` + 그 복원 효과). 그래서 커서도 id 로 든다 — 색인을 두 번째
+   * 진실로 더하면 정렬·필터가 바뀔 때 둘이 갈린다.
+   * ────────────────────────────────────────────────────────────────────────── */
+
+  /** 화면 차례대로의 행 id — 구분선 센티넬은 짚는 대상이 아니라 건너뛴다. */
+  const rowIds = useMemo(
+    () => display.flatMap((it) => (it.kind === 'row' ? [it.row.id] : [])),
+    [display],
+  );
+  const [cursorId, setCursorId] = useState<string | null>(null);
+
+  /** 탭 정지를 가진 **한 줄**. 커서가 (정렬·필터로) 사라졌으면 고른 줄로, 그것도
+   *  없으면 첫 줄로 떨어진다 — 탭 정지가 **0개가 되는 순간이 없어야** 표가 키보드
+   *  순서에서 아예 사라지지 않는다. */
+  const activeId =
+    cursorId != null && rowIds.includes(cursorId)
+      ? cursorId
+      : selectedId != null && rowIds.includes(selectedId)
+        ? selectedId
+        : (rowIds[0] ?? null);
+
+  const move = useCallback(
+    (to: number | 'home' | 'end') => {
+      if (rowIds.length === 0) return;
+      const at = activeId != null ? rowIds.indexOf(activeId) : -1;
+      const next =
+        to === 'home'
+          ? 0
+          : to === 'end'
+            ? rowIds.length - 1
+            : Math.min(Math.max(0, (at < 0 ? 0 : at) + to), rowIds.length - 1);
+      const id = rowIds[next];
+      if (id == null || id === activeId) return;
+      focusedId.current = id;
+      setCursorId(id);
+      /* 이미 그려진 줄이면 바로 초점을 준다 — 그때는 `items` 가 안 바뀌어서
+         복원 효과가 돌지 않는다. 안 그려졌으면 깃발을 세우고 스크롤만 건다. */
+      const el = hostRef.current?.querySelector<HTMLTableRowElement>(
+        `${ROW_SELECTOR}[${ROW_ATTR}="${CSS.escape(id)}"]`,
+      );
+      if (el) {
+        el.focus({ preventScroll: true });
+        return;
+      }
+      wantFocus.current = true;
+      const vi = display.findIndex((it) => it.kind === 'row' && it.row.id === id);
+      if (vi >= 0) virtualizer.scrollToIndex(vi, { align: 'auto' });
+    },
+    [activeId, display, rowIds, virtualizer],
+  );
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      /* 열 머리의 정렬 버튼 위에서는 화살표를 안 먹는다 — 거기서 아래 화살표는
+         «다음 컨트롤» 이지 «다음 행» 이 아니다(캐논과 같은 예외). */
+      if ((e.target as HTMLElement | null)?.tagName === 'BUTTON') return;
+      switch (e.key) {
+        case 'Enter':
+        case ' ': {
+          const row = rowFromEvent(e.target);
+          if (!row) return;
+          /* Space 의 기본 동작은 «한 화면 스크롤» 이라, 막지 않으면 고른 줄이
+             화면 밖으로 나간다. */
+          e.preventDefault();
+          onSelect(row);
+          return;
+        }
+        case 'ArrowDown':
+          e.preventDefault();
+          return move(1);
+        case 'ArrowUp':
+          e.preventDefault();
+          return move(-1);
+        case 'PageDown':
+          e.preventDefault();
+          return move(10);
+        case 'PageUp':
+          e.preventDefault();
+          return move(-10);
+        case 'Home':
+          e.preventDefault();
+          return move('home');
+        case 'End':
+          e.preventDefault();
+          return move('end');
+        default:
+          return;
+      }
+    },
+    [move, onSelect, rowFromEvent],
+  );
 
   // 0 would collapse every fixed width; before the first measurement the
   // colgroup declares nothing and the browser lays the table out on content.
@@ -653,7 +763,9 @@ export function InstrumentTable({
               <TableRow
                 key={row.id}
                 {...{ [ROW_ATTR]: row.id }}
-                tabIndex={0}
+                /* ★roving tabindex — 위 블록이 왜인지를 적는다. 여기가 `0` 이던
+                   것이 「탭 N번 + 안 그려진 줄엔 못 닿는 반쪽 키보드」였다. */
+                tabIndex={row.id === activeId ? 0 : -1}
                 /* `aria-current`, not `aria-selected`: on a plain `role=table`
                    row aria-selected is invalid and assistive tech ignores it
                    (전체 앱 크리틱 실측 2026-08-19). aria-current is valid on
