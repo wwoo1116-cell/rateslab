@@ -42,6 +42,7 @@ npx vitest run              # 기대: 120파일 · 2,024 통과 · 1~2 건너뜀
 
 ```bash
 # (1) 그 한 파일만 빼고 — 가장 싸다
+#     실측 2026-10-19: 1,936 통과 · 7 건너뜀 · 8 xfail · 13분 24초 (SQL 을 탄다)
 cd backend && python -m pytest -q --ignore=tests/test_static_agreement.py
 
 # (2) 개발용 쪽지를 남기는 백엔드를 띄우고 전수로
