@@ -103,6 +103,15 @@ BASE_KNOBS: dict[str, Any] = {
 COST_BP = 0.5
 NOTIONAL = 1_000_000.0
 
+#: 1년의 영업일 — `universe.WINDOW` 의 그 수다. 엔진의 봉이 영업일이므로
+#: 보유 봉수를 연으로 바꾸는 제수가 이것이다.
+BARS_PER_YEAR = 252.0
+
+#: 보유기간의 **중앙값**을 내려면 거래가 이만큼은 있어야 한다. 1년 창은 계열당
+#: 0~5건이라(모듈 머리 §오너가 정한 것 2) 한 건짜리 중앙값은 그 한 건이다 —
+#: 그런 수로 순기대를 세우면 「기대」가 아니라 일화다.
+MIN_TRADES_FOR_HOLD = 2
+
 #: 노브 다섯 — 격자 칸에서 이 열쇠만 꺼낸다.
 KNOB_KEYS = ("lookback", "entryZ", "exitZ", "stopZ", "entryMode")
 
@@ -319,15 +328,79 @@ def position_of(op: dict | None, *, kind: str, now: dict | None,
     return out
 
 
+def hold_bars(trades: list[dict], since: str) -> float | None:
+    """구간 안에서 **청산된** 거래들의 보유 봉수 중앙값. 모자라면 `None`.
+
+    순기대가 「분기당 캐리」를 실제 보유기간으로 환산하려면 그 기간이 있어야
+    하는데, 가정으로 꽂으면 그 가정이 숫자의 크기를 정해 버린다. 그래서 **이
+    계열이 실제로 얼마나 들고 있었는가**를 쓴다.
+
+    ★세는 규약은 `mrmetrics.score` 와 **같다** — 「거래는 구간 안에서 청산된
+    것만」이다(그 함수 머리). 진입 기준으로 세면 승률·거래수와 다른 모집단에서
+    중앙값을 내게 되고, 한 카드 안의 두 수가 다른 거래를 말하게 된다.
+
+    ⚠ 이 수도 **선택의 산물**이다 — 조건을 고른 창과 같은 창에서 나온다
+    (`GRID_SPAN == PLAN_SPAN`, 모듈 머리 §오너가 정한 것 2). 표본밖 기대
+    보유기간이 아니다.
+    """
+    xs = sorted(float(t["bars"]) for t in trades
+                if t.get("bars") and str(t.get("exitDate", "")) >= since)
+    if len(xs) < MIN_TRADES_FOR_HOLD:
+        return None
+    n = len(xs)
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2.0
+
+
+def net_expectation(levels: list[dict], *, theta_bp: float | None,
+                    horizon_y: float, bars: float | None, scale: float,
+                    cost_bp: float) -> list[dict]:
+    """방향마다 **「들어가서 청산까지」의 기대 bp** — 수렴 + 캐리·롤 − 비용.
+
+        수렴   = |진입 − 청산|            언제나 버는 쪽 (문 둘 사이 거리)
+        캐리·롤 = 세타(+1) × 방향 × 보유기간/호라이즌
+        순기대 = 수렴 + 캐리·롤 − **왕복 비용**(2 × `COST_BP`)
+
+    ★이 덧셈이 참인 이유는 세 항이 **같은 단위**이기 때문이다 — 엔진의 손익이
+    `Δ호가 × ₩/bp` 라(`mrbacktest.simulate`) 호가 bp 로 적힌 것끼리 더해진다.
+    `carryroll` 이 세타를 연금이 아니라 **호가 드리프트**로 재는 이유가 이
+    가산성이고, 그 선택의 근거와 대가는 그 모듈 머리에.
+
+    왕복인 이유: 들어갈 때 한 번, 나올 때 한 번 [OWNER — 거래 한 번 0.5bp ·
+    왕복 1bp, 정본 `paper.cost_dv01_of`].
+
+    **캐리·롤이 음수인 방향은 수렴이 그만큼을 먼저 갚아야 한다.** 이 표가
+    말하려는 것이 그 한 문장이고, 그래서 `carryRollBp` 를 따로도 싣는다 —
+    합만 보면 어느 쪽이 깎았는지 안 보인다.
+
+    세타나 보유기간이 없으면 **순기대를 안 만든다**(그 열쇠가 아예 없다).
+    0 으로 채우면 「비용만큼 손해인 거래」로 읽힌다.
+    """
+    out: list[dict] = []
+    for lv in levels:
+        row = {"dir": lv["dir"], "short": lv["short"]}
+        converge = abs(lv["entry"] - lv["exit"]) * scale
+        row["convergeBp"] = round(converge, 3)
+        if theta_bp is not None and bars is not None and horizon_y > 0:
+            cr = theta_bp * lv["dir"] * (bars / BARS_PER_YEAR) / horizon_y
+            row["carryRollBp"] = round(cr, 3)
+            row["netBp"] = round(converge + cr - 2.0 * cost_bp, 3)
+        out.append(row)
+    return out
+
+
 def build_series(sid: str, *, leg_of: Callable[..., dict],
                  grid_of: Callable[..., dict],
+                 carry_of: Callable[[str, str], dict | None] | None = None,
                  base: dict[str, Any] | None = None,
                  cost_bp: float = COST_BP,
                  rank_key: str = PLAN_RANK_KEY) -> dict:
-    """계열 하나의 계획 — 격자 → 채택 → 실행 → 행·레벨·포지션·1년 성적.
+    """계열 하나의 계획 — 격자 → 채택 → 실행 → 행·레벨·포지션·1년 성적·캐리.
 
     `leg_of(sid, knobs, accounting=…)` 는 `main._mr_leg` 의 얼굴이고,
     `grid_of(leg, knobs, span=…)` 는 `main._mr_optimize` 의 얼굴이다.
+    `carry_of(sid, kind)` 는 `carryroll.for_series` 의 얼굴 — **이 모듈은 DB 를
+    모른다**는 계약(머리)이 그대로 서야 해서 세 번째도 주입이다. 안 주면
+    캐리 칸이 **없다**(0 이 아니다).
     """
     base = dict(BASE_KNOBS if base is None else base)
 
@@ -385,8 +458,27 @@ def build_series(sid: str, *, leg_of: Callable[..., dict],
 
     # ⑤ 지난 1년 — 엔진은 **전체 표본에서 한 번만** 돌고 채점만 잘린다
     #    (`mrmetrics` 머리 §구간 — 룩백 워밍업이 구간 앞에 있어야 z 가 선다).
-    perf = mrm.score(dates, r["points"], r["trades"],
-                     mrm.span_start(dates, PLAN_SPAN_MONTHS), cost_bp)
+    span_from = mrm.span_start(dates, PLAN_SPAN_MONTHS)
+    perf = mrm.score(dates, r["points"], r["trades"], span_from, cost_bp)
+
+    # ⑥ 앞을 보는 캐리·롤다운, 그리고 방향마다의 순기대.
+    #    `carryroll` 이 서는 계열은 BSS·IRC·IRF 뿐이라 나머지는 `None` 이 온다 —
+    #    그 계열의 화면에는 이 칸이 **없다**.
+    carry_blk = carry_of(sid, kind) if carry_of is not None else None
+    # `span_from` 은 **색인**이다(`mrmetrics.span_start`) — 날짜로 바꿔서 넘긴다.
+    bars = hold_bars(r["trades"], dates[span_from] if dates else "")
+    carry_roll = None
+    if carry_blk is not None:
+        carry_roll = {
+            **carry_blk,
+            "holdBars": bars,
+            "costBp": cost_bp,
+            # 방향마다 한 줄. 세타나 보유기간이 없으면 `netBp` 가 빠진다.
+            "byDir": net_expectation(
+                levels, theta_bp=carry_blk["thetaBp"],
+                horizon_y=carry_blk["horizonY"], bars=bars,
+                scale=scale, cost_bp=cost_bp),
+        }
 
     return {
         **row,
@@ -401,6 +493,8 @@ def build_series(sid: str, *, leg_of: Callable[..., dict],
         "exitsNow": now,
         "position": position,
         "perf1y": {k: perf[k] for k in PERF_KEYS},
+        # 앞을 보는 캐리·롤다운 — 계열이 안 서면 `None` 이고 화면은 그 칸을 비운다.
+        "carryRoll": carry_roll,
         # 이 계열의 돈이 실가격 회계인가 엔진 근사인가 — 분해 카드의 «—» 가 그 값이다.
         "real": leg["real"],
         "history": history,

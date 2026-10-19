@@ -83,6 +83,7 @@ from . import calendar_cache
 from . import df_cache
 from . import momentum
 from . import paper
+from . import carryroll
 from . import mr as mr_mod
 from . import mrbacktest as mrbt
 from . import mrbook
@@ -2715,6 +2716,23 @@ def _mr_plan_grid(leg: dict, knobs: dict, *, span: str) -> dict:
         tradable_dv=leg["tradable"])
 
 
+def _mr_plan_carry(sid: str, kind: str) -> dict | None:
+    """`mrplan` 이 부르는 `carryroll.for_series` 의 얼굴 — 앞을 보는 캐리·롤다운.
+
+    조달 기준은 **화면 기본값**이다(계획면에는 조달 노브가 없다 — 보드와 같다).
+    못 서는 계열(FSW·FUT, 그리고 `T − h` 가 커브 밖인 자리)은 `None` 이고, 그
+    사실이 화면에서 **빈 칸**으로 보여야 한다. 0 으로 채우지 않는다.
+    """
+    try:
+        return carryroll.for_series(sid, kind)
+    except (KeyError, ValueError) as exc:          # 한 계열의 사고가 판을 안 엎는다
+        # `log` 는 이 모듈에 없다 — `_mr_plan_build` 안의 **지역**이다. 같은
+        # 이름의 로거를 여기서 따로 꺼낸다(빌더의 줄과 한자리에 모이게).
+        logging.getLogger("sauron.mrplan").warning(
+            "[mrplan] %s 캐리·롤 못 세움: %s", sid, exc)
+        return None
+
+
 def _mr_plan_one(sid: str) -> dict:
     """계열 하나 — 디스크 캐시를 통과한다. 이름이 새것이라 옛 보드 캐시와 안 섞인다.
 
@@ -2724,7 +2742,8 @@ def _mr_plan_one(sid: str) -> dict:
     # 계획면도 같은 이유로 두 출처를 다 본다(위 `_mr_payload` 의 그 주석).
     return cached(mrp.cache_name(sid), _mr_cache_key(),
                   lambda: mrp.build_series(sid, leg_of=_mr_plan_leg,
-                                           grid_of=_mr_plan_grid))
+                                           grid_of=_mr_plan_grid,
+                                           carry_of=_mr_plan_carry))
 
 
 def _mr_plan_fail(sid: str, label: str, why: str) -> None:
