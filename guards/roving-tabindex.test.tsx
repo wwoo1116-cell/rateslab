@@ -196,6 +196,7 @@ describe('② 전수 등록 — 새 파일이 조용히 빠져나가지 못한�
   /** 그림 전체가 위젯 하나다 — `role="application"` + 화살표. */
   const ONE_WIDGET = [
     'lab/creditdts/CreditDtsPage.tsx',
+    'lab/model/model/WiringGraph.tsx',
     'terminal/apps/ChartApp.tsx',
     'terminal/apps/GraphApp.tsx',
     'terminal/apps/TimelineApp.tsx',
@@ -204,10 +205,11 @@ describe('② 전수 등록 — 새 파일이 조용히 빠져나가지 못한�
    *  (`rv/RankingTable.tsx` 의 행마다 선 `<button>`). 그림은 탭 정지가 아니다.
    *  같은 계약을 `rv/TenorHeat.tsx:16`·`rv/ScoreHeat.tsx:15` 가 글로 적어 뒀다. */
   const POINTER_SHORTCUT = ['rv/RvScatter.tsx'];
-  /** ★**아직 안 고친 자리**. 노드 35개마다 탭 정지라 규칙 1 위반이다 —
-   *  [OWNER 2026-10-19] 이번 패스의 범위 밖으로 뒀다. **고치는 날 이 목록에서
-   *  지우는 것이 그 커밋의 마지막 줄이다**(지우지 않으면 아래가 빨개진다). */
-  const KNOWN_GAP = ['lab/model/model/WiringGraph.tsx'];
+  /** 아직 안 고친 자리. **비어 있다.** `WiringGraph`(노드 35개마다 탭 정지)가
+   *  유일한 항목이었고 [OWNER 2026-10-19] 에 고쳐서 위 `ONE_WIDGET` 으로 갔다.
+   *  목록은 **줄기만 한다** — 여기 적는 것은 수리를 미룬다는 선언이라, 적을 때는
+   *  왜 미루는지를 같이 적는다. */
+  const KNOWN_GAP: string[] = [];
 
   it('그림 축 전부가 셋 중 하나로 분류돼 있다', () => {
     expect(plots.sort()).toEqual([...ONE_WIDGET, ...POINTER_SHORTCUT, ...KNOWN_GAP].sort());
@@ -227,11 +229,15 @@ describe('② 전수 등록 — 새 파일이 조용히 빠져나가지 못한�
     ).toBe(false);
   });
 
-  it.each(KNOWN_GAP)('%s — 아직 노드마다 탭 정지다 (고치면 이 단언을 지운다)', (rel) => {
-    const src = FILES.find((f) => f.rel === rel)!.src;
-    expect(
-      BARE_STOP.test(src),
-      '고쳤나요? 그러면 KNOWN_GAP 에서 이 파일을 지우세요 — 목록은 줄기만 합니다',
-    ).toBe(true);
+  it('미룬 자리에 **아직 탭 정지가 남아 있다** — 고쳤으면 목록에서 지운다', () => {
+    /* 고친 파일이 목록에 남아 있으면 그 줄은 거짓이 되고, 거짓인 목록은 다음
+       사람에게 「여기는 아직 고장났다」고 말한다. 그래서 양쪽을 다 잰다. */
+    for (const rel of KNOWN_GAP) {
+      const src = FILES.find((f) => f.rel === rel)!.src;
+      expect(BARE_STOP.test(src), `${rel} 는 고쳐졌어요 — KNOWN_GAP 에서 지우세요`).toBe(true);
+    }
+    /* 이 수는 **올라갈 수 없다**. 새 그림 축이 규칙 1 을 안 지키면 그 커밋이
+       수리를 들고 와야지, 이 목록을 늘려서는 안 된다. */
+    expect(KNOWN_GAP.length, '미룬 자리가 늘었어요 — 목록은 줄기만 합니다').toBeLessThanOrEqual(0);
   });
 });
