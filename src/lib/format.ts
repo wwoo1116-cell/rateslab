@@ -43,6 +43,48 @@ export function unitSuffix(unit: Unit): string {
   return "";
 }
 
+/* ── 수급의 두 자 [2026-10-19] ──────────────────────────────────────────────
+ *
+ * `fmtLevel` 은 **금리·가격 전용**이다(%/bp/ratio/가격). 투자자별 수급의 값은
+ * **계약수**(정수)와 **백만원**이라 그 자에 없다. 둘 다 부호가 메시지이므로
+ * (순매수냐 순매도냐) 부호를 적고, 음수 글자는 U+2212 다 — 숫자 칸이 tabular
+ * 라 ASCII 하이픈을 쓰면 폭이 어긋난다.
+ *
+ * 이 파일에 두는 이유: 여기가 「표·리드아웃 한 벌」의 주인이다. 화면마다 다시
+ * 적으면 곧 자릿수가 갈린다(CLAUDE.md 얼라인 8).
+ */
+
+/** 계약수 — 정수에 천 단위 구분. 선물 수급이 쓴다. */
+export function fmtContracts(v: number | null | undefined): string {
+  if (v == null) return EMDASH;
+  const head = v > 0 ? "+" : v < 0 ? MINUS : "";
+  return `${head}${Math.abs(v).toLocaleString("ko-KR")}`;
+}
+
+/** 억원 — 현물 수급의 **일별·구간** 칸이 쓴다. 서버가 백만원으로 주므로 100 으로 나눈다.
+ *
+ *  ★조로 적으면 일별이 전부 `+0.0조` 로 뭉개진다(실측 2026-10-19: 보험 10-16
+ *  145,517백만원 = 1,455억인데 화면은 0.1조). 그래서 **열마다 단위를 정한다** —
+ *  일별·5일·20일은 억, 올해는 조. 한 칸 안에서 단위가 섞이는 것보다 열이
+ *  자기 단위를 머리에 적는 편이 읽힌다. */
+export function fmtEok(mil: number | null | undefined): string {
+  if (mil == null) return EMDASH;
+  const v = Math.round(mil / 100);
+  const head = v > 0 ? "+" : v < 0 ? MINUS : "";
+  return `${head}${Math.abs(v).toLocaleString("ko-KR")}`;
+}
+
+/** 조원 — 현물 수급의 **누적(올해)** 칸이 쓴다. 서버가 **백만원**으로 주므로 1e6 으로 나눈다.
+ *
+ *  조 단위로 적는 이유: 2026 누적이 −93조~+60조라 백만원으로 적으면 자릿수가
+ *  여덟이고, 트레이더가 세는 단위가 아니다. 소수 한 자리면 1,000억 해상도다. */
+export function fmtJo(mil: number | null | undefined): string {
+  if (mil == null) return EMDASH;
+  const v = mil / 1e6;
+  const head = v > 0 ? "+" : v < 0 ? MINUS : "";
+  return `${head}${Math.abs(v).toFixed(1)}조`;
+}
+
 /** Level, unit-aware: % → 4dp, bp → 1dp, ratio → 2dp. Null → em dash. */
 export function fmtLevel(v: number | null | undefined, unit: Unit): string {
   if (v == null) return EMDASH;

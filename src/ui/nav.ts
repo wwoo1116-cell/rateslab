@@ -257,7 +257,7 @@ export function isLabId(v: string | undefined): v is LabId {
  * 회사채AAA·카드채AA+·캐피탈채AA- 와 함께). 그 둘은 벤치마크로 같이 서는 것이고,
  * 데스크가 이 화면을 「크레딧 RV」로 부르는 것이 맞다는 판단이다. 화면이 그
  * 사실을 한 줄로 말한다. */
-export type StrategyId = 'credit-rv' | 'mean-reversion' | 'momentum';
+export type StrategyId = 'credit-rv' | 'mean-reversion' | 'momentum' | 'flow';
 
 export const DEFAULT_STRATEGY: StrategyId = 'credit-rv';
 
@@ -320,10 +320,31 @@ export const STRATEGY_ITEMS: {
        여기서는 «추세»라 뜻이 이어진다. */
     glyph: '↗',
   },
+  /* 넷째 세입자 — **투자자별 수급** [OWNER 2026-10-16 — "선물+현물 둘 다 ·
+     새 세입자"]. 이웃 셋과 같은 자세다: **집계면이지 신호면이 아니다.**
+     desc 가 행동을 안 적는 이유가 그것이고(Credit RV·Mean Reversion 과 같은
+     문법), 화면 끝의 고지 문장도 같은 의무다.
+
+     ## 이 면이 «순위» 를 조심하는 자리
+
+     수급은 영합이라 대분류(외국인·기관계)는 상관이 −0.9996 이다 — 순위를
+     매기면 매일 같은 두 줄이 나온다. 그래서 대분류는 대조로 세우고 순위는
+     기관계 세분이 진다. desc 가 「누가 받고 누가 냈나」로 끝나는 것은 그
+     구조를 한 줄로 말한 것이다(`backend/app/flow.py` 머리). */
+  {
+    id: 'flow',
+    label: 'Flow',
+    desc: '국채선물·현물에서 오늘 누가 받고 누가 냈나 — 주체별 순매수와 평소 대비',
+    /* 위아래 화살 — 받는 쪽과 내는 쪽이 한 그림에 있는 면이다. 1 UTF-16 단위고
+       기존 글리프 스물과 안 겹친다(`⇆` 퓨처스왑 · `⇄` 자산스왑과 계열은 같되
+       모양이 다르다 — 그 둘은 Backtest 그룹이라 한 목록에 안 선다). */
+    glyph: '⇅',
+  },
 ];
 
 export function isStrategyId(v: string | undefined): v is StrategyId {
-  return v === 'credit-rv' || v === 'mean-reversion' || v === 'momentum';
+  return v === 'credit-rv' || v === 'mean-reversion' || v === 'momentum'
+    || v === 'flow';
 }
 
 /** 내려간 세입자. 지금은 없지만 자리를 비워 둔다 — `RETIRED_LAB` 과 같은 이유로,

@@ -47,6 +47,7 @@ import { bookIdOf, defaultEntry, newRow } from '@/backtest/book';
 import { SettingView } from '@/ui/SettingView';
 import { BondTypeFilter } from '@/ui/BondTypeFilter';
 import { SimulationPage, type CaseRuns } from '@/sim/SimulationPage';
+import { FlowPage } from '@/flow/FlowPage';
 import { MomentumPage } from '@/momentum/MomentumPage';
 import { PortfolioPage } from '@/pm/PortfolioPage';
 import { MrPage } from '@/mr/MrPage';
@@ -655,10 +656,16 @@ const BANNER_H = 34;
             region={STRATEGY_ITEMS.find((i) => i.id === strategy)?.label ?? '전략'}
             fallback="전략 화면을 그리지 못했어요."
           >
+            {/* ★마지막 가지가 `else` 라 **등록만 하면 그 화면이 그려진다**.
+                세입자를 더할 때 여기 명시 분기를 안 넣으면 가드가 전부 초록인
+                채로 새 탭이 이웃 화면을 띄운다 — `guards/strategy-flow.test.ts`
+                가 그 단언을 진다(`guards/lab-credit-dts.test.ts:367` 선례). */}
             {strategy === 'credit-rv' ? (
               <RvPage />
             ) : strategy === 'mean-reversion' ? (
               <MrPage />
+            ) : strategy === 'flow' ? (
+              <FlowPage />
             ) : (
               <MomentumPage />
             )}

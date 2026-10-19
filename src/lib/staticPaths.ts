@@ -201,6 +201,16 @@ export const momentumBookUrl = () => liveUrl("/api/momentum/book");
  * 돌아오고 배경이 굽는다 — 화면이 그 사실을 적고 몇 초 뒤 다시 묻는다. */
 export const momentumSleeveUrl = () => liveUrl("/api/momentum/sleeve");
 
+/** 투자자별 수급(Strategy 넷째 세입자) — 라이브 전용(두 원천이 SQL 에만).
+ *
+ * `side` 는 `fut`(선물)·`cash`(현물)다. **단위가 달라 한 축에 못 겹치므로**
+ * (계약 대 백만원) 겹치는 그림이 아니라 갈라지는 면이고, 그래서 손잡이가
+ * query 로 간다. 디스크 캐시는 안 쓴다 — 두 원천 합 2.6초라 모듈의 워터마크
+ * 캐시로 충분하다(`backend/app/flow.py::load` 머리). */
+export const flowBoardUrl = (query: string) => liveUrl("/api/flow/board", query);
+export const flowHistoryUrl = (key: string, query: string) =>
+  liveUrl(`/api/flow/history/${encodeURIComponent(key)}`, query);
+
 /** 페이퍼 북 — 이 앱의 **유일한 쓰기 경로**다.
  *
  * 나머지 라우트는 전부 읽기이고 사용자 상태는 `localStorage` 에 있다(조달·

@@ -134,3 +134,38 @@ export function signalTint(rate: number | null | undefined): React.CSSProperties
     backgroundColor: `color-mix(in srgb, ${hue} ${Math.round(alpha * 100)}%, transparent)`,
   };
 }
+
+/* ── 수급 틴트는 **편차 눈금**이다 (Flow, 2026-10-19) ───────────────────────
+ *
+ * 위 셋과 같은 이유로 눈금이 또 선다. `tintAlpha` 는 **bp** 로 재는데 수급의
+ * 값은 **계약수**(일 15만)와 **백만원**이다 — 그대로 넣으면 전 칸이 천장이라
+ * 표가 통째로 빨갛고 파랗다. 크기가 아니라 **평소 대비**를 칠해야 한다.
+ *
+ * 그래서 축을 순위 키와 **같은 것**으로 둔다: 자기 과거 분포 대비 편차(σ).
+ * 표가 그 수로 줄을 세우므로, 칠하는 축과 세우는 축이 같아야 눈과 순위가
+ * 서로를 반박하지 않는다.
+ *
+ * 알파 끝점은 `signalTint` 와 같은 0.06~0.20 이다 — 같은 이유로(이 칸의 숫자도
+ * 색 있는 글자라 깊은 채움이 대비를 갉는다).
+ */
+
+/** 편차(σ) 바닥. 이 아래는 아예 안 칠한다 — 「평소와 다를 것 없다」를 옅은
+ *  이례로 읽게 가르치지 않는다. */
+export const FLOW_SIGMA_FLOOR = 0.5;
+/** 천장. 3σ 위는 더 진해지지 않는다(1년 창에서 그 위는 드물고, 더 진하게 하면
+ *  글자가 안 읽힌다). */
+export const FLOW_SIGMA_CEIL = 3;
+
+/** 수급 칸의 틴트 — 축은 **편차**이고 색은 순매수/순매도 부호다. */
+export function flowTint(sigma: number | null | undefined): React.CSSProperties | undefined {
+  if (sigma == null || sigma === 0) return undefined;
+  const a = Math.abs(sigma);
+  if (a < FLOW_SIGMA_FLOOR) return undefined;
+  const span = FLOW_SIGMA_CEIL - FLOW_SIGMA_FLOOR;
+  const t = Math.min(1, (a - FLOW_SIGMA_FLOOR) / span);
+  const alpha = Number((0.06 + t * 0.14).toFixed(3));
+  const hue = sigma > 0 ? 'var(--sr-up)' : 'var(--sr-down)';
+  return {
+    backgroundColor: `color-mix(in srgb, ${hue} ${Math.round(alpha * 100)}%, transparent)`,
+  };
+}

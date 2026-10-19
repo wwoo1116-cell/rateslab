@@ -29,21 +29,26 @@ import {
 } from '../src/ui/nav';
 
 describe('Strategy 세입자', () => {
-  it('세입자 셋 — Credit RV · Mean Reversion · Momentum 이다', () => {
+  it('세입자 넷 — Credit RV · Mean Reversion · Momentum · Flow 다', () => {
     /* 2026-09-21 에 넷이 셋으로 줄었다 [OWNER — "원래있던 KTB 모멘텀을
        대체하는거니까 … 그냥 Strategy/Momentum 이 더 잘 맞겠다"]. 09-09 의
        선물·합성 거울 면은 **완전히 은퇴**했고, 그 자리를 09-15 동결·채점 중인
        IRS 50/50 이 받는다. 둘을 나란히 두면 「어느 모멘텀이 우리 것인가」를
        화면이 매일 되묻게 되고, 실제로 그 혼동이 났다. 은퇴한 주소는
        `RETIRED_STRATEGY` 가 새 면으로 넘긴다 — 링크는 안 죽는다. */
+    /* 2026-10-19 에 넷째가 왔다 [OWNER 2026-10-16 — "선물+현물 둘 다 ·
+       새 세입자"]. **맨 뒤**다 — 앞에 끼우면 기존 세입자의 차례가 바뀌고
+       내비의 눈 위치가 이유 없이 움직인다. */
     expect(STRATEGY_ITEMS.map((i) => i.id)).toEqual([
       'credit-rv',
       'mean-reversion',
       'momentum',
+      'flow',
     ]);
     expect(STRATEGY_ITEMS[0]!.label).toBe('Credit RV');
     expect(STRATEGY_ITEMS[1]!.label).toBe('Mean Reversion');
     expect(STRATEGY_ITEMS[2]!.label).toBe('Momentum');
+    expect(STRATEGY_ITEMS[3]!.label).toBe('Flow');
     /* 기본은 첫 세입자 그대로 — 예전 `?g=strategy` 링크가 가리키던 화면이다. */
     expect(DEFAULT_STRATEGY).toBe('credit-rv');
   });
