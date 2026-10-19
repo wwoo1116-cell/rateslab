@@ -59,6 +59,69 @@ const INK = ['--sr-flow-1', '--sr-flow-2', '--sr-flow-3', '--sr-flow-4'] as cons
 type Span = '3M' | '1Y' | '3Y' | 'ALL';
 const SPAN_BARS: Record<Span, number> = { '3M': 63, '1Y': 252, '3Y': 756, ALL: Infinity };
 
+/** 대분류 **순매수 대조** — 받은 쪽과 낸 쪽을 한 막대에 [2026-10-19].
+ *
+ * 숫자 넷을 나란히 적으면 「넷이 있다」로 읽히고, 이 면이 말하려는 「한쪽이 산
+ * 만큼 다른 쪽이 팔았다」가 안 보인다. 영합이라 **양쪽 폭이 늘 같고**, 그
+ * 사실 자체가 그림이다.
+ *
+ * 폭은 각 주체의 **절댓값 몫**이다. 색은 부호(순매수 빨강·순매도 파랑) —
+ * 계열 구분색이 아니라 방향색을 쓰는 자리다.
+ */
+function Balance({
+  top, fmt, unit,
+}: {
+  top: { key: string; label: string; value: number }[];
+  fmt: (v: number) => string;
+  unit: string;
+}) {
+  const buy = top.filter((t) => t.value > 0);
+  const sell = top.filter((t) => t.value < 0);
+  const flat = top.filter((t) => t.value === 0);
+  const side = (xs: typeof top) => xs.reduce((a, t) => a + Math.abs(t.value), 0);
+  const total = Math.max(side(buy), side(sell), 1);
+  const bar = (xs: typeof top, hue: string, align: 'flex-start' | 'flex-end') => (
+    <HStack flexGrow={1} gap={0.25} justifyContent={align}>
+      {xs.map((t, i) => (
+        <Box
+          key={t.key}
+          height={14}
+          borderRadius={100}
+          style={{
+            background: `var(${hue})`,
+            opacity: i === 0 ? 1 : 0.45,
+            flex: `${Math.max(Math.abs(t.value), total * 0.004)} 0 0`,
+          }}
+        />
+      ))}
+    </HStack>
+  );
+  return (
+    <VStack gap={0.5} width="100%">
+      <HStack gap={1} alignItems="baseline" justifyContent="space-between">
+        <Text as="span" font="legal" color="fgMuted">받은 쪽</Text>
+        <Text as="span" font="legal" color="fgMuted">낸 쪽</Text>
+      </HStack>
+      <HStack gap={0.5} width="100%" alignItems="center">
+        {bar(buy, '--sr-up', 'flex-end')}
+        {bar(sell, '--sr-down', 'flex-start')}
+      </HStack>
+      <HStack gap={1} alignItems="baseline" justifyContent="space-between" flexWrap="wrap">
+        <Text as="span" font="label2" className="sr-up">
+          {buy.map((t) => `${t.label} ${fmt(t.value)}`).join(' · ') || '—'}
+        </Text>
+        <Text as="span" font="label2" className="sr-down">
+          {sell.map((t) => `${t.label} ${fmt(t.value)}`).join(' · ') || '—'}
+        </Text>
+      </HStack>
+      <Text as="span" font="legal" color="fgMuted">
+        합이 0 이에요 — 영합이라 순위가 아니라 대조로 봐요
+        {flat.length > 0 ? ` · ${flat.map((t) => `${t.label} 0${unit}`).join(' · ')}` : ''}
+      </Text>
+    </VStack>
+  );
+}
+
 export function FlowPage() {
   const [face, setFace] = useState<Face>('fut3');
   const [got, setGot] = useState<FlowBoard | null>(null);
@@ -181,12 +244,14 @@ export function FlowPage() {
             </Text>
           </Box>
         </HStack>
-        <Text as="p" font="legal" color="fgMuted">{got.basis}</Text>
-        {got.excluded.length > 0 ? (
-          <Text as="p" font="legal" color="fgMuted">
-            뺀 것 — {got.excluded.map((e) => `${e.label}: ${e.why}`).join(' · ')}
-          </Text>
-        ) : null}
+        {/* 한 줄로 합친다 — 회색 문장 셋이 쌓이면 벽처럼 읽혀서 아무도 안
+            읽는다(실측 2026-10-19). 뺀 것은 괄호로 이어 붙인다. */}
+        <Text as="p" font="legal" color="fgMuted">
+          {got.basis}
+          {got.excluded.length > 0
+            ? ` (뺀 것 — ${got.excluded.map((e) => e.label).join(' · ')})`
+            : ''}
+        </Text>
       </VStack>
 
       {/* ── 히어로 ──────────────────────────────────────────────────────── */}
@@ -245,46 +310,45 @@ export function FlowPage() {
         </Text>
       </HStack>
 
+      {/* ── 여기부터 **구르는 칸** — 바닥 띠(`ui/BottomStrip`)가 `fixed` 가 아니라
+          기둥의 마지막 칸이라, 내용이 기둥보다 길면 **자라려는 칸이 0 으로 눌린다**
+          (MrPage 가 먼저 밟은 자리). 조건 바·히어로·컨트롤만 위에 남기고 나머지를
+          감싼다 — 안 감싸면 일별 그림과 사실 스트립이 잘린 채 **스크롤도 안 된다**
+          (실측 2026-10-19). */}
+      <VStack gap={1.5} width="100%" flexGrow={1} minHeight={0}
+        style={{ overflowY: 'auto' }}>
       {/* ── 두 칸 ───────────────────────────────────────────────────────── */}
-      <HStack gap={2} alignItems="stretch" minHeight={520} width="100%" flexWrap="wrap">
-        {/* 표가 일곱 열을 진다 — 640 에서는 20일·올해가 잘렸다(실측 2026-10-19).
-            오른쪽 그림은 좁아도 읽히므로 폭을 왼쪽에 준다. */}
-        <Box className="sr-card" flexBasis={900} flexGrow={2} flexShrink={1} minWidth={0}>
-          <VStack paddingX={2} paddingTop={1.5} paddingBottom={0.5}>
+      {/* ★카드는 **`VStack`** 이다 — `Box` 는 CDS 기본이 **가로**라 머리와 대조
+          줄이 한 줄에 붙어 뒤섞였다(실측 2026-10-19, MrPage 가 쓰는 그 꼴). */}
+      <HStack gap={2} alignItems="stretch" minHeight={560} width="100%"
+        flexShrink={0} flexWrap="wrap">
+        {/* 표가 일곱 열을 진다 — 640 에서는 20일·올해가 잘렸다(실측). */}
+        <VStack className="sr-card" flexBasis={900} flexGrow={2} flexShrink={1}
+          minWidth={0} minHeight={0}>
+          <VStack paddingX={2} paddingTop={1.5} paddingBottom={1} gap={1}>
             <Text as="h3" font="label1">
-              {side === 'cash' ? '주체별 순매수' : '당일 순매수 대조와 기관계 세분'}
+              {side === 'cash' ? '주체별 순매수' : '기관계 세분 순위'}
             </Text>
+            {/* 대분류 대조 — **순위가 아니다**(상관 −0.9996). 숫자를 나란히
+                적는 것보다 **양쪽 막대**가 「누가 받고 누가 냈나」를 한 눈에
+                말한다(목업에서 가장 잘 읽히던 자리인데 첫 판에서 빼먹었다). */}
+            {got.top.length > 0 ? <Balance top={got.top} fmt={fmt} unit={unitWord} /> : null}
           </VStack>
-          {/* 대분류 대조 — 순위가 아니다(상관 −0.9996). */}
-          {got.top.length > 0 ? (
-            <VStack paddingX={2} paddingBottom={1} gap={0.5}>
-              <HStack gap={1.5} flexWrap="wrap">
-                {got.top.map((t) => (
-                  <Text key={t.key} as="span" font="label2"
-                    className={t.value > 0 ? 'sr-up' : t.value < 0 ? 'sr-down' : undefined}>
-                    {t.label} {fmt(t.value)}
-                  </Text>
-                ))}
-              </HStack>
-              <Text as="span" font="legal" color="fgMuted">
-                네 주체를 더하면 0 이에요 — 영합이라 순위가 아니라 대조로 봐요.
-              </Text>
-            </VStack>
-          ) : null}
           <Box flexGrow={1} minHeight={0} paddingX={1} paddingBottom={1}>
             <FlowTable rows={got.sub} side={side} floor={got.rankFloor}
               highlight={hover} onHover={setHover} />
           </Box>
-        </Box>
+        </VStack>
 
-        <Box className="sr-card" flexBasis={460} flexGrow={1} flexShrink={1} minWidth={0}>
-          <VStack paddingX={2} paddingTop={1.5} paddingBottom={0.5} gap={0.25}>
-            <Text as="h3" font="label1">누적과 일별</Text>
-            <Text as="span" font="legal" color="fgMuted">
-              선 넷은 누적이고 막대는 첫 계열의 일별이에요.
-            </Text>
-          </VStack>
-          <VStack paddingX={2} paddingBottom={2} gap={0.5}>
+        <VStack className="sr-card" flexBasis={460} flexGrow={1} flexShrink={1}
+          minWidth={0} minHeight={0}>
+          <VStack paddingX={2} paddingTop={1.5} paddingBottom={0.5} gap={0.75}>
+            <HStack alignItems="baseline" justifyContent="space-between" gap={1}>
+              <Text as="h3" font="label1">누적 순매수</Text>
+              <Text as="span" font="legal" color="fgMuted">
+                고른 구간의 첫날부터 다시 세요
+              </Text>
+            </HStack>
             {/* 범례 — 색 단독으로 식별하지 않게(WCAG 2.2 §1.4.1). */}
             <HStack gap={1.5} flexWrap="wrap">
               {got.series.cum.map((s, i) => (
@@ -295,25 +359,30 @@ export function FlowPage() {
                 </HStack>
               ))}
             </HStack>
-            <Box className="sr-plot">
+          </VStack>
+          {/* 그림 둘이 **남는 높이를 나눠 갖는다** — 고정 높이로 두면 카드 아래가
+              빈다(실측). 누적이 둘, 일별이 하나 몫이다. */}
+          <VStack paddingX={2} paddingBottom={1} gap={0.5} flexGrow={1} minHeight={0}>
+            <Box className="sr-plot" flexGrow={2} minHeight={0}>
               <TimeChart
                 dates={win?.dates ?? []}
                 lines={lines}
-                height={200}
                 precision={0}
                 hideTimeAxis
                 accessibilityLabel={`${FACE[face].label} 누적 순매수 — ${got.series.cum.map((s) => s.label).join(', ')}`}
                 {...stack}
               />
             </Box>
-            <Text as="span" font="legal" color="fgMuted">
-              일별 — 빨강이 순매수, 파랑이 순매도예요.
-            </Text>
-            <Box className="sr-plot">
+            <HStack alignItems="baseline" justifyContent="space-between" gap={1}>
+              <Text as="span" font="label2">일별 — {win?.daily?.label ?? ''}</Text>
+              <Text as="span" font="legal" color="fgMuted">
+                빨강이 순매수, 파랑이 순매도예요
+              </Text>
+            </HStack>
+            <Box className="sr-plot" flexGrow={1} minHeight={0}>
               <TimeChart
                 dates={win?.dates ?? []}
                 lines={daily}
-                height={130}
                 precision={0}
                 priceLines={[{ value: 0, color: (p) => p.line }]}
                 accessibilityLabel={`${win?.daily?.label ?? ''} 일별 순매수`}
@@ -321,7 +390,7 @@ export function FlowPage() {
               />
             </Box>
           </VStack>
-        </Box>
+        </VStack>
       </HStack>
 
       {/* ── 사실 스트립 ─────────────────────────────────────────────────── */}
@@ -339,6 +408,21 @@ export function FlowPage() {
               />
             ))}
           </StatColumn>
+          {/* 그림이 말하는 것을 **수로** 받는 칸 — 선을 눈으로 재지 않게.
+              누적은 고른 구간의 첫날부터라 이 수가 곧 「이 구간에 얼마나 샀나」다. */}
+          <StatColumn title={`고른 구간 (${span === 'ALL' ? '전체' : span})`}>
+            {(win?.cum ?? []).map((c) => {
+              const last = c.values[c.values.length - 1] ?? 0;
+              return (
+                <Stat
+                  key={c.key}
+                  label={c.label}
+                  value={fmt(last)}
+                  tone={last > 0 ? 'up' : last < 0 ? 'down' : undefined}
+                />
+              );
+            })}
+          </StatColumn>
           <StatColumn title="모집단">
             <Stat label="표본" value={`${got.days.toLocaleString('ko-KR')}일`}
               note={`${got.series.dates[0] ?? '—'} 부터`} />
@@ -350,6 +434,7 @@ export function FlowPage() {
           </StatColumn>
         </HStack>
       </Box>
+      </VStack>
     </VStack>
   );
 }
