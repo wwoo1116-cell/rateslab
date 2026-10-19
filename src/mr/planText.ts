@@ -66,6 +66,18 @@ export const lvl = (v: number | null | undefined, unit: string): string =>
 export const gap = (v: number | null | undefined, dUnit: string): string =>
   v == null ? '—' : `${fmtLevel(Math.abs(v), dUnit as Unit)}${unitSuffix(dUnit as Unit)}`;
 
+/** `gap` 의 형제 — **부호를 적는다** [2026-10-19].
+ *
+ *  캐리·롤다운은 「얼마나 더 가야 하나」가 아니라 **「시간이 돈을 주나 빼앗나」**라서
+ *  방향을 낱말이 아니라 부호가 진다. `gap` 을 그대로 쓰면 그 자리가 조용히 틀린다 —
+ *  실측: BSS-1Y 의 `thetaBp` 는 **−0.698** 인데 화면에 `0.7bp` 로 서고 **색만** 파랬다.
+ *  부호 글자는 U+2212(−)다, ASCII 하이픈이 아니라 — 숫자 칸이 tabular 라 폭이 맞는다. */
+export const signedBp = (v: number | null | undefined, dUnit: string): string => {
+  if (v == null) return '—';
+  const head = v > 0 ? '+' : v < 0 ? MINUS : '';
+  return `${head}${fmtLevel(Math.abs(v), dUnit as Unit)}${unitSuffix(dUnit as Unit)}`;
+};
+
 /** 히어로·표가 적을 **한 방향** — 지난 것이 먼저, 없으면 가까운 것.
  *
  *  양방향 계열(선물·퓨처스왑·커브)은 문턱이 둘이라 고르는 규칙이 있어야 한다.

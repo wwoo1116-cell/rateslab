@@ -64,13 +64,15 @@ import {
   type MrHistory,
   type MrPlan,
   type MrPlanRow,
+  type MrRankKey,
   type MrWatch,
+  MR_RANK_KEYS,
 } from './api';
 import { BandChart } from './BandChart';
 import { BookWindow } from './BookWindow';
 import { condWord, SplitColumn } from './parts';
 import {
-  entryLines, exitWords, fmtZ, gap, lvl, perfNote, planLines, stateText,
+  entryLines, exitWords, fmtZ, gap, lvl, perfNote, planLines, signedBp, stateText,
 } from './planText';
 import { StrategyWindow } from './StrategyWindow';
 
@@ -385,12 +387,74 @@ function BookDetail({ watch }: { watch: MrWatch }) {
   );
 }
 
-/** 고른 계열의 **계획 카드 넷** — 조건·트리거·포지션·지난 1년.
+/** 고른 계열의 **계획 카드 다섯** — 조건·트리거·포지션·지난 1년·3M 캐리·롤.
  *
  *  분해(`SplitColumn`)는 다섯째로 서고 **클릭이 필요 없다** [OWNER 2026-09-21 —
  *  "손익에서도 내가 클릭따로 안해도 바로 캐리, 롤다운, 평가 등으로 분해"].
  *  종전에는 전략 실험 창을 열어야 보이던 카드이고, 부품은 그쪽과 **같은 한 벌**
  *  이다(`parts.SplitColumn`) — 두 화면이 「롤다운」을 같은 뜻으로 쓴다. */
+/** 채택 기준의 **사람 이름** — 라벨표는 `MR_RANK_KEYS` 하나다.
+ *
+ *  ★여기에 글자를 박지 않는다. 종전에는 「CDaR 비」가 두 자리에 박혀 있었고,
+ *  2026-10-15 에 기준이 `cdarRatio → calmar` 로 간 뒤에도 그대로 남아 카드가
+ *  「고른 기준 **CDaR 비**」라고 적고 바로 아래에서 「채택 기준 **(Calmar)**」이라고
+ *  적었다 — 한 화면이 스스로를 반박했다. 서버가 `cond.basis` 로 말해 주는 값을 읽는다. */
+function rankLabel(basis: MrRankKey): string {
+  return MR_RANK_KEYS.find((k) => k.v === basis)?.label ?? basis;
+}
+
+/** 카드의 셋째 칸 — **앞을 보는** 캐리·롤다운 [OWNER 2026-10-19].
+ *
+ *  이웃 둘(조건·지난 1년)은 **뒤를 본다** — 고른 조건과 지난 1년의 성적이다.
+ *  이 칸만 앞을 본다: 오늘 들어가면 시간이 분기 동안 얼마를 주거나 가져가나.
+ *  그래서 같은 카드에 서면서도 한 칸으로 갈라 놓는다.
+ *
+ *  ★**순기대(netBp)는 안 적는다** [OWNER 2026-10-19 — 「빼고 3M 캐리·롤만」].
+ *  페이로드의 `byDir` 에는 있다. 안 적는 근거는 캐리·롤 레인의 실측이다 —
+ *  21계열 중 10 은 값 자체가 없고, 있는 것도 왕복 비용(1.0bp)보다 작은 보정이라
+ *  「순기대」라는 이름이 주는 확신이 수의 크기보다 크다.
+ *
+ *  ★**부호는 방향 `+1` 기준**이다(`carryroll.py:36-44`). 그 방향의 이름을 합계
+ *  칸이 말한다 — 안 적으면 리시브/페이 어느 쪽 이야기인지 알 수 없다. 페이로드의
+ *  `carryDefnMinus1` 은 이름대로 **`-1` 기준 문장**이라 여기 쓰면 부호가 뒤집힌다.
+ *
+ *  ★**±0.2bp**(`carryroll.py:131-141`) — 그 아래 차이로 계열을 줄 세우지 말라는
+ *  것이 그 모듈의 규율이고, 그 사실이 수 옆에 서야 한다. */
+function CarryRollColumn({ r, sg }: { r: MrPlanRow; sg: (v: number | null | undefined) => string }) {
+  const cr = r.carryRoll;
+  if (cr == null) {
+    /* 칼럼을 **지우지 않는다** — 빈 자리도 자리다(`levels.length === 0` 과 같은 문법).
+       선물·퓨처스왑은 `carryroll.KINDS` 밖이라 영영 안 선다. */
+    return (
+      <StatColumn title="3M 캐리·롤">
+        <Stat label="앞을 보는 캐리" value={MINUS} note="이 계열은 안 서요 — 선물·퓨처스왑" />
+      </StatColumn>
+    );
+  }
+  /* `+1` 방향의 이름. `levels` 가 비면(밴드가 아직 못 서면) 방향 말을 못 하므로
+     그때는 부호 규약만 적는다. */
+  const plus = r.levels.find((l) => l.dir === 1)?.short;
+  /* 하루 몫도 **부호를 지고** 나와야 한다 — 합계가 음수인 계열은 롤이 음수라서
+     그렇게 된 것이라, 하루 칸이 부호를 떼면 셋이 서로 안 맞아 보인다.
+     ★자릿수는 **셋**이다. `signedBp` 는 bp 를 소수 한 자리로 끊는 계열 서식이라
+     (`fmtLevel`) 하루 몫 0.050 이 `+0.0bp` 로 뭉개진다 — 실측으로 밟았다.
+     분기 몫과 하루 몫은 크기가 100배 다르니 자도 달라야 한다. */
+  const day = (v: number) =>
+    `일 ${v > 0 ? '+' : v < 0 ? MINUS : ''}${Math.abs(v).toFixed(3)}bp`;
+  return (
+    <StatColumn title="3M 캐리·롤">
+      <Stat label="캐리" value={sg(cr.carryBp)} note={day(cr.perDay.carryBp)} />
+      <Stat label="롤다운" value={sg(cr.rollBp)} note={day(cr.perDay.rollBp)} />
+      <Stat
+        label="합 (3M)"
+        value={sg(cr.thetaBp)}
+        tone={cr.thetaBp > 0 ? 'up' : cr.thetaBp < 0 ? 'down' : undefined}
+        note={`${plus ? `${plus} 기준` : '방향 +1 기준'} · ±0.2bp 안은 같은 수로 보세요`}
+      />
+    </StatColumn>
+  );
+}
+
 function PlanStats({ r, place }: { r: MrPlanRow; place: 'strip' | 'card' }) {
   const unit = r.unit as Unit;
   const dUnit = r.dUnit as Unit;
@@ -399,12 +463,17 @@ function PlanStats({ r, place }: { r: MrPlanRow; place: 'strip' | 'card' }) {
   const money = (v: number) => fmtKrw(v);
   const lv = (v: number | null | undefined) => lvl(v, unit);
   const gp = (v: number | null | undefined) => gap(v, dUnit);
+  /* 캐리·롤은 **부호가 메시지**라 `gap`(거리·무부호) 이 아니라 이쪽을 쓴다. */
+  const sg = (v: number | null | undefined) => signedBp(v, dUnit);
   const p = r.position;
-  /* **셋은 아래(페이지 폭), 둘은 카드 안** [실측 2026-09-21].
+  /* **셋은 아래(페이지 폭), 셋은 카드 안** [실측 2026-09-21 · 2026-10-19 갱신].
      다섯을 다 페이지 폭에 세우면 스트립이 두 줄(220px)이 되고, 855px 화면에서
      표 카드가 268px 로 눌려 **표(360px)가 카드를 넘는다**. 트레이더가 달라고 한
      셋(트리거·포지션·분해)만 아래에 두면 스트립이 한 줄이라 표가 제 키를 지킨다.
-     조건·지난 1년은 참고라 카드 안에서 굴러도 된다(1년 손익은 표에도 있다). */
+     조건·지난 1년은 참고라 카드 안에서 굴러도 된다(1년 손익은 표에도 있다).
+     ★2026-10-19 에 **3M 캐리·롤**이 카드 안 셋째로 왔다 — 카드는 페이지 폭이
+     아니라 오른쪽 칸이라 접히면 카드가 세로로 자랄 뿐이고, 위 실측(스트립이
+     표를 누르는 것)에 안 걸린다. 앞을 보는 수라 뒤를 보는 둘과 칸을 가른다. */
   if (place === 'card') {
     return (
       <HStack className="sr-stats" width="100%" flexWrap="wrap">
@@ -413,7 +482,7 @@ function PlanStats({ r, place }: { r: MrPlanRow; place: 'strip' | 'card' }) {
           <Stat label="격자 1등" value={condWord(r.cond)} />
           <Stat
             label="고른 기준"
-            value={`CDaR 비 · ${r.cond.cells}칸`}
+            value={`${rankLabel(r.cond.basis)} · ${r.cond.cells}칸`}
             note={r.cond.fallback ?? '성과를 잰 그 1년에서 골랐어요'}
           />
           <Stat
@@ -449,6 +518,7 @@ function PlanStats({ r, place }: { r: MrPlanRow; place: 'strip' | 'card' }) {
                 + ((r.perf1y.ddEpisodes ?? 0) <= 1 ? ' ⚠' : '')}
           />
         </StatColumn>
+        <CarryRollColumn r={r} sg={sg} />
       </HStack>
     );
   }
@@ -668,7 +738,7 @@ export function MrPage() {
           ) : null}
           {/* 종전에는 룩백·밴드 폭 알약이 섰던 자리 — 이제 **읽기 칸**이다.
               고를 수 없는 값을 고르개로 두면 화면이 없는 손잡이를 약속한다. */}
-          <Cond k="조건" v="계열마다 격자 1등 · CDaR 비" />
+          <Cond k="조건" v={`계열마다 격자 1등 · ${rankLabel(plan.params.rankKey)}`} />
           {/* 고른 창과 잰 창이 **같다** — 한 칸으로 적는다 [OWNER 2026-09-21 오후].
               두 칸으로 적으면 둘이 다른 창인 것처럼 읽힌다. */}
           <Cond k="격자·성과 창" v="지난 1년" strong />

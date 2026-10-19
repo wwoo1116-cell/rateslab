@@ -1417,7 +1417,50 @@ export interface MrPlanCond {
    *  1년 손익은 144칸 중 1등의 값이고, 표본밖 기대값이 아니다. */
   span: MrSpan;
   cells: number;
+  /** 격자 1등을 **무엇으로** 골랐나 — `mrplan.PLAN_RANK_KEY` 가 보내는 값이다.
+   *  ★화면이 이 값을 읽어야 한다. 종전에는 라벨이 「CDaR 비」로 **박혀 있었고**,
+   *  2026-10-15 에 기준이 `cdarRatio → calmar` 로 간 뒤에도 그 글자가 남아
+   *  한 카드가 스스로를 반박했다(「고른 기준 CDaR 비」 바로 아래 「채택 기준
+   *  (Calmar)」). 라벨은 `MR_RANK_KEYS` 에서 찾는다 — 두 벌을 두지 않는다. */
+  basis: MrRankKey;
   fallback: string | null;
+}
+
+/** 앞을 보는 캐리·롤다운 — `backend/app/carryroll.py::for_series` + `mrplan` 이 얹는 것.
+ *
+ *  ★**수는 전부 방향 `+1` 기준**이다(`carryroll.py:36-44`). 화면이 그 방향을 말해야
+ *  한다 — 안 적으면 리시브/페이 어느 쪽 이야기인지 알 수 없다.
+ *  ★**정밀도 ±0.2bp**(`carryroll.py:131-141`) — 그 아래 차이로 계열을 줄 세우지 않는다. */
+export interface MrPlanCarryRoll {
+  /** 이 계열의 **모든 다리가 찍힌** 마지막 날. 계열마다 다를 수 있다. */
+  asof: string;
+  /** 지평(년). `theta.HORIZON_Y` 를 빌려 쓴다 — 분기(0.25). */
+  horizonY: number;
+  carryBp: number;
+  rollBp: number;
+  /** `carryBp + rollBp`. 음수면 시간이 `+1` 방향에서 돈을 빼 간다. */
+  thetaBp: number;
+  perDay: { carryBp: number; rollBp: number; thetaBp: number };
+  /** 캐리 정의 문장 — ★이름대로 **`-1` 기준**이다. 그대로 쓰면 부호가 뒤집힌다. */
+  carryDefnMinus1: string;
+  sign: string;
+  pv01Ref: number;
+  /** 구간 안에서 청산된 거래의 보유 봉수 **중앙값**. 거래가 2건 미만이면 `null` —
+   *  한 건짜리 중앙값은 기대가 아니라 일화다(`mrplan.MIN_TRADES_FOR_HOLD`). */
+  holdBars: number | null;
+  costBp: number;
+  byDir: MrPlanNetByDir[];
+}
+
+/** 방향 하나의 순기대 — 지금 **화면에 안 쓴다** [OWNER 2026-10-19 — 「빼고 3M 캐리·롤만」].
+ *  페이로드에는 그대로 있으므로 계약만 적어 둔다. */
+export interface MrPlanNetByDir {
+  dir: number;
+  short: string;
+  convergeBp: number;
+  /** ★없으면 **키가 아예 빠진다**(세타나 보유기간이 없는 자리). 0 과 다르다. */
+  carryRollBp?: number;
+  netBp?: number;
 }
 
 /** 계획면의 행 — **보드 행의 열쇠를 다 갖는다**(`MrRow`) + 계획의 넷.
@@ -1444,6 +1487,10 @@ export interface MrPlanRow extends MrRow {
     | 'cdarBars' | 'cdarWhy' | 'ddEpisodes'>;
   /** 이 계열의 돈이 실가격 회계인가 엔진 근사인가 — 분해의 «—» 가 그 값이다. */
   real: boolean;
+  /** 앞을 보는 캐리·롤다운. **없으면 null — 「없다」와 「못 잰다」는 다른 말이다**
+   *  (`position` 과 같은 문법). 선물·퓨처스왑 네 계열은 `carryroll.KINDS` 밖이라
+   *  영영 `null` 이고, `T − h` 가 커브 밖인 자리도 그렇다. 0 으로 안 채운다. */
+  carryRoll: MrPlanCarryRoll | null;
 }
 
 /** 계획면 전체.
