@@ -173,6 +173,9 @@ export const futuresSeriesUrl = (id: string) =>
   liveUrl(`/api/futures/series/${encodeURIComponent(id)}`);
 
 export const rvAnalysisUrl = (query: string) => liveUrl("/api/rv/analysis", query);
+/** 수급 신호 실험 — **라이브 전용**이다(파라미터가 자유값이라 구운 JSON 이 없다). */
+export const flowLabUrl = (query: string) => liveUrl("/api/flow/lab", query);
+
 export const rvHistoryUrl = (query: string) => liveUrl("/api/rv/history", query);
 
 /** Mean Reversion 측정면(Strategy 둘째 세입자) — 라이브 전용(BSS 가 SQL 에만).

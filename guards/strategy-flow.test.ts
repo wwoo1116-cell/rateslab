@@ -26,6 +26,8 @@ const PAGE = read('src/app/page.tsx');
 const FLOW_PAGE = read('src/flow/FlowPage.tsx');
 const FLOW_TABLE = read('src/flow/FlowTable.tsx');
 const FLOW_MATRIX = read('src/flow/FlowMatrix.tsx');
+const FLOW_LAB = read('src/flow/FlowLabWindow.tsx');
+const LAB_PY = fs.readFileSync(path.join(ROOT, 'backend/app/flowlab.py'), 'utf8');
 /* 주석을 **안** 벗긴다 — 이 파일에서 재는 것은 CSS 규칙 자체다. */
 const TYPE_CSS = fs.readFileSync(path.join(ROOT, 'src/theme/type.css'), 'utf8');
 const ISSUE_FACE = read('src/flow/IssuanceFace.tsx');
@@ -353,6 +355,48 @@ describe('⑦ 만기물 · PD 인수 · 이동평균 · 발행 면 [OWNER 2026-1
     expect(card).toMatch(/lines=\{dailyLines\}[\s\S]{0,40}/);
     const dailyBox = card.lastIndexOf('flexGrow={2}', daily);
     expect(dailyBox, '일별 그림이 큰 몫(flexGrow 2)을 안 가졌어요').toBeGreaterThan(0);
+  });
+
+  /* ㉑ 수급 신호 실험 창 [OWNER 2026-10-20 — 「이거 내가 사용할 수 있어야한다고,,
+     Backtest에서 처럼」]. 오늘의 검정이 스크래치패드에서 증발했으므로 산술을
+     제품으로 옮겼다. ★이 창의 존재 이유는 **수 옆에 우연을 같이 적는 것**이다. */
+  it('실험 창이 **수를 혼자 안 보여 준다** — 우연을 같이 싣는다', () => {
+    expect(LAB_PY, '그 칸의 우연이 없어요').toMatch(/"shuffle":/);
+    expect(LAB_PY, '★탐색의 우연이 없어요 — 이게 판정의 자예요')
+      .toMatch(/"searchCeiling":/);
+    expect(LAB_PY, '원형 이동이 아니면 자기상관이 깨져요').toMatch(/def shift\(/);
+    /* 판정은 **탐색의 우연**으로 가른다 — 한 칸의 p 로 가르면 열 번에 한 번은
+       「살았다」가 나온다(2026-10-20 에 내가 그렇게 한 번 틀렸다). */
+    expect(FLOW_LAB).toMatch(/const verdict = beat == null \? null : beat <= 0\.05/);
+    expect(FLOW_LAB, '탐색의 우연을 화면이 안 적어요').toMatch(/탐색의 우연/);
+  });
+
+  it('실험 창이 **스스로 안 돈다** — 사람이 실행을 누른다', () => {
+    /* Backtest 와 같은 규율(`BacktestWindow` 머리). 손잡이마다 저절로 돌면
+       「고르는 중에 결과가 바뀌는」 화면이 되고, 그러면 제일 좋은 칸을 무심코
+       고르게 된다 — 그게 오늘 죽은 그 길이다. */
+    expect(FLOW_LAB).toMatch(/<Button[\s\S]{0,120}onClick=\{run\}/);
+    /* 손잡이 상태가 `useEffect` 의 의존성에 들어가면 저절로 돈다. */
+    expect(FLOW_LAB).not.toMatch(/useEffect\(\(\) => \{ run\(\); \}, \[run\]\)/);
+  });
+
+  it('고를 수 있는 칸을 **안 자른다** — 격자가 서버와 같은 벌이다', () => {
+    /* 첫 판은 주체를 셋만 세웠고(`slice(0,3)`), 그러면 탐색에서 실제로 1등 했던
+       국가지자체를 아예 못 고른다 — 고를 수 없는 칸이 있는 실험 창은 그 자체가
+       숨은 선택이다. */
+    expect(FLOW_LAB, '주체를 잘라서 보여 주고 있어요').not.toMatch(/subjects\.slice\(/);
+    expect(FLOW_LAB, '만기물을 걸러서 보여 주고 있어요').not.toMatch(/tenors\.filter\(/);
+    for (const n of [5, 10, 15, 20, 25, 30]) expect(FLOW_LAB).toContain(String(n));
+    expect(LAB_PY).toMatch(/SHORTS = \(5, 10, 15, 20, 25, 30\)/);
+    expect(LAB_PY).toMatch(/LONGS = \(40, 50, 60, 70, 90, 120\)/);
+    expect(LAB_PY).toMatch(/HOLDS = \(1, 5, 10, 20, 40\)/);
+  });
+
+  it('실험도 **공표 지연**을 진다 — 엿보기를 못 만들게 한 곳에서', () => {
+    expect(LAB_PY).toMatch(/^LAG = 1$/m);
+    expect(LAB_PY, '지연을 _align 밖에서 넣으면 호출부가 엿보기를 만든다')
+      .toMatch(/k \+ 1 \+ LAG/);
+    expect(LAB_PY, '비용 정본이 계획면이 아니에요').toMatch(/COST_BP = mrplan\.COST_BP/);
   });
 
   /* ⑲ ★**이 면은 설명이지 예측이 아니다** [판정 2026-10-20]. 수급으로 금리

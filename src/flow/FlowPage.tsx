@@ -68,6 +68,7 @@ import {
   fetchFlowBoard, fetchIssuanceBoard, type CashTenor, type FlowBoard, type FlowSide,
   type FutTenor, type IssuanceBoard, type IssuanceUnit,
 } from './api';
+import { FlowLabWindow } from './FlowLabWindow';
 import { FlowMatrix } from './FlowMatrix';
 import { FlowTable } from './FlowTable';
 import { SPAN_BARS, SPAN_OPTIONS, type Span } from './span';
@@ -295,6 +296,9 @@ export function FlowPage() {
     setDaily(subject);
   }, []);
 
+  /** 실험 창 — Backtest 와 같이 **사람이 열고 사람이 실행한다**. 고른 칸이
+   *  그대로 들어가서, 「이 칸이 뜻이 있나」를 바로 재 볼 수 있다. */
+  const [labOpen, setLabOpen] = useState(false);
   const [got, setGot] = useState<FlowBoard | null>(null);
   /** 입찰 상세 — 왼쪽 카드 머리의 사실 줄만 쓴다. 없어도 화면은 선다. */
   const [iss, setIss] = useState<IssuanceBoard | null>(null);
@@ -712,9 +716,21 @@ export function FlowPage() {
               <Text as="h3" font="label1">
                 {CASH_TENOR_LABEL[cashTenor]} · {win?.daily?.label ?? ''} — 사는 속도
               </Text>
-              <Text as="span" font="legal" color="fgMuted">
-                일별 {unitWord} · 누적 {cumWord}
-              </Text>
+              <HStack gap={1} alignItems="baseline">
+                <Text as="span" font="legal" color="fgMuted">
+                  일별 {unitWord} · 누적 {cumWord}
+                </Text>
+                {/* ★「이 칸이 뜻이 있나」를 **직접 재는** 자리 [OWNER 2026-10-20 —
+                    「이거 내가 사용할 수 있어야한다고,, Backtest에서 처럼」].
+                    고른 칸이 그대로 창에 들어간다. 판정은 2026-10-20 에 KILL 이고,
+                    그 창은 **수 옆에 우연을 같이** 적어서 같은 실수를 막는다. */}
+                {got.matrix ? (
+                  <button type="button" className="sr-pillbtn"
+                    onClick={() => setLabOpen(true)}>
+                    이 칸 재보기
+                  </button>
+                ) : null}
+              </HStack>
             </HStack>
           </VStack>
           {/* ── 판정 — 이 카드의 머리말 ──────────────────────────────────── */}
@@ -837,6 +853,16 @@ export function FlowPage() {
               picked={got.series.daily?.key ?? null} onPick={setDaily} />
           </Box>
         </VStack>
+      ) : null}
+
+      {labOpen && got.matrix ? (
+        <FlowLabWindow
+          subject={got.series.daily?.key ?? 'foreigner'}
+          tenor={cashTenor === 'ALL' ? 'ALL' : cashTenor}
+          subjects={got.matrix.cols}
+          tenors={got.tenors ?? []}
+          onClose={() => setLabOpen(false)}
+        />
       ) : null}
 
       {/* ── 사실 스트립 — **한 칸만 남았다** [OWNER 2026-10-20] ──────────── */}

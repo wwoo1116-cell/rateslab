@@ -80,7 +80,11 @@ export type WindowKey =
   /* Credit RV 후보 비교 [OWNER 2026-10-02 — 「후보 둘셋 비교」]. 이력 단면 창
      (`rv`)과 **다른 열쇠**다 — 후보를 띄워 놓고 한 줄의 이력을 여는 일이 있고,
      그때 한쪽을 옮기면 다른 쪽이 따라가면 안 된다. */
-  | "rvpick";
+  | "rvpick"
+  /* 수급 신호 실험 [OWNER 2026-10-20 — 「이거 내가 사용할 수 있어야한다고,,
+     Backtest에서 처럼」]. Flow 표에서 칸을 고른 채로 그 칸을 재 보는 창이라,
+     **열어 둔 채 표를 계속 만지는** 물건이다(모달이 아닌 까닭). */
+  | "flow-lab";
 
 const remembered = new Map<WindowKey, WinPos>();
 

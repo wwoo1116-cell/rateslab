@@ -6,7 +6,7 @@
  */
 
 import { BacktestUnavailable } from '@/lib/api';
-import { flowBoardUrl, flowHistoryUrl, flowIssuanceUrl } from '@/lib/staticPaths';
+import { flowBoardUrl, flowHistoryUrl, flowIssuanceUrl, flowLabUrl } from '@/lib/staticPaths';
 
 /** 면 둘. **단위가 달라 한 축에 못 겹친다**(계약 대 백만원) — 겹치는 그림이
  *  아니라 갈라지는 면인 이유다. */
@@ -269,4 +269,59 @@ export async function fetchFlowHistory(
   key: string, side: FlowSide, tenor: FlowTenor,
 ): Promise<FlowHistory> {
   return get(flowHistoryUrl(key, `side=${side}&tenor=${tenor}`), 'flow-history');
+}
+
+/* ── 수급 신호 실험 (`backend/app/flowlab.py`) ────────────────────────────── */
+
+/** 실험 한 판 — 고른 칸 + **그 칸의 우연** + **탐색의 우연**.
+ *
+ *  ★셋이 같이 오는 것이 이 라우트의 존재 이유다. 수 하나만 보면 사람은 그것을
+ *  실력으로 읽는데, 같은 크기의 탐색을 가짜 자료에 돌리면 우연의 1등이 그만큼
+ *  낸다. 2026-10-20 판정에서 **내가 정확히 그렇게 한 번 틀렸다**. */
+export interface FlowLab {
+  subject: string;
+  subjectLabel: string;
+  tenor: string;
+  tenorLabel: string;
+  target: string;
+  short: number;
+  long: number;
+  hold: number;
+  from: string;
+  to: string;
+  costBp: number;
+  dv01: number;
+  /** 공표 지연(영업일) — 자료 사실이지 손잡이가 아니다. */
+  lag: number;
+  dates: string[];
+  result: { total: number; mdd: number; calmar: number | null; trades: number; bars: number };
+  cum: number[];
+  byYear: { year: string; pnl: number; share: number | null }[];
+  /** ① **그 칸**의 우연. `p` 가 그 칸의 정직한 세기다. */
+  shuffle: { draws: number; median: number | null; p95: number | null; p: number | null };
+  /** ② **탐색**의 우연. `beat` = 가짜 탐색의 1등이 이 칸을 이긴 몫. */
+  searchCeiling: {
+    cells: number; draws: number;
+    median: number | null; p95: number | null; beat: number | null;
+  };
+  grid: { shorts: number[]; longs: number[]; holds: number[]; targets: string[] };
+  subjects: { key: string; label: string }[];
+  tenors: { key: string; label: string }[];
+  basis: string;
+  warn: string;
+}
+
+export interface FlowLabQuery {
+  subject: string;
+  tenor: string;
+  target: string;
+  short: number;
+  long: number;
+  hold: number;
+}
+
+export async function fetchFlowLab(q: FlowLabQuery, signal?: AbortSignal): Promise<FlowLab> {
+  const qs = `subject=${encodeURIComponent(q.subject)}&tenor=${encodeURIComponent(q.tenor)}`
+    + `&target=${q.target}&short=${q.short}&long=${q.long}&hold=${q.hold}`;
+  return get(flowLabUrl(qs), 'flow-lab', signal);
 }

@@ -85,6 +85,7 @@ from . import momentum
 from . import paper
 from . import carryroll
 from . import flow
+from . import flowlab
 from . import ktb_issuance
 from . import mysqldb
 from . import mr as mr_mod
@@ -3275,6 +3276,37 @@ def flow_board(side: str = "fut", tenor: str = "3Y", pd: float | None = None,
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except mysqldb.MissingCredentials as exc:
         # ★반드시 잡는다 — 안 잡으면 전역 핸들러가 500 「계산 오류」로 바꾼다.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/api/flow/lab")
+def flow_lab(subject: str, tenor: str = "30Y", target: str = "30Y",
+             short: int = 20, long: int = 60, hold: int = 20,
+             draws: int = 300) -> dict:
+    """수급 신호 실험 한 판 — **오너가 직접 재 보는 자리**
+    [OWNER 2026-10-20 — 「이거 내가 사용할 수 있어야한다고,, Backtest에서 처럼」].
+
+    ★**스스로 안 돈다.** Backtest 와 같은 규율이다(`BacktestWindow` 머리) — 사람이
+    실행을 누르고, 한 번이 서버에서 격자 전체를 가짜 판에 돌리는 일이라 2~5초 걸린다.
+
+    ★**수를 혼자 안 내보낸다.** 고른 칸의 성과 옆에 **그 칸의 우연**(`shuffle`)과
+    **탐색의 우연**(`searchCeiling`)을 같이 싣는다 — 창을 바꿔 가며 고르는 행위가
+    곧 탐색이고, 그 우연은 한 칸의 우연보다 훨씬 세다. 근거는 `flowlab.py` 머리와
+    `docs/VERDICT_flow_direction_2026-10-20.md`.
+
+    라이브 전용. 캐시 없음 — 파라미터가 자유값이고 한 판이 초 단위다.
+    """
+    if not 20 <= draws <= 600:
+        raise HTTPException(status_code=422,
+                            detail=f"가짜 판 수가 범위를 벗어나요: {draws} (20~600)")
+    try:
+        return flowlab.board(subject=subject, tenor=tenor, target=target,
+                             short=short, long=long, hold=hold, draws=draws)
+    except flowlab.LabError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except flow.FlowError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except mysqldb.MissingCredentials as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 

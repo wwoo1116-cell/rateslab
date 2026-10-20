@@ -443,7 +443,10 @@ class Test라우트:
         from app import main as M
 
         paths = {r.path for r in M.app.routes if "flow" in getattr(r, "path", "")}
-        assert paths == {"/api/flow/board", "/api/flow/history/{key}", "/api/flow/issuance"}
+        assert paths == {"/api/flow/board", "/api/flow/history/{key}",
+                         "/api/flow/issuance",
+                         #: 수급 신호 실험 [OWNER 2026-10-20] — 라이브 전용·캐시 없음.
+                         "/api/flow/lab"}
         c = TestClient(M.app)
         assert c.get("/api/flow/board?side=xxx").status_code == 422
         assert c.get("/api/flow/board?side=fut&tenor=7Y").status_code == 422
