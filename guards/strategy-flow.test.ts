@@ -286,6 +286,23 @@ describe('⑦ 만기물 · PD 인수 · 이동평균 · 발행 면 [OWNER 2026-1
     expect(FLOW_PAGE).toMatch(/value: '120', label: '120일'/);
   });
 
+  /* ⑰ 감마는 **그림 아래 한 줄**이다 [OWNER 2026-10-20 — 「그림아래 감마 한줄로」].
+     표에 값 모드를 더하는 안은 버렸다 — 같은 표가 세 가지를 말하면 모드를 놓친
+     사람이 구간 합을 감마로 읽는다. */
+  it('감마가 그림 아래 한 줄로 서고, 산술은 서버가 한다', () => {
+    expect(FLOW_PY, '감마 산술이 서버에 없어요').toMatch(/def gamma\(/);
+    expect(FLOW_PY, '판정을 내는 자리가 없어요').toMatch(/def verdict\(/);
+    expect(FLOW_PY).toMatch(/WINDOW_TRUST/);
+    /* 그림이 세운 주체와 **같은 열쇠**여야 한다 — 갈리면 그림과 그 아래 줄이
+       다른 계열을 말한다. */
+    expect(FLOW_PY).toMatch(/verdict\(cols, daily or picked\[0\]\)/);
+    expect(FLOW_PAGE).toMatch(/<GammaLine g=\{got\.gamma\}/);
+    /* 화면이 감마를 **다시 재지 않는다**(§16) — 이동평균과 같은 규율. */
+    expect(FLOW_PAGE).not.toMatch(/MA_n|movingAverage|rolling/i);
+    /* 잡음인 창을 지우지 않고 흐리게 둔다 — 「안 보인다」와 「없다」는 다른 말. */
+    expect(FLOW_PAGE).toMatch(/trust === '잡음'/);
+  });
+
   /* ⑪ CDS `Tooltip` 앵커가 `justify-content: flex-end` 라 왼쪽 정렬 머리에서
      글자가 오른끝으로 간다 — 실측(2026-10-20): 칸 405~800 인데 머리 글자가
      744~792, 그 칸의 값은 413~492 로 **350px 어긋났다**. */

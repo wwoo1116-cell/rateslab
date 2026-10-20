@@ -818,6 +818,11 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
         "sub": rows,
         "rankFloor": CASH_RANK_FLOOR,
         "series": _chart(dates, cols, picked, CASH_COLS, daily=daily, ma=ma),
+        #: ★고른 칸의 **감마 한 줄** [OWNER 2026-10-20 — 「그림아래 감마 한줄로」].
+        #: 그림이 세운 그 주체와 **같은 열쇠**를 쓴다(`_chart` 의 그 규칙) — 둘이
+        #: 갈리면 그림과 그 아래 줄이 다른 계열을 말한다.
+        "gamma": (verdict(cols, daily or picked[0])
+                  if (daily or picked) else None),
         #: 테너 × (발행 + 주체) — 화면 왼쪽의 그 표 [OWNER 2026-10-20].
         "matrix": cash_matrix(d, span=span, pd_share=pd_share),
         "pd": pd,

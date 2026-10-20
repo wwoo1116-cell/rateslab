@@ -115,6 +115,27 @@ export interface FlowBoard {
   series: FlowChart;
   /** 현물 면의 테너 × (발행 + 주체) 표. 선물 면은 `null`. */
   matrix: FlowMatrixBoard | null;
+  /** 그림에 선 주체의 **감마 한 줄** — 속도의 변화다. 선물 면은 `null`.
+   *
+   *  ★순매수의 **부호에는 정보가 거의 없다**(60일 MA 양수 비중이 보험·30년물
+   *  100%). 잔액이 늘고 회계가 영합이라 PD 가 내놓는 것을 나머지가 늘 받기
+   *  때문이다. 감마는 양수 비중 44~57% 라 **부호가 산다** — 「사나 파나」가
+   *  아니라 「빨라지나 느려지나」가 진짜 질문이다(`flow.gamma` 머리). */
+  gamma: {
+    key: string;
+    rows: {
+      window: number;
+      /** 그 창의 하루 평균 순매수(백만원/일). 창이 안 차면 `null`. */
+      speed: number | null;
+      /** `MA_n(t) − MA_n(t−n)`. 창 하나만큼 떨어진 두 평균의 차. */
+      gamma: number | null;
+      /** 「잡음」·「보통」·「믿을 만」 — 부호가 얼마나 오래 버티나의 실측 판정. */
+      trust: string;
+    }[];
+    say: string;
+    tone: 'up' | 'down' | null;
+    note: string;
+  } | null;
   /** 현물 면에서 노브가 켜졌을 때만. 선물 면은 `null`. */
   pd: FlowPd | null;
   /** 현물 면의 만기물 선택지. 선물 면은 `null`. */

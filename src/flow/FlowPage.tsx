@@ -215,6 +215,57 @@ function AuctionFact({ unit, tenorLabel }: { unit: IssuanceUnit | null; tenorLab
   );
 }
 
+/** 그림 아래 **감마 한 줄** [OWNER 2026-10-20 — 「그림아래 감마 한줄로」].
+ *
+ *  ## 왜 속도가 아니라 감마인가
+ *
+ *  순매수의 **부호에는 정보가 거의 없다**. 잔액이 늘고 이 회계는 영합이라
+ *  금융투자(PD)가 내놓는 것을 나머지가 **늘** 받는다 — 60일 MA 의 양수 비중이
+ *  보험·30년물 **100%** · 국가지자체·전체 100% · 외국인·30년물 100%다. 감마는
+ *  44~57% 라 부호가 산다(`flow.gamma` 머리의 실측).
+ *
+ *  ## 표가 아니라 **그림 아래 한 줄**이다
+ *
+ *  표에 값 모드를 더하는 안도 있었는데 그러면 같은 표가 세 가지를 말하게 되고,
+ *  어느 모드인지 놓치면 **구간 합을 감마로 읽는다**. 그림이 이미 그 (만기물 ×
+ *  주체) 하나를 그리고 있으므로, 그 아래 한 줄이 「그 계열이 빨라지나」를
+ *  말하는 자리로 맞다.
+ *
+ *  ## 잡음인 창을 **흐리게 적는다**
+ *
+ *  Γ5·Γ20 은 부호가 중위 5~7일마다 뒤집혀 신호가 아니다. 지우지는 않는다 —
+ *  「안 보인다」와 「없다」는 다른 말이고, 짧은 창이 왜 못 믿을 것인지는 보여야
+ *  배운다. 판정문(`say`)은 믿을 만한 창(60·120)만 보고 서버가 짓는다(§16). */
+function GammaLine({ g }: { g: NonNullable<FlowBoard['gamma']> }) {
+  /** 감마는 백만원/일이라 **억/일**로 줄여 읽는다 — 표의 `fmtEok` 과 같은 자다. */
+  const cell = (v: number | null) => (v == null ? '—' : fmtEok(v));
+  return (
+    <VStack gap={0.25} width="100%">
+      <HStack gap={1.5} flexWrap="wrap" alignItems="baseline">
+        <Text as="span" font="label2">감마 (억/일)</Text>
+        {g.rows.map((r) => (
+          <HStack key={r.window} gap={0.5} alignItems="baseline">
+            <Text as="span" font="legal" color="fgMuted">{r.window}일</Text>
+            {/* 잡음인 창은 흐리게 — 지우지 않고 **믿을 만함의 차이**를 보인다. */}
+            <Text as="span" font="label2"
+              className={r.gamma == null ? undefined
+                : r.gamma > 0 ? 'sr-up' : r.gamma < 0 ? 'sr-down' : 'sr-flat'}
+              style={r.trust === '잡음' ? { opacity: 0.52 } : undefined}>
+              {cell(r.gamma)}
+            </Text>
+          </HStack>
+        ))}
+      </HStack>
+      <Text as="p" font="legal"
+        color={g.tone ? undefined : 'fgMuted'}
+        className={g.tone === 'up' ? 'sr-up' : g.tone === 'down' ? 'sr-down' : undefined}>
+        {g.say}
+      </Text>
+      <Text as="p" font="legal" color="fgMuted">{g.note}</Text>
+    </VStack>
+  );
+}
+
 export function FlowPage() {
   const [face, setFace] = useState<Face>('cash');
   const [span, setSpan] = useState<Span>('1Y');
@@ -579,7 +630,10 @@ export function FlowPage() {
       {/* ── 두 칸 ───────────────────────────────────────────────────────── */}
       {/* ★카드는 **`VStack`** 이다 — `Box` 는 CDS 기본이 **가로**라 머리와 대조
           줄이 한 줄에 붙어 뒤섞였다(실측 2026-10-19, MrPage 가 쓰는 그 꼴). */}
-      <HStack gap={2} alignItems="stretch" minHeight={560} width="100%"
+      {/* ★높이를 **감마 줄만큼** 키웠다 [2026-10-20]. 560 은 그림 둘 + 스트립에
+          맞춘 수였는데 그 아래 감마 줄(56px)이 들어오면서 일별 그림이 57px 로
+          눌렸다 — 그 줄이 설명하는 계열을 정작 못 읽게 된다. */}
+      <HStack gap={2} alignItems="stretch" minHeight={640} width="100%"
         flexShrink={0} flexWrap="wrap">
         {/* 표가 일곱 열을 진다 — 640 에서는 20일·올해가 잘렸다(실측). */}
         {/* 표는 **자연폭까지만** 먹는다(실측 1,207 → 부제 축약 뒤 1,117).
@@ -658,7 +712,10 @@ export function FlowPage() {
           {/* 그림 둘이 **남는 높이를 나눠 갖는다** — 고정 높이로 두면 카드 아래가
               빈다(실측). 누적이 둘, 일별이 하나 몫이다. */}
           <VStack paddingX={2} paddingBottom={1} gap={0.5} flexGrow={1} minHeight={0}>
-            <Box className="sr-plot" flexGrow={2} minHeight={0}>
+            {/* ★`flexBasis={0}` 이 있어야 `flexGrow` 의 2:1 이 **실제로** 그 비율이
+                된다. 기본 `auto` 면 그림의 고유 높이가 먼저 자리를 잡고 남는
+                것만 2:1 로 갈려서, 실측 345:57(약 6:1)이 나왔다. */}
+            <Box className="sr-plot" flexGrow={2} flexBasis={0} minHeight={0}>
               <TimeChart
                 dates={win?.dates ?? []}
                 lines={lines}
@@ -685,7 +742,7 @@ export function FlowPage() {
                 {win?.ma ? ' · 평균선은 바이올렛이에요' : ''}
               </Text>
             </HStack>
-            <Box className="sr-plot" flexGrow={1} minHeight={0}>
+            <Box className="sr-plot" flexGrow={1} flexBasis={0} minHeight={120}>
               <TimeChart
                 dates={win?.dates ?? []}
                 lines={dailyLines}
@@ -701,6 +758,8 @@ export function FlowPage() {
                 {...stack}
               />
             </Box>
+            {/* ── 감마 한 줄 [OWNER 2026-10-20 — 「그림아래 감마 한줄로」] ───── */}
+            {got.gamma ? <GammaLine g={got.gamma} /> : null}
           </VStack>
         </VStack>
       </HStack>
