@@ -24,7 +24,13 @@ const read = (rel: string) => stripComments(fs.readFileSync(path.join(ROOT, rel)
 
 const PAGE = read('src/app/page.tsx');
 const FLOW_PAGE = read('src/flow/FlowPage.tsx');
+const FLOW_TABLE = read('src/flow/FlowTable.tsx');
+const FLOW_MATRIX = read('src/flow/FlowMatrix.tsx');
+/* 주석을 **안** 벗긴다 — 이 파일에서 재는 것은 CSS 규칙 자체다. */
+const TYPE_CSS = fs.readFileSync(path.join(ROOT, 'src/theme/type.css'), 'utf8');
+const ISSUE_FACE = read('src/flow/IssuanceFace.tsx');
 const FLOW_PY = fs.readFileSync(path.join(ROOT, 'backend/app/flow.py'), 'utf8');
+const ISSUE_PY = fs.readFileSync(path.join(ROOT, 'backend/app/ktb_issuance.py'), 'utf8');
 
 describe('① 등록만 하고 안 그려지는 함정', () => {
   it('page.tsx 에 **명시 분기**가 있다 — 없으면 Momentum 이 그려진다', () => {
@@ -164,10 +170,121 @@ describe('⑥ 화면 문장은 해요체다', () => {
   const FORMAL = /(니다|한다\.|이다\.|않는다\.)/;
 
   it('서버가 내보내는 문장에 합니다체가 없다', () => {
-    const says = [...FLOW_PY.matchAll(/"((?:[^"\\]|\\.)*(?:예요|에요|해요|이에요)[^"]*)"/g)]
+    const says = [...FLOW_PY.matchAll(/"((?:[^"\\\n]|\\.)*(?:예요|에요|해요|이에요)[^"\n]*)"/g)]
       .map((m) => m[1]!);
     expect(says.length, '해요체 문장을 하나도 못 찾았어요 — 판정기가 샜어요')
       .toBeGreaterThan(2);
+    for (const t of says) expect(FORMAL.test(t), t).toBe(false);
+  });
+});
+
+describe('⑦ 만기물 · PD 인수 · 이동평균 · 발행 면 [OWNER 2026-10-19]', () => {
+  /* 세 손잡이가 **서버 산술 + 화면 손잡이** 한 쌍씩이다. 한쪽만 남으면 손잡이가
+     아무것도 안 하거나(화면만), 아무도 못 돌리는 산술이 된다(서버만). */
+  it('현물 만기물 — 서버 열쇠와 화면 선택지가 같다', () => {
+    expect(FLOW_PY).toContain('CASH_TENORS');
+    expect(FLOW_PAGE).toMatch(/label="만기물"/);
+    for (const k of ['2Y', '3Y', '5Y', '10Y', '20Y', '30Y', '50Y', '물가']) {
+      expect(FLOW_PAGE, `${k} 선택지가 없어요`).toContain(`'${k}'`);
+    }
+    /* 「전체」가 분리 전 화면과 같은 수여야 한다 — 바구니 합이 ALL 이다. */
+    expect(FLOW_PY).toMatch(/def sum_cash_buckets/);
+  });
+
+  it('PD 인수 — 서버가 더하고 화면이 몫을 묻는다, 그리고 가정이라고 말한다', () => {
+    expect(FLOW_PY).toMatch(/def apply_pd/);
+    expect(FLOW_PY).toContain('pd_share');
+    expect(FLOW_PY, '가정이라는 말이 서버 문장에 없어요').toMatch(/가정이에요/);
+    expect(FLOW_PAGE).toContain('pdShare');
+    expect(FLOW_PAGE, '몫을 묻는 숫자 칸이 없어요').toContain('<NumField');
+  });
+
+  /* ⑧ [OWNER 2026-10-20] 「금융투자가 60%면 남는 40%는 은행이 하는 거 알고있지?」 —
+     그렇다. 그래서 **몫은 하나**이고 은행은 나머지다. 둘을 따로 받는 칸이 생기면
+     합이 100 이 아닌 상태를 화면이 만들 수 있고, 그건 제도에 없는 상태다. */
+  it('PD 몫은 **하나**다 — 은행은 나머지이고, 제도와 가정을 갈라 말한다', () => {
+    expect(FLOW_PY, '은행 몫을 따로 받고 있어요 — 나머지여야 해요')
+      .toMatch(/1\.0 - share|1 - share/);
+    expect(FLOW_PY, '은행 몫을 받는 인자가 생겼어요').not.toMatch(/bank_share/);
+    expect((FLOW_PAGE.match(/<NumField/g) ?? []).length,
+      '몫을 묻는 숫자 칸은 하나여야 해요').toBe(1);
+    /* 합이 100 이라는 것은 **제도**고, 60 이라는 수가 가정이다. 종전 문장은
+       「자료에 없는 배분이라 가정이에요」라 합까지 의심하는 말로 읽혔다. */
+    expect(FLOW_PY, '제도와 가정을 안 가르고 있어요').toMatch(/제도이고/);
+  });
+
+  /* ⑨ 테너 × (발행 + 주체) 한 표 [OWNER 2026-10-20 — 「이 표를 좌측에 박아두고,
+     우측에는 보험이면 순매수세가 어떻게 됐는지 MA로」]. */
+  it('행렬 — 발행이 수급표의 열이고, 칸이 (만기물 × 주체) 를 고른다', () => {
+    expect(FLOW_PY, '행렬을 내는 함수가 없어요').toMatch(/def cash_matrix/);
+    expect(FLOW_PY, '구간을 봉 수로 자르지 않아요').toMatch(/def span_slice/);
+    /* 발행 열은 공급표 그대로다 — PD 노브가 공급 자체를 바꾸면 두 번 센다. */
+    expect(FLOW_PY).toMatch(/supply_table/);
+    expect(FLOW_MATRIX, '칸이 버튼이 아니에요').toMatch(/<button[\s\S]{0,400}aria-pressed/);
+    expect(FLOW_MATRIX, 'tr 에 role 을 얹었어요').not.toMatch(/<tr[^>]*role=/);
+    expect(FLOW_PAGE, '칸이 만기물과 주체를 같이 안 고르고 있어요')
+      .toMatch(/setCashTenor\(t\)[\s\S]{0,80}setDaily\(subject\)/);
+    /* 표와 그림이 **같은 창**을 봐야 한다 — 화면이 쓰는 봉 수를 그대로 넘긴다. */
+    expect(FLOW_PAGE).toMatch(/span:\s*SPAN_BARS\[span\]/);
+  });
+
+  /* ⑩ 선물은 「잠시 폐기」이고 발행 면은 접혔다 — **지운 게 아니다**.
+     되살리는 것이 배열 한 줄이어야 한다. */
+  it('면을 접었을 뿐 지우지 않았다 — 선물 라우트와 발행 면 파일이 남아 있다', () => {
+    expect(FLOW_PAGE).toMatch(/FACES_SHOWN/);
+    expect(FLOW_PY, '선물 면이 지워졌어요').toMatch(/def _fut_board/);
+    expect(fs.existsSync(path.join(ROOT, 'src/flow/IssuanceFace.tsx')),
+      '발행 면 파일이 지워졌어요 — 접은 것이지 버린 게 아니에요').toBe(true);
+    /* 접었으면 **입찰 상세가 어딘가 남아야** 한다(응찰률·수요 판정). */
+    expect(FLOW_PAGE, '입찰 상세가 통째로 사라졌어요').toMatch(/AuctionFact/);
+    expect(FLOW_PAGE).toMatch(/수요 판정/);
+  });
+
+  /* ⑪ CDS `Tooltip` 앵커가 `justify-content: flex-end` 라 왼쪽 정렬 머리에서
+     글자가 오른끝으로 간다 — 실측(2026-10-20): 칸 405~800 인데 머리 글자가
+     744~792, 그 칸의 값은 413~492 로 **350px 어긋났다**. */
+  it('왼쪽 정렬 머리의 뜻풀이 앵커가 왼쪽에 선다', () => {
+    expect(TYPE_CSS, '왼쪽 정렬 머리 안 앵커를 되돌리는 규칙이 없어요')
+      .toMatch(/\.sr-rv-th\.sr-rv-left\s*>\s*\*\s*\{[^}]*justify-content:\s*flex-start/);
+  });
+
+  it('이동평균 — 서버가 내고 화면은 선만 긋는다', () => {
+    expect(FLOW_PY).toMatch(/def moving_average/);
+    expect(FLOW_PY, '창 미만을 None 으로 두지 않아요').toMatch(/else None/);
+    expect(FLOW_PAGE).toContain('series.ma');
+    /* 화면이 평균을 다시 재면 두 면이 다른 수를 말할 수 있다. */
+    expect(FLOW_PAGE).not.toMatch(/movingAverage|rolling/i);
+  });
+
+  it('일별 그림의 주체는 표의 **이름 버튼**이 고른다 — tr 에 role 을 얹지 않는다', () => {
+    expect(FLOW_TABLE).toContain('onPick');
+    expect(FLOW_TABLE).toMatch(/<button[\s\S]{0,300}aria-pressed/);
+    expect(FLOW_TABLE).not.toMatch(/<tr[^>]*role=/);
+    expect(FLOW_PAGE).toMatch(/onPick=\{setDaily\}/);
+  });
+
+  it('발행 면도 같은 문법 — 스트립이 그림 위·세로 상자·토큰 색', () => {
+    const strip = ISSUE_FACE.indexOf('<ChartReadoutStrip');
+    const plot = ISSUE_FACE.indexOf('className="sr-plot"');
+    expect(strip).toBeGreaterThan(0);
+    expect(plot).toBeGreaterThan(strip);
+    expect(ISSUE_FACE.slice(Math.max(0, strip - 200), strip)).toMatch(/<VStack[^>]*width="100%"/);
+    expect(ISSUE_FACE).toContain('--sr-flow-1');
+    expect(ISSUE_FACE).not.toMatch(/#[0-9a-fA-F]{6}/);
+    expect(ISSUE_FACE).not.toContain('hideTimeAxis');
+    expect(FLOW_PAGE).toContain("face === 'issue'");
+  });
+
+  it('★물가채 제목은 서버가 직접 짓는다 — 원문 제목이 「국고채 10년물」을 달고 있다', () => {
+    expect(ISSUE_PY).toMatch(/"제목": f"\{LABEL/);
+    expect(ISSUE_PY, '물가채 라벨이 없어요').toContain('"물가": "물가채"');
+  });
+
+  it('발행 서버 문장도 해요체다', () => {
+    const FORMAL = /(니다|한다\.|이다\.|않는다\.)/;
+    const says = [...ISSUE_PY.matchAll(/"((?:[^"\\\n]|\\.)*(?:예요|에요|해요|이에요)[^"\n]*)"/g)]
+      .map((m) => m[1]!);
+    expect(says.length).toBeGreaterThan(2);
     for (const t of says) expect(FORMAL.test(t), t).toBe(false);
   });
 });

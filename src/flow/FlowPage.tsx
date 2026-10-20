@@ -17,6 +17,30 @@
  * ③ **두 원천의 `asof` 가 다른 것이 정상이다** [OWNER 2026-10-19]. 현물이 늦게
  *    들어온다. 조건 스트립이 둘을 따로 적고, 어긋나는 것은 **경고가 아니다**.
  *
+ * ## 2026-10-19 밤에 더한 것 셋 [OWNER]
+ *
+ * ④ **현물은 만기물로 갈린다**(전체·2~50년·물가). 종목→만기물은 서버가 푼다
+ *    (`flow.py` §현물 만기물 ①) — 「전체」는 분리 전 화면과 같은 수다.
+ * ⑤ **일별 그림의 주체를 표가 고르고, 그 위에 이동평균이 선다.** 평균은 서버가
+ *    낸다(`series.ma`). 화면에 산술이 없어야 두 면이 같은 수를 말한다.
+ * ⑥ **PD 인수 노브.** 발행시장 인수분이 자료에 없어서(입찰 당일 열 주체 합이 0)
+ *    금융투자 몫을 사람이 정하고 서버가 더한다. 가정이라는 것을 `basis` 가 말한다.
+ *
+ * ## 2026-10-20 — 면 넷이 **하나**가 됐다 [OWNER]
+ *
+ * 「테너별 국고채 발행량이랑, 각 투자주체들이 어떻게 이를 담아가는지」가 요구였다.
+ * 그 둘이 다른 면에 있으면 눈으로 이어야 한다 — 그래서 합쳤다.
+ *
+ * ⑦ **왼쪽은 테너 × (발행 + 주체) 한 표**(`FlowMatrix`). 행이 만기물, 첫 값 열이
+ *    발행, 나머지 열 열이 주체다. 칸은 고른 구간의 합이고 맨 아랫줄 합계는 `ALL`
+ *    바구니와 **같은 수**다(서버가 둘을 따로 세고 `test_flow` 가 맞댄다).
+ * ⑧ **칸이 손잡이다** — 누르면 (만기물 × 주체) 둘을 한 번에 골라 오른쪽 일별
+ *    그림(+이동평균)이 그 칸의 계열로 바뀐다. 열 머리를 누르면 만기물은 전체다.
+ * ⑨ **선물 둘은 잠시 폐기, 발행 면은 접었다**(`FACES_SHOWN` 머리). 입찰 상세
+ *    (응찰률·낙찰금리·수요 판정)는 `AuctionFact` 한 줄로 남았다. 주체별 순위표
+ *    (`FlowTable`)는 지워지지 않고 **아래 전폭**으로 내려갔다 — 행렬에 없는
+ *    「오늘이 평소보다 센가」(σ)를 그 표가 진다.
+ *
  * ## 그림에 넷, 표에 전부
  *
  * 이 리포에는 N계열 범주형 팔레트가 없다 — 이름 있는 색이 방향 2 + 참조 4뿐이다.
@@ -35,30 +59,58 @@ import { BacktestUnavailable } from '@/lib/api';
 import { fmtContracts, fmtEok, fmtJo } from '@/lib/format';
 import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 import { Cond } from '@/ui/Cond';
-import { Segmented } from '@/ui/ControlCard';
+import { Field, NumField, Segmented } from '@/ui/ControlCard';
 import { ErrorState, LoadingState } from '@/ui/DataState';
 import { Stat, StatColumn } from '@/ui/Stat';
 
-import { fetchFlowBoard, type FlowBoard, type FlowSide, type FlowTenor } from './api';
+import {
+  fetchFlowBoard, fetchIssuanceBoard, type CashTenor, type FlowBoard, type FlowSide,
+  type FutTenor, type IssuanceBoard, type IssuanceUnit, type MaWindow,
+} from './api';
+import { FlowMatrix } from './FlowMatrix';
 import { FlowTable } from './FlowTable';
+import { SPAN_BARS, SPAN_OPTIONS, type Span } from './span';
 
-/** 면 하나 = (원천, 만기). 현물엔 만기가 없다. */
-type Face = 'fut3' | 'fut10' | 'cash';
-const FACE: Record<Face, { side: FlowSide; tenor: FlowTenor; label: string }> = {
-  fut3: { side: 'fut', tenor: '3Y', label: '선물 3년' },
-  fut10: { side: 'fut', tenor: '10Y', label: '선물 10년' },
-  cash: { side: 'cash', tenor: '3Y', label: '현물' },
+/** 면 하나. 선물 둘·현물·발행. */
+export type Face = 'fut3' | 'fut10' | 'cash' | 'issue';
+const FACE: Record<Face, { label: string }> = {
+  fut3: { label: '선물 3년' },
+  fut10: { label: '선물 10년' },
+  cash: { label: '현물' },
+  issue: { label: '발행' },
 };
+const FUT_TENOR: Partial<Record<Face, FutTenor>> = { fut3: '3Y', fut10: '10Y' };
+
+/** 화면에 **서는** 면 [OWNER 2026-10-20].
+ *
+ *  둘이 빠졌고 까닭이 다르다.
+ *
+ *  - **선물 둘은 「잠시 폐기」** 다. 코드와 라우트(`side=fut`)는 그대로 두고
+ *    고를 자리만 뺐다 — 되돌리는 것이 이 배열에 두 글자를 더하는 일이어야 한다.
+ *  - **발행은 접었다.** 공급이 이제 수급표의 첫 값 열이라(`FlowMatrix`) 면을
+ *    따로 둘 까닭이 없다. 입찰 상세(응찰률·낙찰금리·수요 판정)는 고른 만기물의
+ *    **사실 줄**로 왼쪽 카드 머리에 선다.
+ *
+ *  하나뿐이면 세그먼트를 아예 안 그린다 — 고를 것이 없는 컨트롤은 폭만 먹는다. */
+const FACES_SHOWN: Face[] = ['cash'];
+
+/** 현물 만기물 — 서버의 `CASH_TENORS` 와 같은 열쇠·같은 차례. */
+const CASH_TENORS: { value: CashTenor; label: string }[] = [
+  { value: 'ALL', label: '전체' },
+  { value: '2Y', label: '2년' }, { value: '3Y', label: '3년' }, { value: '5Y', label: '5년' },
+  { value: '10Y', label: '10년' }, { value: '20Y', label: '20년' }, { value: '30Y', label: '30년' },
+  { value: '50Y', label: '50년' }, { value: '물가', label: '물가' },
+];
+const CASH_TENOR_LABEL = Object.fromEntries(CASH_TENORS.map((t) => [t.value, t.label])) as Record<CashTenor, string>;
+
+/** 이동평균 창 — 서버 `MA_WINDOWS`. 세그먼트 값은 글자라 여기서 수로 되돌린다. */
+const MA_OPTIONS: { value: `${MaWindow}`; label: string }[] = [
+  { value: '0', label: '없음' }, { value: '5', label: '5일' },
+  { value: '20', label: '20일' }, { value: '60', label: '60일' },
+];
 
 /** 계열 구분색 넷. **순서가 곧 배정**이다 — 서버가 보낸 차례대로 입는다. */
 const INK = ['--sr-flow-1', '--sr-flow-2', '--sr-flow-3', '--sr-flow-4'] as const;
-
-/** 구간 — 자르는 자리는 **화면**이다. 서버는 전구간을 보내고(2,644일) 그 위에서
- *  누적이 서므로, 창을 서버가 자르면 누적의 **시작점이 0 이 아니게** 된다.
- *  여기서 자르면 선이 그 창의 첫날부터 다시 0 에서 오른다 — 「이 구간에 얼마나
- *  샀나」가 그림이 말해야 하는 것이다. */
-type Span = '3M' | '1Y' | '3Y' | 'ALL';
-const SPAN_BARS: Record<Span, number> = { '3M': 63, '1Y': 252, '3Y': 756, ALL: Infinity };
 
 /** 대분류 **순매수 대조** — 받은 쪽과 낸 쪽을 한 막대에 [2026-10-19].
  *
@@ -123,16 +175,71 @@ function Balance({
   );
 }
 
+/** 고른 만기물의 **직전 입찰** 한 줄 — 접은 「발행」 면이 남긴 것 [OWNER 2026-10-20].
+ *
+ *  표의 발행 열은 구간 합(금액)만 든다. 「그래서 그 입찰이 셌나」는 응찰률·낙찰금리·
+ *  수요 판정이 말하는데, 그건 만기물마다 **한 건**이라 표의 열이 아니라 머리의
+ *  사실 줄이 맞다(열로 넣으면 열두 열이 되고 행마다 같은 수가 반복된다).
+ *
+ *  판정 문구는 **서버가 지은 것**을 그대로 쓴다(`issuance_strength.annotate`) —
+ *  화면이 등급을 다시 매기지 않는다. */
+function AuctionFact({ unit, tenorLabel }: { unit: IssuanceUnit | null; tenorLabel: string }) {
+  if (!unit) {
+    return (
+      <Text as="p" font="legal" color="fgMuted">
+        {tenorLabel} 입찰 자료를 아직 못 받았어요.
+      </Text>
+    );
+  }
+  return (
+    <HStack gap={1.5} flexWrap="wrap" alignItems="baseline">
+      <Cond k="직전 입찰" v={`${unit.label} ${unit.date}`} strong />
+      {/* 단위를 **값에 붙인다** — 표는 열 머리가 단위를 지지만(「발행 (조)」)
+          이 줄엔 머리가 없다. 「낙찰 2.1」은 2.1조인지 2.1억인지 못 읽는다. */}
+      <Cond k="낙찰" v={`${fmtJo(unit.amount).replace('+', '')}조`} />
+      {unit.ratio != null ? <Cond k="응찰률" v={`${unit.ratio.toFixed(1)}%`} /> : null}
+      {unit.rate != null ? <Cond k="낙찰금리" v={`${unit.rate.toFixed(3)}%`} /> : null}
+      {unit.rateDelta != null ? (
+        <Cond
+          k="직전 대비"
+          v={`${unit.rateDelta > 0 ? '+' : unit.rateDelta < 0 ? '−' : ''}${Math.abs(unit.rateDelta).toFixed(1)}bp`}
+        />
+      ) : null}
+      {unit.grade ? <Cond k="수요 판정" v={unit.grade} strong /> : null}
+    </HStack>
+  );
+}
+
 export function FlowPage() {
-  const [face, setFace] = useState<Face>('fut3');
+  const [face, setFace] = useState<Face>('cash');
+  const [span, setSpan] = useState<Span>('1Y');
+  /* ④⑤⑥ 의 손잡이 셋 + 일별 그림의 주체. 면이 바뀌면 주체 열쇠 집합이 다르니
+     고른 주체를 내린다(선물 `BANK` 와 현물 `bank` 는 다른 열쇠다). */
+  const [cashTenor, setCashTenor] = useState<CashTenor>('ALL');
+  const [ma, setMa] = useState<MaWindow>(0);
+  const [pdOn, setPdOn] = useState(false);
+  const [pdPct, setPdPct] = useState(60);
+  const [daily, setDaily] = useState<string | null>(null);
+  const pickFace = useCallback((f: Face) => { setFace(f); setDaily(null); }, []);
+  /** 행렬의 칸 — 만기물과 주체를 **한 번에** 고른다 [OWNER 2026-10-20].
+   *
+   *  주체 열쇠 집합은 만기물이 바뀌어도 같으므로(`CASH_COLS` 한 벌) 면을 바꿀
+   *  때와 달리 고른 주체를 안 내린다 — 「30년물 보험」에서 「10년물」 칸으로
+   *  옮겨도 보험이 그대로 서는 것이 맞다. */
+  const pickCell = useCallback((t: CashTenor, subject: string) => {
+    setCashTenor(t);
+    setDaily(subject);
+  }, []);
+
   const [got, setGot] = useState<FlowBoard | null>(null);
+  /** 입찰 상세 — 왼쪽 카드 머리의 사실 줄만 쓴다. 없어도 화면은 선다. */
+  const [iss, setIss] = useState<IssuanceBoard | null>(null);
   const [err, setErr] = useState<string | null>(null);
   /* `unavailable`(백엔드가 없다) 과 `err`(그 밖) 를 **따로** 든다 — 문구가
      다르기 때문이다(MrPage 와 같은 규율). */
   const [down, setDown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [hover, setHover] = useState<string | null>(null);
-  const [span, setSpan] = useState<Span>('1Y');
   /* 두 그림이 **한 커서**를 나눈다 — 어느 쪽을 짚어도 같은 날을 읽는다
      (`backtest/LinkedCharts.tsx` 의 그 문법). `src` 를 들고 있는 이유는
      자기가 세운 커서를 자기에게 되돌려 주면 깜빡이기 때문이다. */
@@ -150,14 +257,20 @@ export function FlowPage() {
       Object.entries(o).filter(([x]) => x !== k)) as Record<string, true> : { ...o, [k]: true })),
     []);
 
-  const { side, tenor } = FACE[face];
+  const side: FlowSide = face === 'cash' ? 'cash' : 'fut';
+  const tenor = side === 'cash' ? cashTenor : (FUT_TENOR[face] ?? '3Y');
+  const pdShare = side === 'cash' && pdOn ? pdPct / 100 : null;
 
   /* 라이브 단발이라 `AbortController` 로 충분하다 — MrPage 의 순번 가드는
      폴링과 딥링크가 겹치는 자리의 해법이고 여기엔 둘 다 없다
      (`lab/creditdts/CreditDtsPage.tsx:327` 선례). */
   const load = useCallback((signal?: AbortSignal) => {
+    if (face === 'issue') return;
     setBusy(true);
-    fetchFlowBoard(side, tenor, signal)
+    /* 행렬이 합할 창을 **봉 수로** 넘긴다 — 그림을 자르는 그 수다(`span.ts`).
+       날짜로 넘기면 휴일 하나에 표와 그림이 갈린다. `Infinity`(전체)는
+       `flowQueryString` 이 빼고, 서버 기본이 전구간이라 뜻이 같다. */
+    fetchFlowBoard({ side, tenor, pdShare, ma, daily, span: SPAN_BARS[span] }, signal)
       .then((r) => { setGot(r); setErr(null); setDown(false); })
       .catch((e: unknown) => {
         if (signal?.aborted) return;
@@ -165,13 +278,25 @@ export function FlowPage() {
         setErr(e instanceof Error ? e.message : String(e));
       })
       .finally(() => { if (!signal?.aborted) setBusy(false); });
-  }, [side, tenor]);
+  }, [face, side, tenor, pdShare, ma, daily, span]);
 
   useEffect(() => {
     const ac = new AbortController();
     load(ac.signal);
     return () => ac.abort();
   }, [load]);
+
+  /* 입찰 상세는 **따로·한 번만** 받는다 [OWNER 2026-10-20 — 발행 면을 접음].
+     수급 손잡이(만기물·PD·이동평균·구간)와 무관한 자료라 같이 다시 받으면
+     손잡이를 만질 때마다 쓸데없이 한 번 더 다녀온다. 실패해도 **화면을 안
+     막는다** — 수급표가 주인공이고 이쪽은 머리의 사실 줄이다. */
+  useEffect(() => {
+    const ac = new AbortController();
+    fetchIssuanceBoard(ac.signal)
+      .then((r: IssuanceBoard) => setIss(r))
+      .catch(() => { /* 사실 줄만 비면 된다 */ });
+    return () => ac.abort();
+  }, []);
 
   const stack = useStackedScales();
   const unitIsCash = side === 'cash';
@@ -197,7 +322,8 @@ export function FlowPage() {
   /** 창 안의 날짜와 **다시 센 누적**.
    *
    *  ★서버가 보낸 `cum` 을 그냥 자르면 선이 창의 첫날 값에서 시작해 「올해 얼마」가
-   *  아니라 「2016년부터 얼마」를 보여 준다. 창 안에서 **0 부터 다시** 센다. */
+   *  아니라 「2016년부터 얼마」를 보여 준다. 창 안에서 **0 부터 다시** 센다.
+   *  이동평균(⑤)은 수준이라 그대로 자른다 — 다시 세는 것이 아니다. */
   const win = useMemo(() => {
     if (!got) return null;
     const n = got.series.dates.length;
@@ -207,13 +333,16 @@ export function FlowPage() {
       const base = s.values[k - 1] ?? 0;
       return { ...s, values: s.values.slice(k).map((v) => v - base) };
     });
-    const daily = got.series.daily
+    const dailyS = got.series.daily
       ? { ...got.series.daily, values: got.series.daily.values.slice(k) }
       : null;
-    return { dates, cum, daily };
+    const maS = got.series.ma
+      ? { ...got.series.ma, values: got.series.ma.values.slice(k) }
+      : null;
+    return { dates, cum, daily: dailyS, ma: maS };
   }, [got, span]);
 
-  /** 누적 선 넷 + 일별 막대 하나. 막대는 **부호마다 색**이다. */
+  /** 누적 선 넷. */
   const lines: TimeLine[] = useMemo(() => {
     if (!win) return [];
     /* ★색은 **계열의 차례**가 정한다, 그려지는 차례가 아니라 — 하나를 끄면
@@ -231,15 +360,25 @@ export function FlowPage() {
       }));
   }, [win, fmtCum, off]);
 
-  const daily: TimeLine[] = useMemo(() => {
+  /** 일별 막대 하나 + 그 위의 이동평균 선(⑤). 막대는 **부호마다 색**이고,
+   *  평균선은 계열색 셋째(바이올렛) — 빨강·파랑 막대 위에서 둘 다와 갈린다. */
+  const dailyLines: TimeLine[] = useMemo(() => {
     if (!win?.daily) return [];
-    return [{
+    const bars: TimeLine = {
       id: win.daily.key,
       values: win.daily.values,
       kind: 'histogram' as const,
       color: (p) => p.up,
       /* 부호가 색을 정한다 — 그것이 막대를 들인 이유의 절반이다. */
       colorAt: (v, p) => (v >= 0 ? p.up : p.down),
+      format: fmt,
+    };
+    if (!win.ma) return [bars];
+    return [bars, {
+      id: `${win.ma.key}-ma`,
+      values: win.ma.values,
+      color: (p) => p.resolve(`var(${INK[2]})`),
+      width: 2 as const,
       format: fmt,
     }];
   }, [win, fmt]);
@@ -272,6 +411,91 @@ export function FlowPage() {
     }));
   }, [win, at.i, fmtCum, off, toggle]);
 
+  /* ── 컨트롤 행 (등고 32) — 면·구간은 네 면이 같이 쓴다. 발행 면은 이 줄을
+     그대로 받아 제 자리에 세운다(같은 손잡이가 같은 자리에 있어야 면을 넘겨도
+     손이 헤매지 않는다). */
+  const controls = (
+    <HStack gap={2} alignItems="flex-end" flexWrap="wrap">
+      {/* 폭은 **최장 라벨**로 잰다 — 260 에서는 「선물 10년」이 두 줄로
+          접혔다(실측 2026-10-19). 말줄임 금지라 폭을 키우는 쪽이 답이다.
+          네 면이라 330 → 420. */}
+      {/* 면이 하나면 안 그린다 — 까닭은 `FACES_SHOWN` 머리에. */}
+      {FACES_SHOWN.length > 1 ? (
+        <Box width={105 * FACES_SHOWN.length}>
+          <Segmented
+            label="면"
+            value={face}
+            onChange={pickFace}
+            options={FACES_SHOWN.map((k) => ({ value: k, label: FACE[k].label }))}
+            fill
+          />
+        </Box>
+      ) : null}
+      <Box width={250}>
+        <Segmented label="구간" value={span} onChange={setSpan} options={SPAN_OPTIONS} fill />
+      </Box>
+      {face === 'cash' ? (
+        /* ④ 만기물 — 아홉 칸. 「전체」가 분리 전 화면과 같은 수다. */
+        <Box width={540}>
+          <Segmented
+            label="만기물"
+            value={cashTenor}
+            onChange={(t) => { setCashTenor(t); setDaily(null); }}
+            options={CASH_TENORS}
+            fill
+          />
+        </Box>
+      ) : null}
+      {face !== 'issue' ? (
+        /* ⑤ 이동평균 — 일별 그림의 주체 위에 선다. 주체는 표가 고른다. */
+        <Box width={250}>
+          <Segmented
+            label="이동평균"
+            value={`${ma}` as `${MaWindow}`}
+            onChange={(v) => setMa(Number(v) as MaWindow)}
+            options={MA_OPTIONS}
+            fill
+          />
+        </Box>
+      ) : null}
+      {face === 'cash' ? (
+        /* ⑥ PD 인수 — 켜면 발행시장 인수분을 금융투자·은행에 더한다. 몫은 가정. */
+        <>
+          {/* 폭은 **최장 라벨**로 잰다 — 위 「면」 주석의 그 판례를 이 상자가
+              안 받아서 또 밟았다(실측 2026-10-20). 알약 속 `span` 이 좌우 16px
+              씩 미니 한 칸에 **글자폭 + 32** 가 든다: 「PD 켬」은 33.8 + 32 =
+              65.8 인데 130 ÷ 2 = 65 라 0.8px 모자라 두 줄로 접혔다. 두 칸 ×
+              70 = 140 으로 여유 4.2px 를 둔다. */}
+          <Box width={140}>
+            <Segmented
+              label="PD 인수 반영"
+              value={pdOn ? 'on' : 'off'}
+              onChange={(v) => setPdOn(v === 'on')}
+              options={[{ value: 'off', label: 'PD 끔' }, { value: 'on', label: 'PD 켬' }]}
+              fill
+            />
+          </Box>
+          <Box width={120}>
+            <Field label="금융투자 몫" help="발행시장 인수분 중 금융투자가 받는 비율. 은행은 나머지예요. 공표되지 않아 가정이에요.">
+              <NumField
+                label="PD 인수 중 금융투자 몫"
+                value={pdPct}
+                min={0}
+                suffix="%"
+                onCommit={(v) => setPdPct(Math.min(100, Math.max(0, Math.round(v))))}
+              />
+            </Field>
+          </Box>
+        </>
+      ) : null}
+    </HStack>
+  );
+
+  /* 「발행」 면은 **접혔다** [OWNER 2026-10-20] — 공급이 수급표의 첫 값 열이 되고
+     입찰 상세는 `AuctionFact` 가 든다. `IssuanceFace.tsx` 는 지우지 않았다:
+     입찰 전수 표와 누적 공급 그림이 거기 있고, 되살릴 때 다시 지을 일이 아니다.
+     `FACES_SHOWN` 에 `'issue'` 를 더하고 이 가지를 되돌리면 선다. */
+
   if (down) {
     return <ErrorState what="투자자별 수급" onRetry={() => load()} retrying={busy}
       detail="백엔드가 안 보여요 — 이 화면은 SQL 두 원천을 바로 읽어요." />;
@@ -281,8 +505,16 @@ export function FlowPage() {
   }
   if (!got) return <LoadingState what="투자자별 수급" />;
 
+  /** 고른 만기물의 직전 입찰. 「전체」면 가장 최근 입찰 하나를 든다. */
+  const lastAuction: IssuanceUnit | null = iss
+    ? (cashTenor === 'ALL'
+      ? iss.latest
+      : iss.tenors.find((t) => t.key === cashTenor)?.last ?? null)
+    : null;
+
   const lead = got.top.find((t) => t.value > 0) ?? got.sub[0];
   const other = got.top.find((t) => t.value < 0);
+  const pdPctShown = got.pd ? Math.round(got.pd.share * 100) : null;
 
   return (
     <VStack gap={1.5} width="100%" flexGrow={1} minHeight={0}>
@@ -296,14 +528,19 @@ export function FlowPage() {
               (실측 2026-10-19 — 현물 면에 「선물수급 —」 이 서 있었다). */}
           {got.asof.fut ? <Cond k="선물수급" v={got.asof.fut} /> : null}
           {got.asof.cash ? <Cond k="현물수급" v={got.asof.cash} /> : null}
+          {side === 'cash' ? <Cond k="만기물" v={CASH_TENOR_LABEL[cashTenor]} strong /> : null}
           {/* 서버가 말하는 원단위(계약·백만원)와 **화면의 자**가 다르다 —
               백만원으로 적으면 일별이 여섯 자리라 억으로 줄여 읽는다. */}
           <Cond k="단위" v={unitIsCash ? '일별 억 · 누적 조' : '계약'} strong />
           <Cond k="순위"
             v={`${side === 'cash' ? '주체별' : '기관계 세분'} · 하한 ${fmt(got.rankFloor).replace('+', '')}${unitWord}`} />
           <Cond k="표본" v={`${got.days.toLocaleString('ko-KR')}일`} />
+          {got.series.ma ? <Cond k="이동평균" v={`${got.series.ma.window}일`} /> : null}
+          {got.pd && pdPctShown != null
+            ? <Cond k="PD 인수" v={`금융투자 ${pdPctShown}% · 은행 ${100 - pdPctShown}%`} strong />
+            : null}
           {/* ★「집계예요 — 새 판단이 아니에요.」를 여기 또 적지 않는다. 바로
-              아랫줄의 `got.basis` 가 이미 그 말로 시작한다(`flow.py:388`) —
+              아랫줄의 `got.basis` 가 이미 그 말로 시작한다(`flow.py`) —
               같은 문장이 두 줄 연속으로 서 있었다(실측 2026-10-19). 기준을
               말하는 것은 **서버 한 곳**이다. */}
         </HStack>
@@ -338,40 +575,7 @@ export function FlowPage() {
         </HStack>
       </VStack>
 
-      {/* ── 컨트롤 행 (등고 32) ─────────────────────────────────────────── */}
-      <HStack gap={2} alignItems="flex-end">
-        {/* 폭은 **최장 라벨**로 잰다 — 260 에서는 「선물 10년」이 두 줄로
-            접혔다(실측 2026-10-19). 말줄임 금지라 폭을 키우는 쪽이 답이다. */}
-        <Box width={330}>
-          <Segmented
-            label="면"
-            value={face}
-            onChange={setFace}
-            options={(Object.keys(FACE) as Face[]).map((k) => ({
-              value: k, label: FACE[k].label,
-            }))}
-            fill
-          />
-        </Box>
-        <Box width={250}>
-          <Segmented
-            label="구간"
-            value={span}
-            onChange={setSpan}
-            options={[
-              { value: '3M' as const, label: '3M' },
-              { value: '1Y' as const, label: '1Y' },
-              { value: '3Y' as const, label: '3Y' },
-              { value: 'ALL' as const, label: '전체' },
-            ]}
-            fill
-          />
-        </Box>
-        <Text as="span" font="legal" color="fgMuted" paddingBottom={0.5}>
-          단위가 달라 한 축에 못 겹쳐요 — 면을 가릅니다. 누적은 고른 구간의
-          첫날부터 다시 세요.
-        </Text>
-      </HStack>
+      {controls}
 
       {/* ── 여기부터 **구르는 칸** — 바닥 띠(`ui/BottomStrip`)가 `fixed` 가 아니라
           기둥의 마지막 칸이라, 내용이 기둥보다 길면 **자라려는 칸이 0 으로 눌린다**
@@ -393,16 +597,31 @@ export function FlowPage() {
           maxWidth={1180} minWidth={0} minHeight={0}>
           <VStack paddingX={2} paddingTop={1.5} paddingBottom={1} gap={1}>
             <Text as="h3" font="label1">
-              {side === 'cash' ? '주체별 순매수' : '기관계 세분 순위'}
+              {got.matrix ? '만기물별 발행과 순매수' : '기관계 세분 순위'}
             </Text>
+            {/* 접은 「발행」 면이 남긴 것 — 고른 만기물의 **직전 입찰**이다.
+                표의 발행 열은 금액만 들고, 응찰률·낙찰금리·수요 판정은 여기 선다. */}
+            {got.matrix ? <AuctionFact unit={lastAuction} tenorLabel={CASH_TENOR_LABEL[cashTenor]} /> : null}
             {/* 대분류 대조 — **순위가 아니다**(상관 −0.9996). 숫자를 나란히
                 적는 것보다 **양쪽 막대**가 「누가 받고 누가 냈나」를 한 눈에
                 말한다(목업에서 가장 잘 읽히던 자리인데 첫 판에서 빼먹었다). */}
             {got.top.length > 0 ? <Balance top={got.top} fmt={fmt} unit={unitWord} /> : null}
           </VStack>
           <Box flexGrow={1} minHeight={0} paddingX={1} paddingBottom={1}>
-            <FlowTable rows={got.sub} side={side} floor={got.rankFloor}
-              highlight={hover} onHover={setHover} />
+            {got.matrix ? (
+              <FlowMatrix
+                matrix={got.matrix}
+                tenor={cashTenor}
+                picked={got.series.daily?.key ?? null}
+                onPick={pickCell}
+                highlight={hover}
+                onHover={setHover}
+              />
+            ) : (
+              <FlowTable rows={got.sub} side={side} floor={got.rankFloor}
+                highlight={hover} onHover={setHover}
+                picked={got.series.daily?.key ?? null} onPick={setDaily} />
+            )}
           </Box>
         </VStack>
 
@@ -420,7 +639,7 @@ export function FlowPage() {
             </HStack>
           </VStack>
           {/* ★리드아웃 스트립은 **그림 밖·위**에 선다 [OWNER 2026-09-21] —
-              범례·값·끄는 손잡이 셋을 한 칸에 모은다. 따로 범례를 두면
+              계열 이름·값·끄는 손잡이 셋을 한 칸에 모은다. 따로 두면
               「지금 그려진 것」과 「끄는 손잡이」가 갈릴 수 있다. */}
           {/* ★`width="100%"` 가 있어야 한다 — 없으면 `VStack` 안에서 칸 폭만큼만
               서서(실측 141px · 계열 영역 16px) 스트립이 통째로 잘린다. 값은
@@ -460,28 +679,54 @@ export function FlowPage() {
             <HStack alignItems="baseline" justifyContent="space-between" gap={1}>
               <Text as="span" font="label2">
                 일별 — {win?.daily?.label ?? ''} ({unitWord})
+                {win?.ma ? ` · ${win.ma.window}일 이동평균` : ''}
               </Text>
               <Text as="span" font="legal" color="fgMuted">
                 빨강이 순매수, 파랑이 순매도예요
+                {win?.ma ? ' · 평균선은 바이올렛이에요' : ''}
               </Text>
             </HStack>
             <Box className="sr-plot" flexGrow={1} minHeight={0}>
               <TimeChart
                 dates={win?.dates ?? []}
-                lines={daily}
+                lines={dailyLines}
                 precision={0}
                 priceLines={[{ value: 0, color: (p) => p.line }]}
                 onHoverIndex={onDay}
                 syncIndex={cursor?.src === 'cum' ? cursor.i : null}
                 hoverLabel={(i) => `${win?.dates[i] ?? ''} · ${win?.daily?.label ?? ''} `
-                  + fmt(win?.daily?.values[i] ?? 0)}
-                accessibilityLabel={`${win?.daily?.label ?? ''} 일별 순매수`}
+                  + fmt(win?.daily?.values[i] ?? 0)
+                  + (win?.ma && win.ma.values[i] != null
+                    ? ` · ${win.ma.window}일 평균 ${fmt(win.ma.values[i] as number)}` : '')}
+                accessibilityLabel={`${win?.daily?.label ?? ''} 일별 순매수${win?.ma ? `와 ${win.ma.window}일 이동평균` : ''}`}
                 {...stack}
               />
             </Box>
           </VStack>
         </VStack>
       </HStack>
+
+      {/* ── 주체별 순위 ─────────────────────────────────────────────────── */}
+      {/* 행렬이 왼쪽 칸을 가져갔으므로 이 표는 **아래 전폭**으로 내려온다 —
+          지우지 않는다. 행렬에 없는 것 둘을 이 표가 진다: 「오늘이 평소보다
+          센가」(σ)와 순위 하한 밖 주체를 흐리게 남기는 일. 「안 보인다」와
+          「없다」는 다른 말이다(`FlowTable` 머리). */}
+      {got.matrix ? (
+        <VStack className="sr-card" width="100%" flexShrink={0} minWidth={0}>
+          <VStack paddingX={2} paddingTop={1.5} paddingBottom={1} gap={0.5}>
+            <Text as="h3" font="label1">주체별 순위 · {CASH_TENOR_LABEL[cashTenor]}</Text>
+            <Text as="span" font="legal" color="fgMuted">
+              위 표가 구간 합을 말한다면 이 표는 오늘을 말해요 — 그 주체의 지난
+              1년 분포에 견준 자리예요.
+            </Text>
+          </VStack>
+          <Box paddingX={1} paddingBottom={1}>
+            <FlowTable rows={got.sub} side={side} floor={got.rankFloor}
+              highlight={hover} onHover={setHover}
+              picked={got.series.daily?.key ?? null} onPick={setDaily} />
+          </Box>
+        </VStack>
+      ) : null}
 
       {/* ── 사실 스트립 ─────────────────────────────────────────────────── */}
       <Box flexShrink={0} width="100%">
@@ -518,6 +763,15 @@ export function FlowPage() {
               );
             })}
           </StatColumn>
+          {got.pd && pdPctShown != null ? (
+            /* ⑥ 보정이 켜졌을 때만 — 무엇을 얼마나 더했는지 수로 적는다. */
+            <StatColumn title="PD 인수 보정 · 올해">
+              <Stat label="더한 공급" value={fmtCum(got.pd.supplyYtd)}
+                note={`금융투자 ${pdPctShown}% · 은행 ${100 - pdPctShown}% 가정`} />
+              <Stat label="반영 전 입찰" value={`${got.pd.pending}건`}
+                note={got.pd.pending ? '현물 자료가 그 날에 아직 안 닿았어요' : '전부 닿았어요'} />
+            </StatColumn>
+          ) : null}
           <StatColumn title="모집단">
             <Stat label="표본" value={`${got.days.toLocaleString('ko-KR')}일`}
               note={`${got.series.dates[0] ?? '—'} 부터`} />

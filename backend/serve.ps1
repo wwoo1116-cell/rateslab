@@ -30,7 +30,17 @@ param(
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$log = Join-Path (Split-Path -Parent $root) "backend.log"
+# 로그는 포트마다 따로. 8200 은 예약 작업·BACKEND.md·세션 프롬프트가 모두
+# `backend.log` 를 가리키므로 그 이름을 지킨다.
+#
+# [2026-10-20] 한 파일을 함께 쓰면 **둘째 백엔드를 띄울 수 없다**: 라이브 :8200 의
+# uvicorn 은 cmd 의 `>>` 로 이 파일을 독점으로 열고 있고, 그 상태에서 아래
+# Add-Content 가 IOException 으로 떨어진다. $ErrorActionPreference="Stop" 이라
+# 런처가 거기서 죽어서 ─ 포트도 안 열리고 로그도 안 남아 ─ 원인이 안 보였다.
+# 눈으로 재려면 :8299 가 :8200 과 동시에 서야 한다(프런트 `.env.development.local`
+# 이 :8299 를 가리킨다).
+$logName = if ($Port -eq 8200) { "backend.log" } else { "backend-$Port.log" }
+$log = Join-Path (Split-Path -Parent $root) $logName
 $python = "C:\Users\infomax\Miniconda3\python.exe"
 
 if (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue) {

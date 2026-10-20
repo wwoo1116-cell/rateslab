@@ -210,6 +210,8 @@ export const momentumSleeveUrl = () => liveUrl("/api/momentum/sleeve");
 export const flowBoardUrl = (query: string) => liveUrl("/api/flow/board", query);
 export const flowHistoryUrl = (key: string, query: string) =>
   liveUrl(`/api/flow/history/${encodeURIComponent(key)}`, query);
+/** 「발행」 면 — 국고채 입찰 결과·공급(`backend/app/ktb_issuance.py`) [2026-10-19]. */
+export const flowIssuanceUrl = () => liveUrl("/api/flow/issuance");
 
 /** 페이퍼 북 — 이 앱의 **유일한 쓰기 경로**다.
  *

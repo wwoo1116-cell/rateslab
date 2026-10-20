@@ -21,6 +21,7 @@ import pytest
 
 from app import futures as _futures_mod
 from app import flow as _flow_mod
+from app import ktb_issuance as _iss_mod
 from irs_pricer.core import ttl_cache
 from irs_pricer.loaders import irsdata as _irsdata_loader
 from irs_pricer.services.simulation import bond_roll
@@ -35,9 +36,13 @@ def flow_data_off():
     `set_data` 로 주입한 뒤 이 픽스처가 되돌린다.
 
     ★이 모듈은 캐시도 **따로** 들고 있다(`_cached`, 워터마크 열쇠). 주입만
-    내리고 캐시를 안 지우면 앞 테스트가 SQL 로 떠 온 것이 뒤 테스트에 남는다."""
+    내리고 캐시를 안 지우면 앞 테스트가 SQL 로 떠 온 것이 뒤 테스트에 남는다.
+
+    발행 통계(`ktb_issuance`)도 같은 모양이다 — 현물 PD 보정이 그 모듈을 부른다."""
     _flow_mod.set_data(None)
     _flow_mod.reset_cache()
+    _iss_mod.set_data(None)
+    _iss_mod.reset_cache()
     yield
     _flow_mod.set_data(None)
     _flow_mod.reset_cache()

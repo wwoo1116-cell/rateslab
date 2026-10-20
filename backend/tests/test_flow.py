@@ -14,9 +14,11 @@
 """
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
-from app import flow
+from app import flow, ktb_issuance
 
 
 def _row(**over: int) -> dict[str, int]:
@@ -110,6 +112,21 @@ class Test편차:
         assert (sigma is not None) is (n >= flow.MIN_OBS)
 
 
+class Test이동평균:
+    def test_창_미만은_None이고_그_뒤는_평균이다(self):
+        assert flow.moving_average([1, 2, 3, 4], 2) == [None, 1.5, 2.5, 3.5]
+        assert flow.moving_average([5], 1) == [5.0]
+        assert flow.moving_average([], 5) == []
+
+    def test_PD_적용은_두_열만_바꾼다(self):
+        cols = {"financial_investment": [0, 0], "bank": [0, 0], "insurance": [7, 7]}
+        out = flow.apply_pd(cols, [0.0, 1000.0], 0.6)
+        assert out["financial_investment"] == [0, 600]
+        assert out["bank"] == [0, 400]
+        assert out["insurance"] == [7, 7]
+        assert cols["bank"] == [0, 0]            # 원본은 그대로
+
+
 class Test순위:
     @staticmethod
     def _rows(*spec: tuple[str, float | None, float]):
@@ -168,14 +185,50 @@ class Test페이로드:
         cols["ETC"] = [0] * n
         cash = {c: [100_000 * (1 if i % 2 else -1) for i in range(n)]
                 for c, _ in flow.CASH_COLS}
+        #: 만기물 바구니 — 현물은 **전부 3년물**에 들고 나머지는 0. `ALL` 은 그 합이라
+        #: 분리 전 한 장과 같은 수다(§현물 만기물 ①).
+        buckets = {
+            k: (dates, cash if k == "3Y" else {c: [0] * n for c, _ in flow.CASH_COLS})
+            for k in flow.CASH_TENORS if k != "ALL"
+        }
+        buckets[flow.CASH_OTHER] = (dates, {c: [0] * n for c, _ in flow.CASH_COLS})
+        buckets["ALL"] = (dates, flow.sum_cash_buckets(buckets, dates))
         return flow.FlowData(fut={t: (dates, cols) for t in flow.FUT_TENORS},
-                             cash=(dates, cash), watermark=("x|y", 1))
+                             cash=buckets, watermark=("x|y", 1))
+
+    @staticmethod
+    def _issuance(dates: list[str]):
+        """가짜 발행 통계 — 현물 날짜축의 **올해** 날 하나에 3년 경쟁 2.4조, 그리고
+        현물이 아직 안 닿은 날(마지막 날 뒤)에 10년 경쟁 하나."""
+        from app import ktb_issuance as ki
+        year = dates[-1][:4]
+        on = next(d for d in dates if d[:4] == year)
+        after = f"{year}-12-31"
+        raw = [
+            {"구분": "경쟁", "종목명": "국고03500-2906", "isin": "KR103501GG62", "만기물": "3",
+             "입찰일": dt.date.fromisoformat(on), "입찰금액": 24000, "응찰금액": 66630,
+             "응찰률": 277.6, "낙찰금액": 24000, "낙찰금리": 3.94, "최저낙찰금리": 3.94,
+             "최고낙찰금리": 3.94, "부분낙찰률": 45.0, "기관수": None,
+             "updated_at": dt.datetime(2026, 10, 19, 2, 35, 3)},
+            {"구분": "경쟁", "종목명": "국고04250-3606", "isin": "KR103503GG60", "만기물": "10",
+             "입찰일": dt.date.fromisoformat(after), "입찰금액": 21000, "응찰금액": 60060,
+             "응찰률": 286.0, "낙찰금액": 21000, "낙찰금리": 4.155, "최저낙찰금리": 4.155,
+             "최고낙찰금리": 4.155, "부분낙찰률": 32.7, "기관수": None,
+             "updated_at": dt.datetime(2026, 10, 19, 2, 35, 3)},
+        ]
+        tenor_of = {"KR103501GG62": "3Y", "KR103503GG60": "10Y"}
+        return ki.IssuanceData(rows=ki.normalize(raw, tenor_of), tenor_of=tenor_of,
+                               schedule=[], watermark=("i", 2))
 
     @pytest.fixture
     def injected(self):
-        flow.set_data(self._data())
+        from app import ktb_issuance as ki
+        d = self._data()
+        flow.set_data(d)
+        ki.set_data(self._issuance(d.cash["ALL"][0]))
         yield
         flow.set_data(None)
+        ki.set_data(None)
 
     def test_선물면이_대조와_순위를_같이_낸다(self, injected):
         b = flow.board("fut", "3Y")
@@ -210,9 +263,115 @@ class Test페이로드:
 
     def test_현물면엔_대분류가_없다(self, injected):
         """현물엔 상위 집합이 없다 — 빈 칸이 맞다."""
-        b = flow.board("cash")
+        b = flow.board("cash", "ALL")
         assert b["top"] == []
         assert b["unit"] == "백만원"
+        assert [t["key"] for t in b["tenors"]] == list(flow.CASH_TENORS)
+
+    def test_만기물의_합이_전체다(self, injected):
+        """`ALL` 은 바구니의 합 — 분리 전 화면과 같은 수여야 한다(§현물 만기물 ①)."""
+        a = {r["key"]: r for r in flow.board("cash", "ALL")["sub"]}
+        t3 = {r["key"]: r for r in flow.board("cash", "3Y")["sub"]}
+        t10 = {r["key"]: r for r in flow.board("cash", "10Y")["sub"]}
+        for k in a:
+            assert a[k]["d1"] == t3[k]["d1"] + t10[k]["d1"]
+            assert a[k]["ytd"] == t3[k]["ytd"]
+            assert t10[k]["d1"] == 0
+        assert flow.board("cash", "3Y")["basis"].startswith("3년물만 봐요.")
+
+    def test_행렬의_합계가_전체_바구니와_같다(self, injected):
+        """테너 × (발행 + 주체) 표 [OWNER 2026-10-20].
+
+        맨 아랫줄 `합계` 는 **따로 센 수**다 — 행마다의 바구니를 더한 것이고,
+        `ALL` 바구니는 SQL 집계의 합이다. 둘이 어긋나면 만기물을 못 푼 종목이
+        생겼다는 뜻이라 여기서 잡힌다.
+        """
+        b = flow.board("cash", "ALL", span=None)
+        m = b["matrix"]
+        assert [r["key"] for r in m["rows"]] == list(ktb_issuance.TENORS)
+        dates, cols = flow.load().cash["ALL"]
+        for c, _lab in flow.CASH_COLS:
+            assert m["total"]["cols"][c] == sum(cols[c]), c
+            assert m["total"]["cols"][c] == sum(r["cols"][c] for r in m["rows"]), c
+        assert m["to"] == dates[-1]
+        # 발행 열은 공급표 그대로 — 3년 2.4조만 날짜축에 얹히고 10년은 축 뒤다.
+        assert m["total"]["supply"] == 2_400_000
+        assert m["pending"] == 1
+
+    def test_행렬은_구간을_봉_수로_자른다(self, injected):
+        """표와 그림이 **같은 창**을 봐야 한다 — 화면이 쓰는 봉 수를 그대로 받는다."""
+        dates, cols = flow.load().cash["ALL"]
+        for span in (5, 63, len(dates), len(dates) + 100):
+            m = flow.board("cash", "ALL", span=span)["matrix"]
+            cut = flow.span_slice(len(dates), span)
+            assert m["from"] == dates[cut][0]
+            for c, _lab in flow.CASH_COLS:
+                assert m["total"]["cols"][c] == sum(cols[c][cut]), (span, c)
+        # 전구간을 넘는 수와 None 은 같은 것이다.
+        assert (flow.board("cash", "ALL", span=99_999)["matrix"]["from"]
+                == flow.board("cash", "ALL", span=None)["matrix"]["from"] == dates[0])
+
+    def test_행렬의_발행_열은_PD_노브에_안_움직인다(self, injected):
+        """노브는 공급을 **주체에 더하는** 것이다 — 공급 자체를 바꾸면 두 번 센다."""
+        off = flow.board("cash", "ALL", span=None)["matrix"]
+        on = flow.board("cash", "ALL", span=None, pd_share=0.6)["matrix"]
+        assert on["total"]["supply"] == off["total"]["supply"]
+        for a, b2 in zip(off["rows"], on["rows"]):
+            assert a["supply"] == b2["supply"], a["key"]
+        fi, bk = flow.PD_COLS
+        assert on["total"]["cols"][fi] - off["total"]["cols"][fi] == 1_440_000
+        assert on["total"]["cols"][bk] - off["total"]["cols"][bk] == 960_000
+
+    def test_PD_문구가_제도와_가정을_가른다(self, injected):
+        """[OWNER 2026-10-20] 둘이 나눠 받는 것은 제도고, 60 이라는 수가 가정이다.
+
+        합이 100 이라는 것까지 「가정」으로 읽히면 안 된다 — `apply_pd` 가 몫
+        하나를 받아 나머지를 은행에 주므로 합은 **구조적으로** 100 이다.
+        """
+        note = flow.board("cash", "ALL", pd_share=0.6)["pd"]["note"]
+        assert "제도" in note and "가정" in note
+        assert "60 대 40" in note
+        # 어떤 몫이든 둘이 공급을 정확히 나눈다.
+        for share in (0.0, 0.25, 0.6, 1.0):
+            off = flow.board("cash", "ALL", span=None)["matrix"]["total"]["cols"]
+            on = flow.board("cash", "ALL", span=None, pd_share=share)["matrix"]["total"]["cols"]
+            fi, bk = flow.PD_COLS
+            added = (on[fi] - off[fi]) + (on[bk] - off[bk])
+            assert added == 2_400_000, share
+
+    def test_PD_인수는_두_주체에만_더해진다(self, injected):
+        """발행시장 인수분(2.4조 = 2,400,000백만원)이 금융투자 60%·은행 40% 로 들어가고
+        다른 주체는 그대로다. 현물이 아직 안 닿은 날의 입찰은 **세어서 말한다**."""
+        off = {r["key"]: r for r in flow.board("cash", "ALL")["sub"]}
+        b = flow.board("cash", "ALL", pd_share=0.6)
+        on = {r["key"]: r for r in b["sub"]}
+        assert on["financial_investment"]["ytd"] - off["financial_investment"]["ytd"] == 1_440_000
+        assert on["bank"]["ytd"] - off["bank"]["ytd"] == 960_000
+        assert on["insurance"]["ytd"] == off["insurance"]["ytd"]
+        assert b["pd"]["supplyYtd"] == 2_400_000
+        assert b["pd"]["pending"] == 1          # 10년 입찰은 현물 날짜축 뒤 — 반영 전
+        assert "가정" in b["pd"]["note"] and "가정" in b["basis"]
+        # 만기물을 가르면 3년 공급은 3년 바구니에만 든다.
+        t10 = flow.board("cash", "10Y", pd_share=0.6)
+        assert t10["pd"]["supplyYtd"] == 0
+
+    def test_PD_배분은_0과_1_사이다(self, injected):
+        with pytest.raises(flow.FlowError):
+            flow.board("cash", "ALL", pd_share=1.5)
+        assert flow.board("cash", "ALL", pd_share=None)["pd"] is None
+
+    def test_이동평균은_서버가_내고_창_미만은_None이다(self, injected):
+        b = flow.board("fut", "3Y", ma=20, daily="BANK")
+        ma = b["series"]["ma"]
+        assert ma["key"] == "BANK" and ma["window"] == 20
+        assert ma["values"][:19] == [None] * 19
+        assert ma["values"][19] is not None
+        assert b["series"]["daily"]["key"] == "BANK"
+        assert flow.board("fut", "3Y")["series"]["ma"] is None
+        with pytest.raises(flow.FlowError):
+            flow.board("fut", "3Y", ma=7)
+        with pytest.raises(flow.FlowError):
+            flow.board("fut", "3Y", daily="NOPE")
 
     def test_화면_문장은_해요체다(self, injected):
         """판정은 `test_register.FORMAL` 과 같은 자다 — **금칙**으로 잰다.
@@ -244,10 +403,13 @@ class Test라우트:
         from app import main as M
 
         paths = {r.path for r in M.app.routes if "flow" in getattr(r, "path", "")}
-        assert paths == {"/api/flow/board", "/api/flow/history/{key}"}
+        assert paths == {"/api/flow/board", "/api/flow/history/{key}", "/api/flow/issuance"}
         c = TestClient(M.app)
         assert c.get("/api/flow/board?side=xxx").status_code == 422
         assert c.get("/api/flow/board?side=fut&tenor=7Y").status_code == 422
+        assert c.get("/api/flow/board?side=cash&tenor=7Y").status_code == 422
+        assert c.get("/api/flow/board?side=fut&tenor=3Y&ma=7").status_code == 422
+        assert c.get("/api/flow/board?side=cash&tenor=ALL&pd=1.5").status_code == 422
 
     def test_워터마크는_복합이다(self):
         """★한쪽만 세면 다른 쪽이 들어와도 캐시 열쇠가 안 바뀐다 — 두 원천이

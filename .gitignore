@@ -48,6 +48,7 @@ next-env.d.ts
 backend/.cache/
 data/.cache/
 backend.log
+backend-*.log
 refresh.log
 __pycache__/
 *.pyc

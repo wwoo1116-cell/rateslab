@@ -2149,6 +2149,14 @@ thead th {
   text-underline-offset: 3px;
 }
 
+/* 일별 그림에 세운 주체 — Flow 표가 그 줄 이름에 밑줄을 둔다(호버 밑줄과 같은 결).
+   짚기(hover, `data-on`)와 고르기(`data-pick`)는 다른 모양이어야 한다(CLAUDE.md
+   키보드 규칙 2). */
+.sr-rv-row[data-pick] .sr-rv-name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* 히트맵 칸을 채우는 버튼 — 포인터 지름길(tabIndex=-1)이라 포커스 링은 없다.
    height 100%: stretch 된 칸에서도 클릭 면이 칸 전체다. */
 .sr-rv-cellbtn {
@@ -2216,6 +2224,35 @@ thead th {
   border-top: 1px solid var(--color-bgLine);
   padding-top: 7px;
   padding-bottom: 7px;
+}
+
+/* 왼쪽 정렬 머리 안의 **뜻풀이 앵커**(`ui/ThHelp` → CDS `Tooltip`)
+   [2026-10-20 수리].
+
+   CDS `Tooltip` 은 children 을 제 `div` 로 감싸는데 그 div 가 `display: flex` ·
+   `justify-content: flex-end` 다. flex 컨테이너는 `text-align` 을 안 듣기 때문에
+   `.sr-rv-left` 가 th 에 건 왼쪽 정렬이 **그 겹에서 끊긴다** — 실측(발행 면
+   「수요 판정」, 2026-10-20): 칸은 405~800 인데 머리 글자가 744~792 에 서고 그
+   칸의 본문 글자는 413~492 에 서서 **같은 열의 머리와 값이 350px 어긋났다**.
+
+   오른쪽 정렬 열(「직전 대비」·「작년 동기」)에서는 `flex-end` 가 우연히 맞아서
+   안 보였다 — 왼쪽 정렬 머리에 이 부품을 처음 쓴 자리에서 드러났다.
+
+   `> *` 로 쓰는 이유는 그 div 의 클래스가 CDS 가 지어낸 해시(`subjectCss-…`)라
+   이름으로 잡을 수 없기 때문이다. 이 자리의 자식은 앵커 하나뿐이다. */
+.sr-rv-th.sr-rv-left > * {
+  justify-content: flex-start;
+}
+
+/* 합계 줄 — 랭킹 표의 **마지막 한 줄**이 본문과 다른 층이라는 표시
+   [2026-10-20, Flow 테너 × 주체 행렬]. 본문 행의 헤어라인(위)만으로는 「또 한
+   줄」로 읽힌다: 합계는 위 행들의 **합**이라 같은 층이 아니다.
+
+   굵게 하지 않고 **위 선만 진하게** 한다 — 숫자 열이 전부 tabular-nums 라
+   굵기를 바꾸면 자릿수가 위 행과 어긋나 보인다(같은 이유로 회계 표가 쓰는
+   관례도 선이지 굵기가 아니다). 색은 토큰이다(hex 는 direction.css 에만). */
+.sr-rv-total td {
+  border-top: 2px solid var(--color-fgMuted);
 }
 
 /* (히트맵 행 stretch 는 넣었다 뺐다 [OWNER "이전으로 돌려주고"] — 카드 채움은

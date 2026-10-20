@@ -13,6 +13,14 @@
  * 그림에는 **최대 4계열**만 올라간다(이 리포에 N계열 범주형 팔레트가 없다).
  * 그래서 **전수는 표가 진다** — 열한 주체가 전부 여기 서고, 순위 밖인 줄도
  * 지우지 않고 흐리게 남는다. 「안 보인다」와 「없다」는 다른 말이다.
+ *
+ * ## 이름이 버튼이다 [OWNER 2026-10-19 — 「각 엔드수요별로 MA」]
+ *
+ * 일별 그림(+이동평균)은 한 주체만 세울 수 있다. 어느 주체를 세울지 고르는
+ * 손잡이가 **이 표의 이름 칸**이다 — `rv/RankingTable.tsx:188` 과 같은 꼴로 `<tr>`
+ * 에 role 을 얹지 않고 칸 안에 진짜 `<button>` 을 둔다(스크린리더의 표 탐색을
+ * 지킨다). 짚기(hover·focus → `data-on`)와 고르기(click → `data-pick`)는 다른
+ * 모양이다(CLAUDE.md 키보드 규칙 2).
  */
 
 import { Text } from '@coinbase/cds-web/typography';
@@ -41,13 +49,17 @@ function unitOf(side: FlowSide, scale: 'day' | 'year'): string {
 }
 
 export function FlowTable({
-  rows, side, floor, highlight, onHover,
+  rows, side, floor, highlight, onHover, picked, onPick,
 }: {
   rows: readonly FlowRow[];
   side: FlowSide;
   floor: number;
   highlight?: string | null;
   onHover?: (key: string | null) => void;
+  /** 일별 그림에 서 있는 주체 — 그 줄의 이름에 밑줄이 선다. */
+  picked?: string | null;
+  /** 이름을 누르면 그 주체가 일별 그림에 선다. */
+  onPick?: (key: string) => void;
 }) {
   return (
     <div className="sr-rv-rank-fill">
@@ -56,7 +68,13 @@ export function FlowTable({
           <thead>
             <tr>
               <th className="sr-rv-th">순위</th>
-              <th className="sr-rv-th sr-rv-left">주체</th>
+              <th className="sr-rv-th sr-rv-left">
+                <ThHelp
+                  font="inherit"
+                  label="주체"
+                  help="이름을 누르면 그 주체가 오른쪽 일별 그림(과 이동평균)에 서요."
+                />
+              </th>
               <th className="sr-rv-th">오늘 ({unitOf(side, 'day')})</th>
               <th className="sr-rv-th">
                 <ThHelp
@@ -78,6 +96,7 @@ export function FlowTable({
                 /* 순위 밖은 흐리게. 지우지 않는 이유는 위 머리에. */
                 style={r.ranked ? undefined : { opacity: 0.52 }}
                 data-on={r.key === highlight || undefined}
+                data-pick={r.key === picked || undefined}
                 onMouseEnter={() => onHover?.(r.key)}
                 onMouseLeave={() => onHover?.(null)}
               >
@@ -85,8 +104,16 @@ export function FlowTable({
                 <td className="sr-rv-td sr-rv-left">
                   {/* 2줄 이름 스택 — 캐논(`table/InstrumentTable.tsx`)의 그 꼴.
                       아랫줄이 **모집단**을 좁힌다: 어느 층의 주체이고 평소에
-                      얼마나 움직이나. */}
-                  <span className="sr-rv-stack">
+                      얼마나 움직이나. 스택 전체가 버튼이다(머리 §이름이 버튼이다). */}
+                  <button
+                    type="button"
+                    className="sr-rv-linkbtn sr-rv-stack"
+                    aria-label={`${r.label} 일별 그림에 세우기`}
+                    aria-pressed={r.key === picked}
+                    onFocus={() => onHover?.(r.key)}
+                    onBlur={() => onHover?.(null)}
+                    onClick={() => onPick?.(r.key)}
+                  >
                     <span className="sr-rv-name">{r.label}</span>
                     {/* ★소속은 **카드 제목**이 이미 말한다(「기관계 세분 순위」).
                         여기 또 적으면 열 폭만 먹고(실측 90px) 오른쪽 카드의
@@ -96,7 +123,7 @@ export function FlowTable({
                       일평균 {val(Math.abs(r.avgAbs), side).replace('+', '')}
                       {unitOf(side, 'day')}
                     </span>
-                  </span>
+                  </button>
                 </td>
                 {/* 틴트 축은 **편차**다 — 크기로 칠하면 계약수가 천장을 뚫는다
                     (`table/tint.ts::flowTint` 머리). 세우는 축과 같아야 눈과
@@ -131,7 +158,8 @@ export function FlowTable({
         <Text as="p" font="legal" color="fgMuted" paddingX={1} paddingY={1}>
           흐린 줄은 순위 밖이에요 — 지난 1년 일평균 순매수가{' '}
           {val(floor, side).replace('+', '')}{unitOf(side, 'day')}에 못 미쳐요. 그만큼 작게 움직이는
-          주체는 평소 대비로 세우면 아주 작은 수가 1위가 돼요.
+          주체는 평소 대비로 세우면 아주 작은 수가 1위가 돼요. 이름을 누르면 그 주체가
+          일별 그림에 서요.
         </Text>
       </div>
     </div>

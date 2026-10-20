@@ -85,6 +85,7 @@ from . import momentum
 from . import paper
 from . import carryroll
 from . import flow
+from . import ktb_issuance
 from . import mysqldb
 from . import mr as mr_mod
 from . import mrbacktest as mrbt
@@ -3199,8 +3200,9 @@ def momentum_book() -> dict:
 
 
 @router.get("/api/flow/board")
-def flow_board(side: str = "fut", tenor: str = "3Y") -> dict:
-    """한 면 — 대분류 대조 + 기관계 세분 순위 + 누적·일별 계열.
+def flow_board(side: str = "fut", tenor: str = "3Y", pd: float | None = None,
+               ma: int = 0, daily: str | None = None, span: int | None = None) -> dict:
+    """한 면 — 대분류 대조 + 기관계 세분 순위 + 누적·일별 계열(+이동평균).
 
     `side` 는 `fut`(선물)·`cash`(현물)다. **단위가 달라 한 축에 못 겹친다**
     (계약 대 백만원) — 그래서 겹치는 그림이 아니라 **갈라지는 면**이다.
@@ -3208,13 +3210,39 @@ def flow_board(side: str = "fut", tenor: str = "3Y") -> dict:
     두 원천의 `asof` 가 **다른 것이 정상**이다 [OWNER 2026-10-19] — 현물이 늦게
     들어온다. 응답의 `asof` 가 둘을 따로 싣는 이유가 그것이고, 화면이 그 둘을
     따로 적어야 한다.
+
+    [OWNER 2026-10-19 추가] 현물은 `tenor` 가 만기물(`ALL`·`2Y`…`물가`)이고,
+    `pd`(금융투자 몫 0~1)를 주면 발행시장 인수분을 금융투자·은행에 더한다.
+    `ma`(5·20·60)와 `daily`(주체 열쇠)는 일별 그림의 이동평균이다 — `flow.py`
+    머리 §현물 만기물.
+
+    [OWNER 2026-10-20] `span` 은 테너 × (발행 + 주체) 행렬이 합할 **마지막 봉 수**다.
+    화면이 그림을 자르는 그 수(`src/flow/span.ts` 의 `SPAN_BARS`)를 그대로 넘겨
+    표와 그림이 같은 창을 보게 한다 — 날짜로 넘기면 휴일 하나에 둘이 갈린다.
     """
     try:
-        return flow.board(side=side, tenor=tenor)
-    except flow.FlowError as exc:
+        return flow.board(side=side, tenor=tenor, pd_share=pd, ma=ma, daily=daily,
+                          span=span)
+    except (flow.FlowError, ktb_issuance.IssuanceError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except mysqldb.MissingCredentials as exc:
         # ★반드시 잡는다 — 안 잡으면 전역 핸들러가 500 「계산 오류」로 바꾼다.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/api/flow/issuance")
+def flow_issuance() -> dict:
+    """「발행」 면 — 국고채 입찰 결과·공급·강도 (`app/ktb_issuance.py`).
+
+    원천은 `infomax_API.ktb_auction_result` 한 표(SQL)다. Lab 발행 캘린더의 CSV 와
+    같은 재정경제부 자료지만 경로가 다르고 재정증권이 없다 — 그 모듈 머리에 대조가
+    적혀 있다. 라이브 전용·워터마크 캐시.
+    """
+    try:
+        return ktb_issuance.board()
+    except ktb_issuance.IssuanceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except mysqldb.MissingCredentials as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
@@ -3225,7 +3253,7 @@ def flow_history(key: str, side: str = "fut", tenor: str = "3Y") -> dict:
         return flow.history(key, side=side, tenor=tenor)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"모르는 주체예요: {key}") from exc
-    except flow.FlowError as exc:
+    except (flow.FlowError, ktb_issuance.IssuanceError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except mysqldb.MissingCredentials as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

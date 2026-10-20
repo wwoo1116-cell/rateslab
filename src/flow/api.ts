@@ -6,12 +6,17 @@
  */
 
 import { BacktestUnavailable } from '@/lib/api';
-import { flowBoardUrl, flowHistoryUrl } from '@/lib/staticPaths';
+import { flowBoardUrl, flowHistoryUrl, flowIssuanceUrl } from '@/lib/staticPaths';
 
 /** 면 둘. **단위가 달라 한 축에 못 겹친다**(계약 대 백만원) — 겹치는 그림이
  *  아니라 갈라지는 면인 이유다. */
 export type FlowSide = 'fut' | 'cash';
-export type FlowTenor = '3Y' | '10Y';
+export type FutTenor = '3Y' | '10Y';
+/** 현물 만기물 — `ALL` 이 분리 전 화면과 같은 수다(`flow.py` §현물 만기물 ①). */
+export type CashTenor = 'ALL' | '2Y' | '3Y' | '5Y' | '10Y' | '20Y' | '30Y' | '50Y' | '물가';
+export type FlowTenor = FutTenor | CashTenor;
+/** 이동평균 창(영업일). 0 은 끔. 서버의 `MA_WINDOWS` 와 같다. */
+export type MaWindow = 0 | 5 | 20 | 60;
 
 /** 대분류 한 칸 — 서로 더하면 **0** 이다(영합). 순위가 아니라 대조다. */
 export interface FlowTop {
@@ -49,8 +54,39 @@ export interface FlowChart {
   dates: string[];
   /** 누적 — **최대 4계열**이다(N계열 팔레트가 없다). 전수는 표가 진다. */
   cum: FlowSeries[];
-  /** 일별 — 한 계열. 막대로 그린다(이산 일별값). */
+  /** 일별 — 한 계열. 막대로 그린다(이산 일별값). 주체는 `daily` 질의가 고른다. */
   daily: FlowSeries | null;
+  /** 일별 위에 서는 이동평균 — **서버가 낸다**(§16). 창 길이 미만 자리는 `null`. */
+  ma: (FlowSeries & { window: number; values: (number | null)[] }) | null;
+}
+
+/** 발행시장 인수 보정이 켜졌을 때의 사실. 꺼져 있으면 `null`. */
+export interface FlowPd {
+  /** 금융투자 몫(0~1). 은행은 나머지. **가정**이다. */
+  share: number;
+  /** 올해 더한 공급 합(백만원). */
+  supplyYtd: number;
+  /** 현물 자료가 아직 그 날에 안 닿아 반영 못 한 입찰 건수. */
+  pending: number;
+  asof: string | null;
+  note: string;
+}
+
+/** 테너 × (발행 + 주체) 한 표 [OWNER 2026-10-20].
+ *
+ *  칸은 **고른 구간의 합**(백만원)이고, `total` 은 열마다의 합이다 — `ALL`
+ *  바구니와 같은 수여야 한다(`test_flow` 가 맞댄다). 구간은 화면이 그림을
+ *  자르는 봉 수(`SPAN_BARS`)를 서버에 그대로 넘겨 맞춘다. */
+export interface FlowMatrixBoard {
+  /** 합한 봉 수. */
+  span: number;
+  from: string | null;
+  to: string | null;
+  cols: { key: string; label: string }[];
+  rows: { key: CashTenor; label: string; supply: number; cols: Record<string, number> }[];
+  total: { label: string; supply: number; cols: Record<string, number> };
+  /** 현물 자료가 그 날에 아직 안 닿아 발행 열에 못 얹은 입찰 건수. */
+  pending: number;
 }
 
 export interface FlowBoard {
@@ -66,8 +102,85 @@ export interface FlowBoard {
   sub: FlowRow[];
   rankFloor: number;
   series: FlowChart;
+  /** 현물 면의 테너 × (발행 + 주체) 표. 선물 면은 `null`. */
+  matrix: FlowMatrixBoard | null;
+  /** 현물 면에서 노브가 켜졌을 때만. 선물 면은 `null`. */
+  pd: FlowPd | null;
+  /** 현물 면의 만기물 선택지. 선물 면은 `null`. */
+  tenors: { key: CashTenor; label: string }[] | null;
   excluded: { id: string; label: string; why: string }[];
   /** 「무엇을 보고 있나」를 **서버가** 말한다. 화면이 지어내지 않는다. */
+  basis: string;
+}
+
+/** `/api/flow/board` 의 손잡이 — 서버 질의와 1:1. */
+export interface FlowQuery {
+  side: FlowSide;
+  tenor: FlowTenor;
+  /** 금융투자 몫(0~1). 없으면 보정 안 함. 현물에서만 뜻이 있다. */
+  pdShare?: number | null;
+  ma?: MaWindow;
+  /** 일별 그림에 세울 주체 열쇠. 없으면 그림 첫 계열. */
+  daily?: string | null;
+  /** 행렬이 합할 마지막 봉 수(`SPAN_BARS`). 없거나 `Infinity` 면 전구간. */
+  span?: number | null;
+}
+
+/* ── 「발행」 면 (`backend/app/ktb_issuance.py`) ───────────────────────────── */
+
+/** 같은 날·같은 만기물 경쟁입찰 묶음 하나 — 교체기엔 두 종목이 한 덩이다. */
+export interface IssuanceUnit {
+  date: string;
+  tenor: string | null;
+  label: string;
+  names: string[];
+  legs: number;
+  /** 낙찰 합(백만원). */
+  amount: number;
+  ratio: number | null;
+  rate: number | null;
+  /** 직전 같은 만기물 입찰 대비 bp. */
+  rateDelta: number | null;
+  prevDate: string | null;
+  /** 「강한 수요」…「표본 부족」 — `issuance_strength` 의 그 등급. */
+  grade: string | null;
+  pct: number | null;
+  median: number | null;
+  tone: string | null;
+  n: number | null;
+  totPct: number | null;
+  totMed: number | null;
+  why: string | null;
+  notes: string[];
+}
+
+export interface IssuanceTenorRow {
+  key: string;
+  label: string;
+  last: IssuanceUnit | null;
+  /** 올해 경쟁 낙찰 합(백만원). */
+  ytd: number;
+  ytdNoncomp: number;
+  ytdBuyback: number;
+  ytdCount: number;
+  /** 작년 같은 날까지의 경쟁 낙찰 합. */
+  ytdPrev: number;
+  mtd: number;
+}
+
+export interface IssuanceBoard {
+  asof: { auction: string; updated: string | null };
+  unit: string;
+  since: string;
+  count: number;
+  latest: IssuanceUnit;
+  next: { date: string; tenor: string | null; label: string; name: string | null;
+    planned: number | null; source: string }[];
+  tenors: IssuanceTenorRow[];
+  year: { label: string; comp: number; noncomp: number; buyback: number; compPrev: number };
+  series: FlowChart;
+  pd: { defaultShare: number; kinds: string[]; note: string };
+  excluded: { id: string; label: string; why: string }[];
   basis: string;
 }
 
@@ -93,10 +206,23 @@ async function get<T>(url: string, what: string, signal?: AbortSignal): Promise<
   return r.json();
 }
 
-export async function fetchFlowBoard(
-  side: FlowSide, tenor: FlowTenor, signal?: AbortSignal,
-): Promise<FlowBoard> {
-  return get(flowBoardUrl(`side=${side}&tenor=${tenor}`), 'flow', signal);
+export function flowQueryString(q: FlowQuery): string {
+  const parts = [`side=${q.side}`, `tenor=${encodeURIComponent(q.tenor)}`];
+  if (q.side === 'cash' && q.pdShare != null) parts.push(`pd=${q.pdShare}`);
+  if (q.ma) parts.push(`ma=${q.ma}`);
+  if (q.daily) parts.push(`daily=${encodeURIComponent(q.daily)}`);
+  /* `Infinity`(구간 「전체」)는 **안 싣는다** — 숫자가 아니라 `span=Infinity` 라는
+     글자로 나가서 서버가 거절한다. 빼면 서버 기본이 전구간이라 뜻이 같다. */
+  if (q.span != null && Number.isFinite(q.span)) parts.push(`span=${q.span}`);
+  return parts.join('&');
+}
+
+export async function fetchFlowBoard(q: FlowQuery, signal?: AbortSignal): Promise<FlowBoard> {
+  return get(flowBoardUrl(flowQueryString(q)), 'flow', signal);
+}
+
+export async function fetchIssuanceBoard(signal?: AbortSignal): Promise<IssuanceBoard> {
+  return get(flowIssuanceUrl(), 'flow-issuance', signal);
 }
 
 export async function fetchFlowHistory(
