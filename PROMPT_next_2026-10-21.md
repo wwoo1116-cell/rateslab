@@ -12,7 +12,7 @@
 [v2] sauron-v2 를 이어받는다. 정본은 apps/sauron-v2/PROMPT_next_2026-10-21.md 한 장이고
 자체완결이다 — 먼저 그것부터 읽어라.
 
-끝 지점 18978058 · 리포 깨끗 · 미푸시 0 · 로컬 master 가 origin/main 을 추적한다
+끝 지점 481345f8 · 리포 깨끗 · 미푸시 0 · 로컬 master 가 origin/main 을 추적한다
 (origin/master 는 유령이니 쳐다보지 마라). Vercel 은 main 에서 굽는다.
 
 ★★첫 할 일은 코드가 아니라 디스크다. C 드라이브가 237GB 중 3.7GB(99%) 남았고
@@ -168,7 +168,9 @@ python -m pytest tests/test_flow.py tests/test_flowlab.py tests/test_issuance.py
 
 ## §1 지금 서 있는 것
 
-끝 지점 **`18978058`** · 리포 깨끗 · 미푸시 0(10-20 16:0x 에 `ef773ef7..18978058` 푸시됨).
+끝 지점 **`481345f8`** · 리포 깨끗 · 미푸시 0.
+
+10-21 에 올라간 것 셋 — §3 ① 문구 수리(`7cd9e552`) · §2 판정(`481345f8`) · 이 인계 갱신.
 
 10-20 에 올라간 것 열둘 — 뒤에서 앞으로:
 
