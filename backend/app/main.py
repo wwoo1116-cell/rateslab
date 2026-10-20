@@ -2062,6 +2062,23 @@ def _mr_leg(id: str, *, lookback: int, entryZ: float, exitZ: float, stopZ: float
     gate = mrg.gate_for(regime, vals)
     cost_series = mrg.cost_for(costModel, vals)
 
+    # ── ★플라이는 한 번 거래에 1.0bp 다 [OWNER 2026-10-20] ───────────────────
+    #
+    # 「계열 1bp」와 「내가 옮기는 위험」이 플라이에서만 갈린다(`mrp.cost_multiple`
+    # 머리에 유도). 배수를 **여기 한 곳**에서 태워, 아래 `simulate` 와 바깥의
+    # 격자·점수가 전부 같은 수를 쓰게 한다 — 장부 카드(`paper.cost_dv01_of`)와
+    # 같은 사실의 다른 표현이고, 한쪽만 고치면 또 갈린다.
+    #
+    # `costBp` 와 `cost_series` 를 **둘 다** 민다. 엔진은 계열이 있으면 그쪽을
+    # 쓰지만(`mrbacktest` §cost_bp_series), `mrmetrics.score` 의 손익분기는
+    # 스칼라를 쓴다 — 하나만 밀면 「1.0bp 를 물리고 0.5bp 로 손익분기를 적는」
+    # 판이 된다.
+    cost_mult = mrp.cost_multiple(id)
+    if cost_mult != 1.0:
+        costBp = costBp * cost_mult
+        cost_series = ([c * cost_mult for c in cost_series]
+                       if cost_series is not None else None)
+
     # ── 롤일의 Δ 는 손익이 아니다 [OWNER 2026-09-02 — "롤일 Δ 를 0 으로 마스크"] ──
     #
     # 선물·퓨처스왑의 값은 벤더 **내재수익률**이라 수준은 옳지만, 계약이 갈리는
@@ -2115,9 +2132,31 @@ def _mr_leg(id: str, *, lookback: int, entryZ: float, exitZ: float, stopZ: float
             "carryKrw": carry_krw, "carryDefn": carry_defn,
             "carryLegs": carry_legs,
             "gate": gate, "costSeries": cost_series, "r": r,
+            #: ★**플라이 배수가 실린 뒤**의 편도 비용(bp) — 격자와 점수는 라우트가
+            #: 받은 날것이 아니라 **이것**을 써야 한다(위 §플라이). 안 그러면
+            #: 1.0bp 를 물리고 손익분기를 0.5bp 로 적는 판이 된다.
+            "costBp": costBp, "costMult": cost_mult,
             # 롤 마스크의 재료 — 라우트가 봉마다 「거래 가능한 Δ」와 「그 봉이
             # 롤인가」를 그대로 실어야 대사표가 닫힌다. BSS 는 None·False 다.
             "tradable": tradable, "pts": pts}
+
+
+def _mr_book_cost_bp(legs: list[dict]) -> float:
+    """북 하나가 쓸 **편도 비용(bp)** — 다리들의 배수가 같을 때만 뜻이 있다.
+
+    ★북의 격자와 집계는 계열 아홉에 **스칼라 하나**를 쓴다(`_mr_book_optimize` ·
+    `mrbook.aggregate`). 지금 북은 `mrbook.bss_series()` 라 전부 아웃라이트이고
+    배수가 1 이므로 그 구조가 참이다. 플라이가 북에 들어오는 날 그 전제가 조용히
+    깨지므로(그 계열만 1.0bp 인데 스칼라는 0.5bp) **여기서 죽는다** — 숫자가
+    그럴듯하게 틀리는 것보다 낫다 [OWNER 2026-10-20].
+    """
+    mults = {float(l.get("costMult") or 1.0) for l in legs}
+    if len(mults) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail="비용 배수가 섞인 북이에요 — 플라이는 한 번 거래에 1.0bp 라 "
+                   "아웃라이트와 한 스칼라로 못 묶어요.")
+    return float(legs[0]["costBp"])
 
 
 #: 다리 손익·캐리 합이 엔진의 수와 이만큼 넘게 갈리면 **다리를 안 싣는다**.
@@ -2284,6 +2323,10 @@ def mr_strategy(id: str, lookback: int = 60, entryZ: float = 2.0,
                   entryMode=entryMode, timeStop=timeStop, costModel=costModel,
                   regime=regime, countOpen=countOpen,
                   spec=spec)
+    # ★플라이 배수가 실린 뒤의 비용으로 **갈아탄다** [OWNER 2026-10-20]. 아래의
+    # 이웃 격자·`params` 에코가 전부 이 이름을 쓰므로, 여기서 한 번 갈아타면
+    # 「엔진은 1.0bp 를 물리는데 화면은 0.5bp 라 적는」 어긋남이 안 생긴다.
+    costBp = leg["costBp"]
     dates, vals, disp = leg["dates"], leg["vals"], leg["disp"]
     tradable, pts = leg["tradable"], leg["pts"]
     dirs, carry_defn = leg["dirs"], leg["carryDefn"]
@@ -2649,8 +2692,9 @@ def mr_optimize(id: str, span: str = "all",
                   spec=spec)
     got = _mr_optimize(
         leg["dates"], leg["vals"],
+        # ★격자는 `leg` 가 낸 **배수 실린** 비용을 쓴다(위 §플라이).
         {"lookback": lookback, "entryZ": entryZ, "exitZ": exitZ, "stopZ": stopZ,
-         "costBp": costBp, "notional": notional, "entryMode": entryMode},
+         "costBp": leg["costBp"], "notional": notional, "entryMode": entryMode},
         tuple(leg["dirs"]["allowed"]), span=span,
         carry=leg["carryKrw"], gate=leg["gate"],
         time_stop=timeStop or None, cost_bp_series=leg["costSeries"],
@@ -2711,7 +2755,9 @@ def _mr_plan_grid(leg: dict, knobs: dict, *, span: str) -> dict:
         leg["dates"], leg["vals"],
         {"lookback": int(knobs["lookback"]), "entryZ": float(knobs["entryZ"]),
          "exitZ": float(knobs["exitZ"]), "stopZ": float(knobs["stopZ"]),
-         "costBp": mrp.COST_BP, "notional": mrp.NOTIONAL,
+         # ★계획면 격자도 **배수 실린** 비용을 쓴다 — 전략 창과 같은 칸이
+         # 1등이어야 하므로(이 함수 머리) 비용도 같은 수여야 한다.
+         "costBp": leg["costBp"], "notional": mrp.NOTIONAL,
          "entryMode": str(knobs["entryMode"])},
         tuple(leg["dirs"]["allowed"]), span=span,
         carry=leg["carryKrw"], gate=leg["gate"],
@@ -3071,6 +3117,7 @@ def mr_book_optimize(span: str = "all",
     if not legs:
         raise HTTPException(status_code=422,
                             detail="통합할 수 있는 만기가 하나도 없어요")
+    costBp = _mr_book_cost_bp(legs)
 
     got = _mr_book_optimize(
         legs,
@@ -3133,6 +3180,7 @@ def mr_book(lookback: int = 60, entryZ: float = 2.0,
         raise HTTPException(status_code=422,
                             detail="통합할 수 있는 만기가 하나도 없어요 — "
                                    + (excluded[0]["reason"] if excluded else "이력이 없어요"))
+    costBp = _mr_book_cost_bp(legs)
 
     span = _mr_cost_span(legs)
     out = mrbook.aggregate(legs, notional=notional, cost_bp=costBp,

@@ -391,8 +391,20 @@ describe('비용은 거래 한 번에 매긴다 [트레이더 2026-10-15]', () =
     const body = b.slice(b.indexOf('def cost_dv01_of('), b.indexOf('def group_legs('));
     expect(body).toMatch(/group_key\(l\)/);
     expect(body).not.toMatch(/f"tag:\{/);
-    /* 편도·왕복(1×·2×)은 다리마다 다를 수 있어 **여기서 안 센다** — `score_leg` 몫. */
-    expect(body).not.toMatch(/2\.0/);
+    /* 아래 둘은 **코드만** 잰다 — 머리글은 종전 산술을 설명하느라 `COST_BP` 를
+       인용하고, 그것까지 재면 「설명했다」가 「썼다」로 읽힌다. 닫는 삼중따옴표
+       뒤부터가 코드다. */
+    const code = body.slice(body.indexOf('"""', body.indexOf('"""') + 3) + 3);
+    /* 편도·왕복(1×·2×)은 다리마다 다를 수 있어 **여기서 안 센다** — `score_leg` 몫.
+       ★종전에는 본문에 `2.0` 이라는 **글자**가 없는 것으로 쟀다. 2026-10-20 에
+       한쪽 면을 가르는 되돌림(`tot / 2.0` — 부호 없는 옛 다리를 DV01 중립으로
+       보는 가지)이 들어오면서 그 자가 **거짓 양성**을 냈다. 재야 하는 것은
+       「숫자 2 가 없다」가 아니라 **「돈을 모른다」** 이다: 이 함수는 DV01 을
+       돌려주지 비용을 매기지 않으므로 `cost_bp` 를 알 까닭이 없고, 왕복 배수는
+       그 이름을 거치지 않고는 못 센다. */
+    expect(code, '비용 bp 를 여기서 쓰고 있어요 — 배수는 score_leg 몫이에요')
+      .not.toMatch(/cost_bp|COST_BP/);
+    expect(code, '편도·왕복 가지가 여기 생겼어요').not.toMatch(/open|exit/);
   });
 
   it('카드와 문 앞이 **같은 몫**을 쓴다', () => {

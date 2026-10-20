@@ -2693,17 +2693,44 @@ class Test비용은거래한번에매긴다:
     def _legs(self, *dv01s: float, tag: str = "T") -> list[dict]:
         return [{"n": i + 1, "tag": tag, "dv01": d} for i, d in enumerate(dv01s)]
 
-    def test_거래의_DV01_은_계열_1bp_의_돈이다(self):
-        # 아웃라이트 — 몫이 곧 다리의 DV01(종전과 같다)
+    def test_거래의_DV01_은_한쪽_면이다(self):
+        """★[OWNER 2026-10-20] 비용은 **내가 옮기는 위험**에 붙는다 — 페이 쪽 합과
+        리시브 쪽 합 중 큰 쪽이다. 아웃라이트·커브는 종전(`min`)과 같은 수이고
+        **플라이만 두 배**가 된다(머리 §거래의 DV01)."""
+        # 아웃라이트 — 몫이 곧 다리의 DV01
         assert paper.cost_dv01_of(self._legs(1e7)) == {1: pytest.approx(1e7)}
-        # 커브 두 다리 — 반씩 져서 합이 계열 DV01 한 번
+        # 커브 두 다리 — 반씩 져서 합이 한쪽 면 한 번
         curve = paper.cost_dv01_of(self._legs(1e7, 1e7))
         assert sum(curve.values()) == pytest.approx(1e7)
         assert curve[1] == pytest.approx(curve[2])
-        # 플라이(벨리 2w · 윙 w 둘) — 합이 윙 DV01 한 번, 벨리가 절반을 진다
+        # 플라이(윙 w · 벨리 2w · 윙 w) — 한쪽 면이 **2w** 다
         fly = paper.cost_dv01_of(self._legs(1e7, 2e7, 1e7))
-        assert sum(fly.values()) == pytest.approx(1e7)
-        assert fly[2] == pytest.approx(5e6) and fly[1] == pytest.approx(2.5e6)
+        assert sum(fly.values()) == pytest.approx(2e7)
+        assert fly[2] == pytest.approx(1e7) and fly[1] == pytest.approx(5e6)
+
+    def test_플라이는_부호로_면을_가른다(self):
+        """산 길의 다리는 `rateSign` 을 지므로 면을 **세어서** 가른다 — 트레이더가
+        짚은 그 거래(`IRF-2Y-5Y-10Y`, 벨리 페이 1,000만원/bp · 윙 리시브 500 둘)로
+        잰다. 종전 `min` 은 250만원이었고 한쪽 면은 500만원이다.
+
+        > [트레이더 2026-10-20] "이거 5th Trade 비용이 왜 250만원으로 잡힘?
+        > 500만원이 맞는데"
+        """
+        legs = [{"n": 1, "tag": "fly", "dv01": 1e7, "rateSign": 1},    # 5Y 페이
+                {"n": 2, "tag": "fly", "dv01": 5e6, "rateSign": -1},   # 2Y 리시브
+                {"n": 3, "tag": "fly", "dv01": 5e6, "rateSign": -1}]   # 10Y 리시브
+        got = paper.cost_dv01_of(legs)
+        # 편도 비용 = COST_BP × 몫. 합이 500만원(= 0.5bp × 1,000만원/bp)이다.
+        won = {n: paper.COST_BP * v for n, v in got.items()}
+        assert sum(won.values()) == pytest.approx(5e6)
+        assert won[1] == pytest.approx(2.5e6)                 # 벨리가 절반
+        assert won[2] == pytest.approx(1.25e6) and won[3] == pytest.approx(1.25e6)
+
+    def test_DV01_중립이_아니어도_큰_쪽을_센다(self):
+        """면이 안 맞는 묶음에서도 「내가 내놓는 위험」은 큰 쪽이다."""
+        legs = [{"n": 1, "tag": "x", "dv01": 1e7, "rateSign": 1},
+                {"n": 2, "tag": "x", "dv01": 3e6, "rateSign": -1}]
+        assert sum(paper.cost_dv01_of(legs).values()) == pytest.approx(1e7)
 
     def test_묶음이_다르면_따로_센다(self):
         got = paper.cost_dv01_of(self._legs(1e7, 1e7, tag="A")
