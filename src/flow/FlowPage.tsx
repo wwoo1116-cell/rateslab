@@ -55,6 +55,7 @@ import { Box, HStack, VStack } from '@coinbase/cds-web/layout';
 import { Text } from '@coinbase/cds-web/typography';
 
 import { TimeChart, useStackedScales, type TimeLine } from '@/chart/TimeChart';
+import type { LwPalette } from '@/chart/palette';
 import { BacktestUnavailable } from '@/lib/api';
 import { fmtContracts, fmtEok, fmtJo } from '@/lib/format';
 import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
@@ -65,7 +66,7 @@ import { Stat, StatColumn } from '@/ui/Stat';
 
 import {
   fetchFlowBoard, fetchIssuanceBoard, type CashTenor, type FlowBoard, type FlowSide,
-  type FutTenor, type IssuanceBoard, type IssuanceUnit, type MaWindow,
+  type FutTenor, type IssuanceBoard, type IssuanceUnit,
 } from './api';
 import { FlowMatrix } from './FlowMatrix';
 import { FlowTable } from './FlowTable';
@@ -103,19 +104,16 @@ const CASH_TENORS: { value: CashTenor; label: string }[] = [
 ];
 const CASH_TENOR_LABEL = Object.fromEntries(CASH_TENORS.map((t) => [t.value, t.label])) as Record<CashTenor, string>;
 
-/** 이동평균 창 — 서버 `MA_WINDOWS`. 세그먼트 값은 글자라 여기서 수로 되돌린다.
- *
- *  ★**120 이 있어야 느린 주체를 본다** [OWNER 2026-10-20]. 보험은 전 표본
- *  순매수 134.4조 중 118.0조를 30년물 한 자리에 담는데 그 움직임이 분기 눈금이라,
- *  60일까지로는 가속·감속이 잡음에 묻힌다(`flow.gamma` 머리의 실측). */
-const MA_OPTIONS: { value: `${MaWindow}`; label: string }[] = [
-  { value: '0', label: '없음' }, { value: '5', label: '5일' },
-  { value: '20', label: '20일' }, { value: '60', label: '60일' },
-  { value: '120', label: '120일' },
-];
-
 /** 계열 구분색 넷. **순서가 곧 배정**이다 — 서버가 보낸 차례대로 입는다. */
 const INK = ['--sr-flow-1', '--sr-flow-2', '--sr-flow-3', '--sr-flow-4'] as const;
+
+/** 이동평균 선 넷의 **진하기**(%) — 창이 짧을수록 흐리다 [OWNER 2026-10-20].
+ *
+ *  색은 하나(`INK[2]` 바이올렛)고 진하기만 가른다. 누적 그림이 `INK` 넷을 이미
+ *  주체에 쓰고 있어서 같은 네 색을 창에 또 쓰면 한 카드 안에서 같은 색이 두 가지를
+ *  뜻한다. 그리고 진하기 차례가 `flow.WINDOW_TRUST` 와 같아서, **진한 선일수록
+ *  믿을 만한 창**이라는 뜻이 덤으로 붙는다(Γ5·Γ20 은 잡음). */
+const MA_INK = [42, 60, 80, 100] as const;
 
 /** 대분류 **순매수 대조** — 받은 쪽과 낸 쪽을 한 막대에 [2026-10-19].
  *
@@ -241,11 +239,24 @@ function GammaLine({ g }: { g: NonNullable<FlowBoard['gamma']> }) {
   const cell = (v: number | null) => (v == null ? '—' : fmtEok(v));
   return (
     <VStack gap={0.25} width="100%">
+      {/* ★**판정이 먼저 온다** [OWNER 2026-10-20 — 「이게 메인이야,, 난 이걸 보고
+          싶은거고」]. 종전에는 수 넉 줄 뒤에 legal 크기로 붙어 있어서 각주처럼
+          읽혔다. 이 면이 재는 축이 가속이므로(§감마) 그 한 문장이 머리말이다. */}
+      <Text as="p" font="label1"
+        className={g.tone === 'up' ? 'sr-up' : g.tone === 'down' ? 'sr-down' : undefined}
+        color={g.tone ? undefined : 'fgMuted'}>
+        {g.say}
+      </Text>
       <HStack gap={1.5} flexWrap="wrap" alignItems="baseline">
-        <Text as="span" font="label2">감마 (억/일)</Text>
+        <Text as="span" font="legal" color="fgMuted">감마 (억/일)</Text>
         {g.rows.map((r) => (
           <HStack key={r.window} gap={0.5} alignItems="baseline">
-            <Text as="span" font="legal" color="fgMuted">{r.window}일</Text>
+            {/* 창 이름을 **선과 같은 진하기**로 — 위 그림의 어느 선인지 눈으로
+                이어진다(`MA_INK` 와 같은 차례). */}
+            <Text as="span" font="legal" color="fgMuted"
+              style={{ opacity: (MA_INK[g.rows.indexOf(r)] ?? 100) / 100 }}>
+              {r.window}일
+            </Text>
             {/* 잡음인 창은 흐리게 — 지우지 않고 **믿을 만함의 차이**를 보인다. */}
             <Text as="span" font="label2"
               className={r.gamma == null ? undefined
@@ -256,11 +267,6 @@ function GammaLine({ g }: { g: NonNullable<FlowBoard['gamma']> }) {
           </HStack>
         ))}
       </HStack>
-      <Text as="p" font="legal"
-        color={g.tone ? undefined : 'fgMuted'}
-        className={g.tone === 'up' ? 'sr-up' : g.tone === 'down' ? 'sr-down' : undefined}>
-        {g.say}
-      </Text>
       <Text as="p" font="legal" color="fgMuted">{g.note}</Text>
     </VStack>
   );
@@ -272,7 +278,9 @@ export function FlowPage() {
   /* ④⑤⑥ 의 손잡이 셋 + 일별 그림의 주체. 면이 바뀌면 주체 열쇠 집합이 다르니
      고른 주체를 내린다(선물 `BANK` 와 현물 `bank` 는 다른 열쇠다). */
   const [cashTenor, setCashTenor] = useState<CashTenor>('ALL');
-  const [ma, setMa] = useState<MaWindow>(0);
+  /* 이동평균 창은 더 이상 **고르는 것이 아니다** — 그림이 넷을 늘 그린다
+     (`MA_INK` 머리). 서버에 `ma` 를 안 보내면 `series.ma` 는 `null` 이고
+     `series.mas` 넷만 온다. */
   const [pdOn, setPdOn] = useState(false);
   const [pdPct, setPdPct] = useState(60);
   const [daily, setDaily] = useState<string | null>(null);
@@ -326,7 +334,7 @@ export function FlowPage() {
     /* 행렬이 합할 창을 **봉 수로** 넘긴다 — 그림을 자르는 그 수다(`span.ts`).
        날짜로 넘기면 휴일 하나에 표와 그림이 갈린다. `Infinity`(전체)는
        `flowQueryString` 이 빼고, 서버 기본이 전구간이라 뜻이 같다. */
-    fetchFlowBoard({ side, tenor, pdShare, ma, daily, span: SPAN_BARS[span] }, signal)
+    fetchFlowBoard({ side, tenor, pdShare, daily, span: SPAN_BARS[span] }, signal)
       .then((r) => { setGot(r); setErr(null); setDown(false); })
       .catch((e: unknown) => {
         if (signal?.aborted) return;
@@ -334,7 +342,7 @@ export function FlowPage() {
         setErr(e instanceof Error ? e.message : String(e));
       })
       .finally(() => { if (!signal?.aborted) setBusy(false); });
-  }, [face, side, tenor, pdShare, ma, daily, span]);
+  }, [face, side, tenor, pdShare, daily, span]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -392,10 +400,14 @@ export function FlowPage() {
     const dailyS = got.series.daily
       ? { ...got.series.daily, values: got.series.daily.values.slice(k) }
       : null;
-    const maS = got.series.ma
-      ? { ...got.series.ma, values: got.series.ma.values.slice(k) }
-      : null;
-    return { dates, cum, daily: dailyS, ma: maS };
+    /* ★`?? []` 가 **지켜 주는 것** [2026-10-20]. 프런트는 Vercel 이 밀면 바로
+       서는데 백엔드 `:8200` 은 `SauronV2Refresh` 가 30분마다 띄운다 — 그 사이
+       화면은 **새 것**이고 서버는 **옛 것**이다. 그때 `mas` 가 없는데 바로
+       `.map` 하면 화면 전체가 흰 판이 된다(실측: 개발 백엔드를 옛 코드로 두고
+       열었더니 「Cannot read properties of undefined」로 면이 통째로 죽었다).
+       새 칸은 **없을 수 있는 것**으로 다룬다. */
+    const masS = (got.series.mas ?? []).map((m) => ({ ...m, values: m.values.slice(k) }));
+    return { dates, cum, daily: dailyS, mas: masS };
   }, [got, span]);
 
   /** 누적 선 넷. */
@@ -429,14 +441,25 @@ export function FlowPage() {
       colorAt: (v, p) => (v >= 0 ? p.up : p.down),
       format: fmt,
     };
-    if (!win.ma) return [bars];
-    return [bars, {
-      id: `${win.ma.key}-ma`,
-      values: win.ma.values,
-      color: (p) => p.resolve(`var(${INK[2]})`),
-      width: 2 as const,
+    if (!win.mas.length) return [bars];
+    /* ★평균선 **넷을 같이** 그린다 [OWNER 2026-10-20 — 「동시에 여러 MA도 보고
+       싶고 그런거야」]. 하나씩 갈아 끼우면 「짧은 쪽은 식고 긴 쪽은 빨라진다」를
+       기억으로 맞대야 하는데, 그건 화면이 할 일이다.
+
+       **색은 한 가지에 진하기만 가른다.** 누적 그림이 이미 `INK` 넷을 주체에
+       쓰고 있어서 같은 네 색을 창에 또 쓰면 한 카드 안에서 같은 색이 두 가지를
+       뜻한다. 진하기로 가르면 색은 「이동평균」 하나를 뜻하고, 덤으로 **진할수록
+       믿을 만한 창**이 된다(`flow.WINDOW_TRUST` 와 같은 차례).
+
+       넷 다 **왼쪽 축**이다 — 막대와 겹치면 묻힌다(위 `bars` 아래의 그 실측). */
+    return [bars, ...win.mas.map((m, i) => ({
+      id: m.key,
+      values: m.values,
+      color: (p: LwPalette) => p.dim(`var(${INK[2]})`, MA_INK[i] ?? 100),
+      width: (i >= 2 ? 2 : 1) as 1 | 2,
+      axis: 'aux' as const,
       format: fmt,
-    }];
+    }))];
   }, [win, fmt]);
 
   /** 커서가 짚은 자리. 그림 밖이면 **마지막 봉**을 읽는다 — 「비어 있는 상태」가
@@ -502,21 +525,11 @@ export function FlowPage() {
           />
         </Box>
       ) : null}
-      {face !== 'issue' ? (
-        /* ⑤ 이동평균 — 일별 그림의 주체 위에 선다. 주체는 표가 고른다.
-           폭은 **최장 라벨 × 칸 수**다(이 파일의 그 판례 둘): 알약 속 span 이
-           좌우 16px 씩 미니 한 칸에 「글자폭 + 32」가 든다. 「120일」이 가장 길어
-           약 39 + 32 = 71 이고 다섯 칸이라 355 — 넉넉히 360 으로 둔다. */
-        <Box width={360}>
-          <Segmented
-            label="이동평균"
-            value={`${ma}` as `${MaWindow}`}
-            onChange={(v) => setMa(Number(v) as MaWindow)}
-            options={MA_OPTIONS}
-            fill
-          />
-        </Box>
-      ) : null}
+      {/* ★이동평균 **단일 선택 컨트롤을 들어냈다** [OWNER 2026-10-20 — 「동시에
+          여러 MA도 보고 싶고 그런거야」]. 이제 그림이 창 넷을 **늘** 그리므로
+          고를 것이 없다 — 고를 것이 없는 컨트롤은 폭만 먹는다(`FACES_SHOWN` 과
+          같은 규율). 감마 판정도 네 창을 다 보므로 이 손잡이에 안 매였다.
+          서버의 `ma` 인자는 남아 있고(옛 호출부·시험), 화면이 안 보낼 뿐이다. */}
       {face === 'cash' ? (
         /* ⑥ PD 인수 — 켜면 발행시장 인수분을 금융투자·은행에 더한다. 몫은 가정. */
         <>
@@ -592,7 +605,9 @@ export function FlowPage() {
               단위인지는 머리를 봐야 안다. 순위 하한도 순위표 **아래 설명 줄**이
               더 길게 말하고 있었고, 트레이더가 못 바꾸는 고정값이다. */}
           <Cond k="표본" v={`${got.days.toLocaleString('ko-KR')}일`} />
-          {got.series.ma ? <Cond k="이동평균" v={`${got.series.ma.window}일`} /> : null}
+          {got.series.mas?.length
+            ? <Cond k="이동평균" v={got.series.mas.map((m) => m.label).join(' · ')} />
+            : null}
           {got.pd && pdPctShown != null
             ? <Cond k="PD 인수" v={`금융투자 ${pdPctShown}% · 은행 ${100 - pdPctShown}%`} strong />
             : null}
@@ -735,12 +750,26 @@ export function FlowPage() {
             <HStack alignItems="baseline" justifyContent="space-between" gap={1}>
               <Text as="span" font="label2">
                 일별 — {win?.daily?.label ?? ''} ({unitWord})
-                {win?.ma ? ` · ${win.ma.window}일 이동평균` : ''}
               </Text>
-              <Text as="span" font="legal" color="fgMuted">
-                빨강이 순매수, 파랑이 순매도예요
-                {win?.ma ? ' · 평균선은 바이올렛이에요' : ''}
-              </Text>
+              {/* 범례 — 선 넷의 **진하기와 창**을 짝지어 적는다. 진하기로만 갈린
+                  선이라 글자 없이는 어느 것이 몇 일인지 못 읽는다. 축이 둘이라는
+                  것도 여기서 말한다 — 안 적으면 평균선이 막대보다 위에 있는 것을
+                  「그날보다 평균이 크다」로 읽는다. */}
+              <HStack gap={1} alignItems="baseline" flexWrap="wrap">
+                {(win?.mas ?? []).map((m, i) => (
+                  <HStack key={m.key} gap={0.5} alignItems="center">
+                    <Box width={14} height={0} borderRadius={100}
+                      style={{
+                        borderTop: `${i >= 2 ? 2 : 1}px solid var(${INK[2]})`,
+                        opacity: (MA_INK[i] ?? 100) / 100,
+                      }} />
+                    <Text as="span" font="legal" color="fgMuted">{m.label}</Text>
+                  </HStack>
+                ))}
+                <Text as="span" font="legal" color="fgMuted">
+                  평균선은 왼쪽 축 · 막대는 빨강이 순매수, 파랑이 순매도예요
+                </Text>
+              </HStack>
             </HStack>
             <Box className="sr-plot" flexGrow={1} flexBasis={0} minHeight={120}>
               <TimeChart
@@ -752,9 +781,14 @@ export function FlowPage() {
                 syncIndex={cursor?.src === 'cum' ? cursor.i : null}
                 hoverLabel={(i) => `${win?.dates[i] ?? ''} · ${win?.daily?.label ?? ''} `
                   + fmt(win?.daily?.values[i] ?? 0)
-                  + (win?.ma && win.ma.values[i] != null
-                    ? ` · ${win.ma.window}일 평균 ${fmt(win.ma.values[i] as number)}` : '')}
-                accessibilityLabel={`${win?.daily?.label ?? ''} 일별 순매수${win?.ma ? `와 ${win.ma.window}일 이동평균` : ''}`}
+                  /* 네 창을 **다** 읽는다 — 그림이 넷을 그리는데 한 줄만 읽어
+                     주면 나머지 셋은 눈으로 재야 한다. */
+                  + (win?.mas ?? [])
+                    .filter((m) => m.values[i] != null)
+                    .map((m) => ` · ${m.label} ${fmt(m.values[i] as number)}`)
+                    .join('')}
+                accessibilityLabel={`${win?.daily?.label ?? ''} 일별 순매수와 이동평균 `
+                  + `${(win?.mas ?? []).map((m) => m.label).join('·')}`}
                 {...stack}
               />
             </Box>

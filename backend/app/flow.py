@@ -840,13 +840,26 @@ def _chart(dates: list[str], cols: dict[str, list[int]], picked: list[str],
     ★**최대 4계열**이다. 이 리포에는 N계열 범주형 팔레트가 없어서(이름 있는 색은
     방향 2 + 참조 4뿐) 열한 주체를 한 그림에 칠할 수 없다. 전수는 표가 진다.
 
-    일별 그림의 주체는 `daily` 가 고르고(없으면 첫 계열), 그 위에 `ma` 일 이동평균이
-    선다 — 「각 주체마다 이동평균」[OWNER 2026-10-19].
+    일별 그림의 주체는 `daily` 가 고르고(없으면 첫 계열), 그 위에 이동평균이 선다 —
+    「각 주체마다 이동평균」[OWNER 2026-10-19].
+
+    ## ★평균은 **네 창을 다 보낸다** [OWNER 2026-10-20 — 「동시에 여러 MA도 보고
+    싶고 그런거야」]
+
+    종전에는 `ma` 가 고른 **한 창**만 실었다. 그런데 이 면이 재는 것은 가속이고
+    (§감마), 가속은 **창마다 다른 말을 한다** — 실측(보험·30년물): Γ5 −948 ·
+    Γ20 −314 인데 Γ60 +220 · Γ120 +321 이다. 짧은 쪽은 식고 긴 쪽은 빨라진다는
+    그 사실이 네 선을 **같이 봐야** 보인다. 하나씩 갈아 끼우면 둘을 기억으로
+    맞대야 하고, 그건 화면이 할 일이다.
+
+    `ma` 인자는 **남긴다** — 옛 호출부와 시험이 쓰고, 「조건 스트립에 적을 창」을
+    고르는 데 아직 뜻이 있다. 다만 그림은 `mas` 를 쓴다.
     """
     lab = dict(names)
     key = daily or (picked[0] if picked else None)
     if key is not None and key not in cols:
         raise FlowError(f"모르는 주체예요: {key}")
+    wins = [w for w in MA_WINDOWS if w]
     return {
         "dates": dates,
         "cum": [{"key": k, "label": lab.get(k, k), "values": cumulative(cols[k])}
@@ -856,6 +869,10 @@ def _chart(dates: list[str], cols: dict[str, list[int]], picked: list[str],
         "ma": {"key": key, "label": f"{lab.get(key, key)} {ma}일 이동평균", "window": ma,
                "values": moving_average(cols[key], ma)}
         if key is not None and ma else None,
+        #: 창 넷 전부 — 차례가 곧 색 배정이다(화면의 `INK`).
+        "mas": [{"key": f"{key}-ma{w}", "window": w, "label": f"{w}일",
+                 "values": moving_average(cols[key], w)}
+                for w in wins] if key is not None else [],
     }
 
 

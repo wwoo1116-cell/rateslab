@@ -281,9 +281,19 @@ describe('⑦ 만기물 · PD 인수 · 이동평균 · 발행 면 [OWNER 2026-1
   });
 
   /* ⑯ 느린 주체는 분기 눈금이라 60일까지로는 안 보인다. */
-  it('이동평균 창에 120 일이 있다 — 서버와 화면이 같은 벌', () => {
+  it('창 넷을 **같이** 그린다 — 고르는 컨트롤은 없다', () => {
+    /* [OWNER 2026-10-20 — 「동시에 여러 MA도 보고 싶고 그런거야」]. 가속은
+       창마다 다른 말을 한다(보험·30년물 Γ5 −948 · Γ20 −314 인데 Γ60 +220 ·
+       Γ120 +321) — 하나씩 갈아 끼우면 그 사실을 기억으로 맞대야 한다. */
     expect(FLOW_PY).toMatch(/MA_WINDOWS = \(0, 5, 20, 60, 120\)/);
-    expect(FLOW_PAGE).toMatch(/value: '120', label: '120일'/);
+    expect(FLOW_PY, '서버가 창 넷을 안 싣고 있어요').toMatch(/"mas":/);
+    expect(FLOW_PAGE).toMatch(/win\.mas\.map/);
+    /* 고를 것이 없으면 컨트롤도 없다 — 폭만 먹는다. */
+    expect(FLOW_PAGE, '단일 선택 컨트롤이 돌아왔어요').not.toMatch(/MA_OPTIONS/);
+    /* ★새 칸은 **없을 수 있는 것**으로 다룬다 — 프런트는 즉시 서고 백엔드는
+       30분 주기라, 그 사이 `mas` 가 없는데 바로 `.map` 하면 면이 통째로 죽는다
+       (실측 2026-10-20 — 「Cannot read properties of undefined」). */
+    expect(FLOW_PAGE, '옛 서버에서 화면이 죽어요').toMatch(/got\.series\.mas \?\? \[\]/);
   });
 
   /* ⑰ 감마는 **그림 아래 한 줄**이다 [OWNER 2026-10-20 — 「그림아래 감마 한줄로」].
@@ -301,6 +311,24 @@ describe('⑦ 만기물 · PD 인수 · 이동평균 · 발행 면 [OWNER 2026-1
     expect(FLOW_PAGE).not.toMatch(/MA_n|movingAverage|rolling/i);
     /* 잡음인 창을 지우지 않고 흐리게 둔다 — 「안 보인다」와 「없다」는 다른 말. */
     expect(FLOW_PAGE).toMatch(/trust === '잡음'/);
+  });
+
+  /* ⑱ 평균선은 **제 축**에 선다 [OWNER 2026-10-20 — 「이동평균 지금 너무 작아서
+     보이지도 않음」]. 한 축에 겹치면 일별 막대가 세로를 다 먹는다 — 실측으로
+     평균선이 차지하는 비중이 MA5 43% → MA20 25% → MA60 11% → **MA120 4.0%** 라,
+     느린 주체에 꼭 필요한 창이 제일 묻혔다. */
+  it('이동평균이 왼쪽 축으로 가고, 화면이 그 사실을 적는다', () => {
+    /* ⚠창을 **끝 표시로** 잡는다. `stripComments` 는 블록 주석을 지우지 않고
+       **공백으로 채워 길이를 보존**하므로(줄 번호를 살리려고), 고정 길이 창은
+       주석이 길어진 순간 코드에 못 닿는다 — 첫 판이 900자로 끊겨 `axis` 를
+       못 봤다. */
+    const i = FLOW_PAGE.indexOf('const dailyLines');
+    const body = FLOW_PAGE.slice(i, FLOW_PAGE.indexOf('}, [win, fmt]);', i));
+    expect(body, '평균선이 아직 막대와 같은 축이에요').toMatch(/axis: 'aux'/);
+    /* 막대는 **오른쪽 그대로** — 둘 다 옮기면 축을 가른 뜻이 없다. */
+    expect(body).not.toMatch(/kind: 'histogram'[\s\S]{0,200}axis: 'aux'/);
+    /* 축이 둘이라는 것을 안 적으면 「그날보다 평균이 크다」로 읽힌다. */
+    expect(FLOW_PAGE).toMatch(/평균선은 왼쪽 축/);
   });
 
   /* ⑪ CDS `Tooltip` 앵커가 `justify-content: flex-end` 라 왼쪽 정렬 머리에서
