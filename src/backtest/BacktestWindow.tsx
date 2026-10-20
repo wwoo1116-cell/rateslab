@@ -45,6 +45,7 @@ import {
   TextLegal,
 } from '@coinbase/cds-web/typography';
 
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 import {
   BacktestUnavailable,
   fetchBacktest,
@@ -1244,8 +1245,8 @@ export function BacktestWindow({
         {/* ── 답 ───────────────────────────────────────────────────────────── */}
         {unavailable ? (
           <TextBody as="p" color="fgMuted">
-            백테스트는 실행 중인 백엔드가 필요해요. 다른 화면과 달리 이 답은 읽는 사람이 고른
-            입력에 달려 있어서 미리 구워둘 수가 없어요.
+            {ROUTE_MISSING_DETAIL} 다른 화면과 달리 이 답은 읽는 사람이 고른 입력에 달려
+            있어서 미리 구워둘 수가 없어요.
           </TextBody>
         ) : error ? (
           <TextBody as="p" className="sr-up">

@@ -48,6 +48,7 @@ import { Table, TableBody, TableCell, TableHeader, TableRow } from '@coinbase/cd
 import { Text } from '@coinbase/cds-web/typography';
 
 import { BacktestUnavailable } from '@/lib/api';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 import { fmtSize } from '@/lib/krw';
 import { ROW_H } from '@/table/rowHeight';
 import { directionClass, directionGlyph, signalTint, unsignedDelta } from '@/table/tint';
@@ -438,7 +439,7 @@ export function MomentumPage() {
     return (
       <ErrorState
         what="모멘텀 북"
-        detail="실행 중인 백엔드(:8200)가 필요하고, /api/momentum/sleeve 를 아는 판이어야 해요 — 백엔드를 먼저 올려 주세요."
+        detail={`${ROUTE_MISSING_DETAIL} 이 화면은 /api/momentum/sleeve 를 읽어요.`}
         onRetry={load}
         retrying={refreshing}
       />

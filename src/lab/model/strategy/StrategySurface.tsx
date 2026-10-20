@@ -94,6 +94,7 @@ import {
   headlineGap,
   type StrategyAnchors,
 } from './trades';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 
 /** 점 눈금. 전부 기저의 검증 영역(`domain.policy_bp_per_q`) 안이다 — 밖을 고를
  *  수 있게 두면 화면이 «여기부터 외삽» 이라고 말하기 전에 이미 밖에 나가 있다. */
@@ -512,7 +513,7 @@ export function StrategySurface() {
               </>
             ) : unavailable ? (
               <Text as="p" font="body" color="fgMuted">
-                오늘의 커브가 없어서 시장 대비를 못 재요 — 백엔드가 꺼져 있어요.
+                오늘의 커브가 없어서 시장 대비를 못 재요. {ROUTE_MISSING_DETAIL}
               </Text>
             ) : error ? (
               <ErrorState what="오늘의 커브" detail={error} onRetry={load} retrying={retrying} />

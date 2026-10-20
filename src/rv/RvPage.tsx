@@ -89,6 +89,7 @@ import { RvScatter } from './RvScatter';
 import { ScoreHeat } from './ScoreHeat';
 import { SectorLane } from './SectorLane';
 import { TenorHeat } from './TenorHeat';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 
 /* 금통위 Δbp 입력이던 `BpField` 는 공용 `NumField`(`ui/ControlCard`)가 됐다
    [OWNER 2026-09-02 — "공용 부품은 한 벌로 승격"] — 같은 blur/Enter 커밋 기계가
@@ -594,7 +595,7 @@ export function RvPage() {
     return (
       <ErrorState
         what="RV 분석"
-        detail="실행 중인 백엔드(:8200)가 필요해요 — 민평이 SQL 에만 있어서 미리 구워둘 수가 없어요."
+        detail={`${ROUTE_MISSING_DETAIL} 민평이 SQL 에만 있어서 미리 구워둘 수가 없어요.`}
         onRetry={load}
         retrying={refreshing}
       />

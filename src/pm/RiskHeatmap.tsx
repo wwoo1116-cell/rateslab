@@ -53,6 +53,7 @@ import { BacktestUnavailable } from '@/lib/api';
 import { tintFor } from '@/theme/tint';
 
 import { fetchRisk, type PaperRisk, type RiskWindow } from './api';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 
 const WINDOWS: { id: RiskWindow; label: string }[] = [
   { id: '3m', label: '3개월' },
@@ -82,7 +83,7 @@ export function RiskHeatmap() {
       .catch((e: unknown) => {
         if (signal?.aborted) return;
         setErr(e instanceof BacktestUnavailable
-          ? '실행 중인 백엔드가 필요해요 — 엔진을 창만큼 다시 돌려야 해서 구워 둘 수 없어요.'
+          ? `${ROUTE_MISSING_DETAIL} 엔진을 창만큼 다시 돌려야 해서 구워 둘 수 없어요.`
           : e instanceof Error ? e.message : String(e));
       })
       .finally(() => {

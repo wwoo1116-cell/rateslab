@@ -70,6 +70,7 @@ import { Box, HStack, VStack } from '@coinbase/cds-web/layout';
 import { Text } from '@coinbase/cds-web/typography';
 
 import { BacktestUnavailable } from '@/lib/api';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 import { fmtDelta, fmtLevel } from '@/lib/format';
 import { tintFor } from '@/theme/tint';
 import { ChartReadoutStrip, slotChars } from '@/ui/ChartReadoutStrip';
@@ -331,7 +332,7 @@ export function CreditDtsPage() {
       .catch((e: unknown) => {
         if (signal?.aborted) return;
         setErr(e instanceof BacktestUnavailable
-          ? '실행 중인 백엔드가 필요해요 — 민평이 SQL 에만 있어서 미리 구워둘 수가 없어요.'
+          ? `${ROUTE_MISSING_DETAIL} 민평이 SQL 에만 있어서 미리 구워둘 수가 없어요.`
           : e instanceof Error ? e.message : String(e));
       })
       .finally(() => { if (!signal?.aborted) setBusy(false); });

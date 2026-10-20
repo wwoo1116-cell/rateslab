@@ -84,6 +84,7 @@ import { MrKnobBar, mrKnobsStale } from './KnobBar';
 import { OptimizePane } from './OptimizePane';
 import { eun } from '@/lib/josa';
 import { Panel, RiskAdjusted, SplitColumn, WHY_WORD, headFont } from './parts';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 
 /* 얼라인 규칙 [OWNER 2026-08-25 — CLAUDE.md «얼라인» 절]. 첫 판은 라벨을
  * 컨트롤 **옆**에 붙였고, 라벨 폭이 제각각이라 컨트롤 시작점이 계단이 졌다
@@ -783,7 +784,7 @@ export function StrategyWindow({
       })
       .catch((e: unknown) => {
         if (seq.current !== my) return;
-        if (e instanceof BacktestUnavailable) setError('실행 중인 백엔드(:8200)가 필요해요.');
+        if (e instanceof BacktestUnavailable) setError(ROUTE_MISSING_DETAIL);
         else setError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
@@ -809,7 +810,7 @@ export function StrategyWindow({
       })
       .catch((e: unknown) => {
         if (seq.current !== my) return;
-        if (e instanceof BacktestUnavailable) setOptError('실행 중인 백엔드(:8200)가 필요해요.');
+        if (e instanceof BacktestUnavailable) setOptError(ROUTE_MISSING_DETAIL);
         else setOptError(e instanceof Error ? e.message : String(e));
         adoptAndRun(knobsRef.current, my);
       })

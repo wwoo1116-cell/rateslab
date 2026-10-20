@@ -53,6 +53,7 @@ import { Text } from '@coinbase/cds-web/typography';
 
 import { TimeChart, type TimeLine } from '@/chart/TimeChart';
 import { BacktestUnavailable } from '@/lib/api';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 import { fmtJo } from '@/lib/format';
 import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 import { CONTROL_H } from '@/ui/controlHeight';
@@ -242,7 +243,7 @@ export function FlowLabWindow({
 
         {down ? (
           <Text as="p" font="label2" color="fgMuted">
-            백엔드가 안 보여요 — 이 창은 라이브에서만 돌아요.
+            {ROUTE_MISSING_DETAIL} 이 창은 라이브에서만 돌아요.
           </Text>
         ) : null}
         {err ? <Text as="p" font="label2" className="sr-down">{err}</Text> : null}

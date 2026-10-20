@@ -20,10 +20,11 @@
 import { scenarioAnchorsUrl } from '@/lib/staticPaths';
 
 import type { StrategyAnchors } from './trades';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 
 export class AnchorsUnavailable extends Error {
   constructor() {
-    super('오늘의 커브는 실행 중인 백엔드가 필요해요');
+    super(ROUTE_MISSING_DETAIL);
     this.name = 'AnchorsUnavailable';
   }
 }

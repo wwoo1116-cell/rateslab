@@ -51,6 +51,7 @@ import { Text } from '@coinbase/cds-web/typography';
 import { TimeChart, useStackedScales, type TimeLine } from '@/chart/TimeChart';
 import type { ScalePriceLine } from '@/chart/ScaleChart';
 import { BacktestUnavailable } from '@/lib/api';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 import { fmtKrw } from '@/lib/krw';
 import { Segmented } from '@/ui/ControlCard';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
@@ -359,7 +360,7 @@ export function BookWindow({
       })
       .catch((e: unknown) => {
         if (seq.current !== my) return;
-        if (e instanceof BacktestUnavailable) setError('실행 중인 백엔드(:8200)가 필요해요.');
+        if (e instanceof BacktestUnavailable) setError(ROUTE_MISSING_DETAIL);
         else setError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
@@ -383,7 +384,7 @@ export function BookWindow({
       })
       .catch((e: unknown) => {
         if (seq.current !== my) return;
-        if (e instanceof BacktestUnavailable) setOptError('실행 중인 백엔드(:8200)가 필요해요.');
+        if (e instanceof BacktestUnavailable) setOptError(ROUTE_MISSING_DETAIL);
         else setOptError(e instanceof Error ? e.message : String(e));
         adoptAndRun(knobsRef.current, my);
       })

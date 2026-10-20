@@ -48,6 +48,7 @@ import { Text } from '@coinbase/cds-web/typography';
 
 import type { Unit } from '@/lib/api';
 import { BacktestUnavailable } from '@/lib/api';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 import { fmtDelta, fmtLevel, levelHeadText, levelHeadTitle, unitSuffix } from '@/lib/format';
 import { fmtKrw } from '@/lib/krw';
 import { BASIS_LABEL } from '@/table/InstrumentTable';
@@ -699,7 +700,7 @@ export function MrPage() {
     return (
       <ErrorState
         what="Mean Reversion"
-        detail="실행 중인 백엔드(:8200)가 필요하고, 계획면(/api/mr/plan)을 아는 판이어야 해요 — 백엔드를 먼저 올려 주세요."
+        detail={`${ROUTE_MISSING_DETAIL} 이 화면은 계획면(/api/mr/plan)을 읽어요.`}
         onRetry={load}
         retrying={refreshing}
       />

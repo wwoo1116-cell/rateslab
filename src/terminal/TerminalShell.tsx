@@ -27,6 +27,7 @@ import {
 } from './urlState';
 import { useExploration } from './useExploration';
 import { useTermData } from './useTermData';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 
 /**
  * 목업의 껍데기 — **한 프레임, 네 개의 축**.
@@ -103,7 +104,7 @@ export function TerminalShell() {
           onRetry={() => window.location.reload()}
         />
         <Text font="legal" color="fgMuted">
-          이 화면은 실행 중인 백엔드가 필요해요 — `/api/universe` 가 첫 관문이에요.
+          이 화면은 `/api/universe` 가 첫 관문이에요. {ROUTE_MISSING_DETAIL}
         </Text>
       </div>
     );

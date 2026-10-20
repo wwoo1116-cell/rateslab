@@ -78,6 +78,7 @@ import { suggestLine } from './suggestLine';
 import { RiskHeatmap } from './RiskHeatmap';
 import { TraceWindow } from './TraceWindow';
 import { NOW_WORD, knobWord, zWord } from './words';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 
 const MINUS = '−';
 
@@ -1274,7 +1275,7 @@ export function PortfolioPage() {
     return (
       <ErrorState
         what="페이퍼 북"
-        detail="실행 중인 백엔드가 필요하고, /api/paper 를 아는 판이어야 해요 — 백엔드를 먼저 올려 주세요."
+        detail={`${ROUTE_MISSING_DETAIL} 이 화면은 /api/paper 를 읽어요.`}
         onRetry={load}
       />
     );

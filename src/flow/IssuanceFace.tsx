@@ -34,6 +34,7 @@ import { Text } from '@coinbase/cds-web/typography';
 
 import { TimeChart, useStackedScales, type TimeLine } from '@/chart/TimeChart';
 import { BacktestUnavailable } from '@/lib/api';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 import { fmtEok, fmtJo } from '@/lib/format';
 import { signedBp } from '@/mr/planText';
 import { directionClass } from '@/table/tint';
@@ -172,7 +173,7 @@ export function IssuanceFace({ span, controls }: { span: Span; controls: ReactNo
 
   if (down) {
     return <ErrorState what="국고채 발행 통계" onRetry={() => load()} retrying={busy}
-      detail="백엔드가 안 보여요 — 이 화면은 SQL 입찰 결과표를 바로 읽어요." />;
+      detail={`${ROUTE_MISSING_DETAIL} 이 화면은 SQL 입찰 결과표를 바로 읽어요.`} />;
   }
   if (err) {
     return <ErrorState what="국고채 발행 통계" detail={err} onRetry={() => load()} retrying={busy} />;

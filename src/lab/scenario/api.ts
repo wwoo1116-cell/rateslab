@@ -11,10 +11,11 @@
 import { scenarioAnchorsUrl, scenarioMacroUrl } from '@/lib/staticPaths';
 
 import type { Anchors } from './assemble';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 
 export class ScenarioUnavailable extends Error {
   constructor() {
-    super('시나리오는 실행 중인 백엔드가 필요해요');
+    super(ROUTE_MISSING_DETAIL);
     this.name = 'ScenarioUnavailable';
   }
 }

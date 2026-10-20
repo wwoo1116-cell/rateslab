@@ -57,6 +57,7 @@ import { Text } from '@coinbase/cds-web/typography';
 import { TimeChart, useStackedScales, type TimeLine } from '@/chart/TimeChart';
 import type { LwPalette } from '@/chart/palette';
 import { BacktestUnavailable } from '@/lib/api';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 import { fmtContracts, fmtEok, fmtJo } from '@/lib/format';
 import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 import { Cond } from '@/ui/Cond';
@@ -574,7 +575,7 @@ export function FlowPage() {
 
   if (down) {
     return <ErrorState what="투자자별 수급" onRetry={() => load()} retrying={busy}
-      detail="백엔드가 안 보여요 — 이 화면은 SQL 두 원천을 바로 읽어요." />;
+      detail={`${ROUTE_MISSING_DETAIL} 이 화면은 SQL 두 원천을 바로 읽어요.`} />;
   }
   if (err) {
     return <ErrorState what="투자자별 수급" detail={err} onRetry={() => load()} retrying={busy} />;

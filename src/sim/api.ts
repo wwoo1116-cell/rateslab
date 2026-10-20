@@ -10,10 +10,11 @@ import { TRUNCATED_RESPONSE_MSG } from "@/lib/api";
 import { simExpandUrl, simInstrumentsUrl, simulateUrl } from "@/lib/staticPaths";
 
 import type { EngineLeg, InstrumentCatalog, SimulateBody, SimResponse } from "./scenario";
+import { ROUTE_MISSING_DETAIL } from "@/lib/apiBase";
 
 export class SimulationUnavailable extends Error {
   constructor() {
-    super("시뮬레이션은 실행 중인 백엔드가 필요해요");
+    super(ROUTE_MISSING_DETAIL);
     this.name = "SimulationUnavailable";
   }
 }

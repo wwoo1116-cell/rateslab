@@ -6,10 +6,11 @@
  */
 
 import { issuanceCalendarUrl, issuanceDayUrl } from '@/lib/staticPaths';
+import { ROUTE_MISSING_DETAIL } from '@/lib/apiBase';
 
 export class IssuanceUnavailable extends Error {
   constructor(detail?: string) {
-    super(detail ?? '발행 캘린더는 실행 중인 백엔드가 필요해요');
+    super(detail ?? ROUTE_MISSING_DETAIL);
     this.name = 'IssuanceUnavailable';
   }
 }

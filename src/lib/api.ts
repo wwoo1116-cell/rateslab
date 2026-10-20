@@ -24,6 +24,7 @@ import {
   surfaceUrl,
   volatilityUrl,
 } from "./staticPaths";
+import { ROUTE_MISSING_DETAIL } from "./apiBase";
 import {
   type DataSource,
   type Freshness,
@@ -399,7 +400,7 @@ export async function fetchDv01(id: string): Promise<Dv01Payload> {
 
 export class BacktestUnavailable extends Error {
   constructor() {
-    super("백테스트는 실행 중인 백엔드가 필요해요");
+    super(ROUTE_MISSING_DETAIL);
     this.name = "BacktestUnavailable";
   }
 }
@@ -705,10 +706,11 @@ export async function fetchBacktest(
   const url = backtestUrl(encodePositions(rows), funding);
   if (url === null) throw new BacktestUnavailable();
   const r = await fetch(url);
-  /* 404 means the route is not there, which on a deployed site means no
+  /* 404 means the route is not there. On a deployed site that usually means no
    * backend is answering behind it (see `backtestUrl` — next.config.ts has no
-   * rewrite, 2026-08-20 확인). That is a different thing from a rejected
-   * request and gets the "백엔드가 필요한 화면이에요" panel, not a raw error. */
+   * rewrite, 2026-08-20 확인), but ★in development it is more often a LIVE
+   * backend running STALE code (2026-10-20, twice). The panel must not assert
+   * either cause — `ROUTE_MISSING_DETAIL` names the fact and lists both. */
   if (r.status === 404) throw new BacktestUnavailable();
   if (!r.ok) {
     // the backend returns 422 with a readable reason; surface it verbatim
@@ -921,7 +923,8 @@ export function runErrorMessage(e: unknown): string {
 
 async function liveJson<T>(url: string, what: string): Promise<T> {
   const r = await fetch(url);
-  // 404 = 그 라우트가 없다 = 뒤에 백엔드가 없다 (backtest 와 같은 규약)
+  /* 404 = 그 라우트가 없다 (backtest 와 같은 규약). ★「뒤에 백엔드가 없다」로 읽지
+     마라 — 낡은 코드로 떠 있는 백엔드도 404 를 돌려준다(`ROUTE_MISSING_DETAIL`). */
   if (r.status === 404) throw new BacktestUnavailable();
   if (!r.ok) {
     const detail = await r.json().catch(() => null);
