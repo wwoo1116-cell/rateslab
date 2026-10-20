@@ -30,6 +30,7 @@
  * 열마다 자가 갈릴 일이 없다 — 머리에 한 번만 적는다.
  */
 
+import { VStack } from '@coinbase/cds-web/layout';
 import { Text } from '@coinbase/cds-web/typography';
 
 import { fmtJo } from '@/lib/format';
@@ -81,14 +82,23 @@ export function FlowMatrix({
                       칸 버튼과 **다른 일**을 하므로 `aria-label` 이 그것을 적는다. */}
                   <button
                     type="button"
-                    className="sr-rv-linkbtn"
-                    aria-label={`${c.label} 전체 만기물을 그림에 세우기`}
+                    className="sr-rv-linkbtn sr-rv-stack"
+                    aria-label={c.pd
+                      ? `${c.label} 전체 만기물을 그림에 세우기 — PD 인수 가정이 더해진 열이에요`
+                      : `${c.label} 전체 만기물을 그림에 세우기`}
                     aria-pressed={picked === c.key && tenor === 'ALL'}
                     onFocus={() => onHover?.(c.key)}
                     onBlur={() => onHover?.(null)}
                     onClick={() => onPick('ALL', c.key)}
                   >
-                    {c.label}
+                    <span className="sr-rv-name">{c.label}</span>
+                    {/* ★**가정이 섞인 열은 표 안에서 구별된다** [OWNER 2026-10-20].
+                        종전에는 조건 스트립의 회색 문장만 그 사실을 말해서 표만
+                        보면 못 가렸다 — 실측: PD 를 켜면 은행 3년물이 +12.9 →
+                        +27.8조가 되는데(공급 37.3 × 0.4 를 얹는다) 표에는 아무
+                        표식이 없었다. 「은행이 3년을 27.8조 담았다」로 읽히면
+                        틀린 수다. 말줄임 금지라 줄여 적지 않고 **둘째 줄**에 쓴다. */}
+                    {c.pd ? <span className="sr-rv-sub">PD 포함</span> : null}
                   </button>
                 </th>
               ))}
@@ -158,13 +168,28 @@ export function FlowMatrix({
             </tr>
           </tbody>
         </table>
-        <Text as="p" font="legal" color="fgMuted" paddingX={1} paddingY={1}>
-          칸을 누르면 그 만기물의 그 주체가 오른쪽 그림에 서요. 주체 이름을 누르면
-          만기물은 전체가 돼요. 수는 고른 구간({matrix.from} ~ {matrix.to})의 합이에요.
-          {matrix.pending > 0
-            ? ` 입찰 ${matrix.pending}건은 현물 자료가 그 날에 아직 안 닿아 발행 열에 못 얹었어요.`
-            : ''}
-        </Text>
+        {/* ★**표가 닫혔나를 화면이 말한다** [OWNER 2026-10-20]. 열 주체 합은
+            PD 끔이면 0, 켬이면 발행과 같아야 한다 — 그 한 줄이 「만기물 분해가
+            샜나 · PD 가 두 번 더해졌나」를 동시에 잡는다. 수는 서버가 센다(§16).
+            어긋나는 날은 **지목한다** — 「어긋나요」만 적으면 쓸 수 없는 경고다.
+
+            ⚠세로 상자로 **감싸야 한다**: CDS `Text` 는 `as="p"` 라도
+            `display: inline` 이라, 둘을 나란히 두면 **한 줄에 이어 붙는다**
+            (실측 2026-10-20 — 경고 문장 끝에 설명 문장이 그대로 붙었다). 한
+            문단일 때는 안 드러났던 자리다. */}
+        <VStack gap={0.5} paddingX={1} paddingY={1}>
+          <Text as="p" font="legal"
+            color={matrix.check.ok ? 'fgMuted' : 'fgWarning'}>
+            {matrix.check.say}
+          </Text>
+          <Text as="p" font="legal" color="fgMuted">
+            칸을 누르면 그 만기물의 그 주체가 오른쪽 그림에 서요. 주체 이름을 누르면
+            만기물은 전체가 돼요. 수는 고른 구간({matrix.from} ~ {matrix.to})의 합이에요.
+            {matrix.pending > 0
+              ? ` 입찰 ${matrix.pending}건은 현물 자료가 그 날에 아직 안 닿아 발행 열에 못 얹었어요.`
+              : ''}
+          </Text>
+        </VStack>
       </div>
     </div>
   );

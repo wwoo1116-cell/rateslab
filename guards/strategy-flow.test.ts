@@ -240,6 +240,52 @@ describe('⑦ 만기물 · PD 인수 · 이동평균 · 발행 면 [OWNER 2026-1
     expect(FLOW_PAGE).toMatch(/수요 판정/);
   });
 
+  /* ⑫ [OWNER 2026-10-20] 가정이 섞인 칸은 **표 안에서** 구별돼야 한다. 조건 줄의
+     회색 문장만으로는 표만 보고 못 가린다(은행 3년물 +12.9 → +27.8조). */
+  it('PD 가 켜지면 그 두 열이 표에서 구별된다', () => {
+    expect(FLOW_PY, '어느 열이 가정인지 페이로드가 안 들고 있어요')
+      .toMatch(/"pd": bool\(pd_share is not None and c in PD_COLS\)/);
+    expect(FLOW_MATRIX, '표가 그 표식을 안 그려요').toMatch(/c\.pd \?/);
+    expect(FLOW_MATRIX).toMatch(/PD 포함/);
+    /* 말줄임 금지라 줄여 적지 않고 둘째 줄에 쓴다 — 스택이어야 한다. */
+    expect(FLOW_MATRIX).toMatch(/sr-rv-linkbtn sr-rv-stack/);
+  });
+
+  /* ⑬ 표가 닫혔나를 **서버가** 세고 화면은 읽는다. 열 주체 합은 PD 끔이면 0,
+     켬이면 발행과 같다 — 그 한 줄이 분해 누락과 PD 이중계상을 같이 잡는다. */
+  it('합계 검산을 서버가 내고, 안 닫히는 날은 지목한다', () => {
+    expect(FLOW_PY).toMatch(/def _matrix_check/);
+    expect(FLOW_PY, '봉 단위로 안 재면 깨진 하루가 반올림에 묻혀요')
+      .toMatch(/CHECK_BREAK/);
+    expect(FLOW_MATRIX).toMatch(/matrix\.check\.say/);
+    /* 화면이 합을 **다시 세지 않는다**(§16) — 서버의 수를 읽기만 한다. */
+    expect(FLOW_MATRIX).not.toMatch(/reduce\(|\.map\([^)]*\)\.reduce/);
+  });
+
+  /* ⑭ 중복을 들어냈다 [OWNER 2026-10-20 — 「빼도되는건 빼보면서 가보자」].
+     되살아나면 같은 수가 다시 세 곳에 선다. */
+  it('히어로와 중복 사실 칸이 **돌아오지 않는다**', () => {
+    expect(FLOW_PAGE, '히어로가 돌아왔어요').not.toMatch(/평소 대비가 가장 큰 주체예요/);
+    expect(FLOW_PAGE, '「오늘·순위 위 셋」이 돌아왔어요').not.toMatch(/순위 위 셋/);
+    expect(FLOW_PAGE, '「그림 넷」 칸이 돌아왔어요').not.toMatch(/그림 넷/);
+    expect(FLOW_PAGE, '「모집단」 칸이 돌아왔어요').not.toMatch(/title="모집단"/);
+    expect(FLOW_PAGE, '「단위」 조건 칸이 돌아왔어요').not.toMatch(/k="단위"/);
+    /* 남긴 하나는 **다른 데 없는 사실**이다. */
+    expect(FLOW_PAGE).toMatch(/title="PD 인수 보정 · 올해"/);
+  });
+
+  /* ⑮ 구간이 섞이면 같은 주체가 두 수로 선다(1Y 보험 +20.3 대 올해 +17.9). */
+  it('행렬 제목이 구간을 지고, 순위표가 「올해」를 따로 말한다', () => {
+    expect(FLOW_PAGE).toMatch(/만기물별 발행과 순매수 · \$\{span === 'ALL' \? '전체 구간' : span\}/);
+    expect(FLOW_PAGE).toMatch(/마지막\s*\n?\s*열만 올해/);
+  });
+
+  /* ⑯ 느린 주체는 분기 눈금이라 60일까지로는 안 보인다. */
+  it('이동평균 창에 120 일이 있다 — 서버와 화면이 같은 벌', () => {
+    expect(FLOW_PY).toMatch(/MA_WINDOWS = \(0, 5, 20, 60, 120\)/);
+    expect(FLOW_PAGE).toMatch(/value: '120', label: '120일'/);
+  });
+
   /* ⑪ CDS `Tooltip` 앵커가 `justify-content: flex-end` 라 왼쪽 정렬 머리에서
      글자가 오른끝으로 간다 — 실측(2026-10-20): 칸 405~800 인데 머리 글자가
      744~792, 그 칸의 값은 413~492 로 **350px 어긋났다**. */

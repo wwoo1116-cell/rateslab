@@ -103,10 +103,15 @@ const CASH_TENORS: { value: CashTenor; label: string }[] = [
 ];
 const CASH_TENOR_LABEL = Object.fromEntries(CASH_TENORS.map((t) => [t.value, t.label])) as Record<CashTenor, string>;
 
-/** 이동평균 창 — 서버 `MA_WINDOWS`. 세그먼트 값은 글자라 여기서 수로 되돌린다. */
+/** 이동평균 창 — 서버 `MA_WINDOWS`. 세그먼트 값은 글자라 여기서 수로 되돌린다.
+ *
+ *  ★**120 이 있어야 느린 주체를 본다** [OWNER 2026-10-20]. 보험은 전 표본
+ *  순매수 134.4조 중 118.0조를 30년물 한 자리에 담는데 그 움직임이 분기 눈금이라,
+ *  60일까지로는 가속·감속이 잡음에 묻힌다(`flow.gamma` 머리의 실측). */
 const MA_OPTIONS: { value: `${MaWindow}`; label: string }[] = [
   { value: '0', label: '없음' }, { value: '5', label: '5일' },
   { value: '20', label: '20일' }, { value: '60', label: '60일' },
+  { value: '120', label: '120일' },
 ];
 
 /** 계열 구분색 넷. **순서가 곧 배정**이다 — 서버가 보낸 차례대로 입는다. */
@@ -447,8 +452,11 @@ export function FlowPage() {
         </Box>
       ) : null}
       {face !== 'issue' ? (
-        /* ⑤ 이동평균 — 일별 그림의 주체 위에 선다. 주체는 표가 고른다. */
-        <Box width={250}>
+        /* ⑤ 이동평균 — 일별 그림의 주체 위에 선다. 주체는 표가 고른다.
+           폭은 **최장 라벨 × 칸 수**다(이 파일의 그 판례 둘): 알약 속 span 이
+           좌우 16px 씩 미니 한 칸에 「글자폭 + 32」가 든다. 「120일」이 가장 길어
+           약 39 + 32 = 71 이고 다섯 칸이라 355 — 넉넉히 360 으로 둔다. */
+        <Box width={360}>
           <Segmented
             label="이동평균"
             value={`${ma}` as `${MaWindow}`}
@@ -512,8 +520,6 @@ export function FlowPage() {
       : iss.tenors.find((t) => t.key === cashTenor)?.last ?? null)
     : null;
 
-  const lead = got.top.find((t) => t.value > 0) ?? got.sub[0];
-  const other = got.top.find((t) => t.value < 0);
   const pdPctShown = got.pd ? Math.round(got.pd.share * 100) : null;
 
   return (
@@ -529,11 +535,11 @@ export function FlowPage() {
           {got.asof.fut ? <Cond k="선물수급" v={got.asof.fut} /> : null}
           {got.asof.cash ? <Cond k="현물수급" v={got.asof.cash} /> : null}
           {side === 'cash' ? <Cond k="만기물" v={CASH_TENOR_LABEL[cashTenor]} strong /> : null}
-          {/* 서버가 말하는 원단위(계약·백만원)와 **화면의 자**가 다르다 —
-              백만원으로 적으면 일별이 여섯 자리라 억으로 줄여 읽는다. */}
-          <Cond k="단위" v={unitIsCash ? '일별 억 · 누적 조' : '계약'} strong />
-          <Cond k="순위"
-            v={`${side === 'cash' ? '주체별' : '기관계 세분'} · 하한 ${fmt(got.rankFloor).replace('+', '')}${unitWord}`} />
+          {/* ★「단위」와 「순위」 칸을 **들어냈다** [OWNER 2026-10-20].
+              단위는 **열 머리가 이미 진다**(「발행 (조)」·「오늘 (억)」·「올해 (조)」)
+              — 조건 줄에 또 적으면 같은 말이 두 곳이고, 정작 어느 열이 어느
+              단위인지는 머리를 봐야 안다. 순위 하한도 순위표 **아래 설명 줄**이
+              더 길게 말하고 있었고, 트레이더가 못 바꾸는 고정값이다. */}
           <Cond k="표본" v={`${got.days.toLocaleString('ko-KR')}일`} />
           {got.series.ma ? <Cond k="이동평균" v={`${got.series.ma.window}일`} /> : null}
           {got.pd && pdPctShown != null
@@ -554,26 +560,12 @@ export function FlowPage() {
         </Text>
       </VStack>
 
-      {/* ── 히어로 ──────────────────────────────────────────────────────── */}
-      <VStack gap={0.25}>
-        <Text as="span" font="legal" color="fgMuted">
-          {side === 'cash' ? '평소 대비가 가장 큰 주체예요' : '당일 순매수 대조'}
-        </Text>
-        <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
-          <Text as="h2" font="display3">
-            {'label' in lead ? lead.label : ''}
-          </Text>
-          <Text as="span" font="title3"
-            className={('value' in lead ? lead.value : lead.d1) >= 0 ? 'sr-up' : 'sr-down'}>
-            {fmt('value' in lead ? lead.value : lead.d1)} {unitWord}
-          </Text>
-          {other ? (
-            <Text as="span" font="body" color="fgMuted">
-              반대편은 {other.label} {fmt(other.value)}{unitWord}
-            </Text>
-          ) : null}
-        </HStack>
-      </VStack>
+      {/* ★히어로를 **들어냈다** [OWNER 2026-10-20 — 「빼도되는건 빼보면서 가보자」].
+          「평소 대비가 가장 큰 주체 = 외국인 +6,918억」은 아래 순위표 1행과
+          사실 스트립 「오늘·순위 위 셋」에 **같은 수가 또** 있었다(3중복). 게다가
+          이 면의 주제는 10-20 부터 「공급을 누가 담나」인데 히어로는 「오늘 누가
+          셌나」라 주제와도 어긋났다 — 화면에서 제일 큰 글씨를 중복에 쓰고 있었다.
+          그 사실은 순위표가 σ 와 함께 지므로 잃는 것이 없다. */}
 
       {controls}
 
@@ -596,8 +588,15 @@ export function FlowPage() {
         <VStack className="sr-card" flexBasis={1120} flexGrow={0} flexShrink={1}
           maxWidth={1180} minWidth={0} minHeight={0}>
           <VStack paddingX={2} paddingTop={1.5} paddingBottom={1} gap={1}>
+            {/* ★제목이 **구간을 진다** [OWNER 2026-10-20]. 이 표는 고른 구간의
+                합인데 아래 순위표의 마지막 열은 **올해(YTD)** 라, 같은 주체가 위에서
+                +20.3 아래에서 +17.9 로 섰다(실측 1Y·보험). 둘 다 맞는 수인데 어느
+                쪽이 「지금 보는 구간」인지 화면에 없었다 — 종전에는 표 **아래**
+                설명 줄에만 날짜가 있었다. */}
             <Text as="h3" font="label1">
-              {got.matrix ? '만기물별 발행과 순매수' : '기관계 세분 순위'}
+              {got.matrix
+                ? `만기물별 발행과 순매수 · ${span === 'ALL' ? '전체 구간' : span}`
+                : '기관계 세분 순위'}
             </Text>
             {/* 접은 「발행」 면이 남긴 것 — 고른 만기물의 **직전 입찰**이다.
                 표의 발행 열은 금액만 들고, 응찰률·낙찰금리·수요 판정은 여기 선다. */}
@@ -715,9 +714,13 @@ export function FlowPage() {
         <VStack className="sr-card" width="100%" flexShrink={0} minWidth={0}>
           <VStack paddingX={2} paddingTop={1.5} paddingBottom={1} gap={0.5}>
             <Text as="h3" font="label1">주체별 순위 · {CASH_TENOR_LABEL[cashTenor]}</Text>
+            {/* ★마지막 열이 **올해**라는 것을 부제가 말한다 — 위 표의 구간과
+                다른 창이라 같은 주체가 두 수로 선다. 「구간이 다르다」를 안 적으면
+                화면이 스스로를 반박하는 것처럼 읽힌다. */}
             <Text as="span" font="legal" color="fgMuted">
-              위 표가 구간 합을 말한다면 이 표는 오늘을 말해요 — 그 주체의 지난
-              1년 분포에 견준 자리예요.
+              위 표가 고른 구간({span === 'ALL' ? '전체' : span})의 합을 말한다면 이
+              표는 오늘을 말해요 — 그 주체의 지난 1년 분포에 견준 자리예요. 마지막
+              열만 올해(1월부터)라 위 표와 창이 달라요.
             </Text>
           </VStack>
           <Box paddingX={1} paddingBottom={1}>
@@ -728,61 +731,26 @@ export function FlowPage() {
         </VStack>
       ) : null}
 
-      {/* ── 사실 스트립 ─────────────────────────────────────────────────── */}
-      <Box flexShrink={0} width="100%">
-        <HStack className="sr-stats" width="100%" flexWrap="wrap">
-          {/* ★제목이 **모집단**을 말한다. 둘은 시간만 다른 것이 아니라 보는
-              주체가 다르다 — 왼쪽은 순위 위 셋(기관계 세분), 오른쪽은 그림이
-              그리는 넷(외국인이 끼어 있다). 「오늘 / 고른 구간」만 적으면 같은
-              주체의 두 지평으로 읽혀서, 이름 셋과 넷이 어긋나 보인다
-              (실측 2026-10-19). */}
-          <StatColumn title="오늘 · 순위 위 셋">
-            {got.sub.filter((r) => r.ranked).slice(0, 3).map((r) => (
-              <Stat
-                key={r.key}
-                label={r.label}
-                value={fmt(r.d1)}
-                tone={r.d1 > 0 ? 'up' : r.d1 < 0 ? 'down' : undefined}
-                note={r.sigma == null ? '평소 대비를 못 재요'
-                  : `평소 대비 ${r.sigma > 0 ? '+' : '−'}${Math.abs(r.sigma).toFixed(2)}σ`}
-              />
-            ))}
-          </StatColumn>
-          {/* 그림이 말하는 것을 **수로** 받는 칸 — 선을 눈으로 재지 않게.
-              누적은 고른 구간의 첫날부터라 이 수가 곧 「이 구간에 얼마나 샀나」다. */}
-          <StatColumn title={`고른 구간 ${span === 'ALL' ? '전체' : span} · 그림 넷`}>
-            {(win?.cum ?? []).map((c) => {
-              const last = c.values[c.values.length - 1] ?? 0;
-              return (
-                <Stat
-                  key={c.key}
-                  label={c.label}
-                  value={fmtCum(last)}
-                  tone={last > 0 ? 'up' : last < 0 ? 'down' : undefined}
-                />
-              );
-            })}
-          </StatColumn>
-          {got.pd && pdPctShown != null ? (
-            /* ⑥ 보정이 켜졌을 때만 — 무엇을 얼마나 더했는지 수로 적는다. */
+      {/* ── 사실 스트립 — **한 칸만 남았다** [OWNER 2026-10-20] ──────────── */}
+      {/* 넷 중 셋을 들어냈다. 전부 화면 위쪽에 **같은 수가 이미 있었다**:
+            「오늘·순위 위 셋」  → 순위표 1~3행과 글자 그대로 같다.
+            「고른 구간 · 그림 넷」→ 행렬 **합계 행**이 열 주체 전부를 주고,
+                                   리드아웃 줄이 같은 넷을 또 적는다(3중복).
+            「모집단」           → 표본은 조건 줄에, 순위 대상은 순위표 설명
+                                   줄에 있다. 「그림 4계열」은 아무도 안 쓴다.
+          남긴 하나는 **다른 데 없는 사실**이다 — PD 가 얼마를 얹었나. */}
+      {got.pd && pdPctShown != null ? (
+        <Box flexShrink={0} width="100%">
+          <HStack className="sr-stats" width="100%" flexWrap="wrap">
             <StatColumn title="PD 인수 보정 · 올해">
               <Stat label="더한 공급" value={fmtCum(got.pd.supplyYtd)}
                 note={`금융투자 ${pdPctShown}% · 은행 ${100 - pdPctShown}% 가정`} />
               <Stat label="반영 전 입찰" value={`${got.pd.pending}건`}
                 note={got.pd.pending ? '현물 자료가 그 날에 아직 안 닿았어요' : '전부 닿았어요'} />
             </StatColumn>
-          ) : null}
-          <StatColumn title="모집단">
-            <Stat label="표본" value={`${got.days.toLocaleString('ko-KR')}일`}
-              note={`${got.series.dates[0] ?? '—'} 부터`} />
-            <Stat label="순위 대상"
-              value={`${got.sub.filter((r) => r.ranked).length} / ${got.sub.length}주체`}
-              note={`일평균 ${fmt(got.rankFloor).replace('+', '')}${unitWord} 미만은 순위 밖`} />
-            <Stat label="그림" value={`${got.series.cum.length}계열`}
-              note="전수는 왼쪽 표가 져요" />
-          </StatColumn>
-        </HStack>
-      </Box>
+          </HStack>
+        </Box>
+      ) : null}
       </VStack>
     </VStack>
   );

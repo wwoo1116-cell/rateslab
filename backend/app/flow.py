@@ -166,7 +166,10 @@ CASH_TENOR_LABEL = {"ALL": "전체", **ktb_issuance.LABEL}
 #: 만기물을 못 푼 종목이 모이는 바구니. 합계엔 들고 만기물 표에선 빠진다.
 CASH_OTHER = "기타"
 #: 이동평균 창(영업일). 0 은 끔.
-MA_WINDOWS = (0, 5, 20, 60)
+#: ★**120 이 있어야 느린 주체를 본다** [OWNER 2026-10-20]. 보험은 30년물 한 자리에
+#: 전 표본 순매수의 88%(134.4조 중 118.0조)를 담는데 그 움직임이 분기 눈금이라,
+#: 60일까지로는 가속·감속이 잡음에 묻힌다(아래 §감마의 실측).
+MA_WINDOWS = (0, 5, 20, 60, 120)
 #: PD 인수를 받는 두 주체(§현물 만기물 ②).
 PD_COLS = ("financial_investment", "bank")
 
@@ -274,6 +277,99 @@ def apply_pd(cols: dict[str, list[int]], supply: list[float], share: float) -> d
     return out
 
 
+def gamma(vals: list[int], n: int) -> list[float | None]:
+    """감마 — **속도의 변화**. `MA_n(t) − MA_n(t−n)` 이다 [OWNER 2026-10-20].
+
+    ## 왜 감마냐 — 부호가 거기서만 산다
+
+    순매수의 **부호에는 정보가 거의 없다**. 국채 잔액이 늘고 이 회계는 영합이라
+    (`ktb_investor` 는 열 주체 합이 0), 금융투자(PD)가 내놓는 것을 나머지가 **늘**
+    받는다. 실측(60일 MA 의 양수 비중): 보험·30년물 **100%** · 국가지자체·전체
+    100% · 외국인·30년물 100%. 「사나 파나」는 물어볼 필요가 없는 질문이다.
+
+    감마는 다르다 — 양수 비중 **44~57%** 에 부호 구간이 24~160개다. 「빨라지나
+    느려지나」는 진짜 질문이고, 그래서 이 면이 재는 축은 속도가 아니라 이쪽이다.
+
+    ## 창이 짧으면 잡음이다 — 화면이 그 사실을 적는다
+
+    감마 부호가 이어지는 길이(중위, 영업일) 실측:
+
+        Γ5·Γ20   5~7일   (부호 구간 116~160개)  → **잡음**
+        Γ60      9~24일  (43~87개)              → 쓸 만
+        Γ120     8~46일  (24~45개)              → 제일 쓸 만
+
+    Γ20 이 10년에 150번 뒤집히면 그건 신호가 아니다. `WINDOW_TRUST` 가 이 판정을
+    들고 `verdict()` 가 화면에 그대로 적는다 — 수만 주고 「믿어도 되나」를 안
+    적으면 화면이 잡음을 신호처럼 보여 주게 된다.
+
+    ## 왜 `MA_n(t) − MA_n(t−n)` 인가
+
+    **창 하나만큼 떨어진 두 평균의 차**라 「지난 n일이 그 앞 n일보다」가 한 문장으로
+    읽히고, 단위가 안 바뀐다(둘 다 백만원/일). 짧은 창에서 긴 창을 빼는 꼴
+    (`MA5 − MA20`)도 생각했는데 그건 **창 둘을 섞어** 어느 쪽의 변화인지 안 갈린다.
+
+    창이 안 찬 자리와 `t−n` 이 축 밖인 자리는 `None` 이다 — 0 으로 채우면 「안
+    변했다」가 되는데 그건 「모른다」와 다른 말이다(`moving_average` 와 같은 규율).
+    """
+    m = moving_average(vals, n)
+    out: list[float | None] = [None] * len(m)
+    for i in range(len(m)):
+        if i - n < 0:
+            continue
+        a, b = m[i], m[i - n]
+        if a is None or b is None:
+            continue
+        out[i] = a - b
+    return out
+
+
+#: 창마다 「그 감마를 믿어도 되나」 — 위 §창이 짧으면 잡음이다의 실측이 근거다.
+#: 화면이 수와 **함께** 적는다.
+WINDOW_TRUST: dict[int, str] = {
+    5: "잡음", 20: "잡음", 60: "보통", 120: "믿을 만",
+}
+
+
+def verdict(cols: dict[str, list[int]], key: str) -> dict[str, Any]:
+    """고른 주체 한 칸의 **판별** — 네 창의 속도와 감마, 그리고 한 문장 [OWNER 2026-10-20].
+
+    판정은 **믿을 만한 창**(`WINDOW_TRUST` 가 「잡음」이 아닌 60·120)만 본다. 둘이
+    같은 부호면 그쪽으로 말하고, 갈리면 **갈린다고 말한다** — 한쪽을 골라 적으면
+    화면이 없는 확신을 지어낸다.
+
+    속도는 거의 늘 양수라(위 §왜 감마냐) 판정문에 안 쓴다. 다만 수는 같이 싣는다 —
+    「얼마나 사면서 빨라지나」를 읽으려면 둘 다 필요하다.
+    """
+    vals = cols[key]
+    wins = [w for w in MA_WINDOWS if w]
+    rows = []
+    for w in wins:
+        sp = moving_average(vals, w)[-1] if vals else None
+        gm = gamma(vals, w)[-1] if vals else None
+        rows.append({"window": w, "speed": sp, "gamma": gm,
+                     "trust": WINDOW_TRUST.get(w, "보통")})
+    trusted = [r for r in rows if r["trust"] != "잡음" and r["gamma"] is not None]
+    if not trusted:
+        say = "믿을 만한 창(60·120일)에서 감마를 낼 만큼 이력이 길지 않아요."
+        tone = None
+    else:
+        signs = {1 if r["gamma"] > 0 else -1 if r["gamma"] < 0 else 0 for r in trusted}
+        names = "·".join(f"{r['window']}일" for r in trusted)
+        if signs == {1}:
+            say, tone = f"{names} 모두에서 사는 속도가 빨라지고 있어요.", "up"
+        elif signs == {-1}:
+            say, tone = f"{names} 모두에서 사는 속도가 느려지고 있어요.", "down"
+        else:
+            say, tone = (f"{names}이 서로 다른 방향이에요 — 한쪽으로 말할 수 없어요.",
+                         None)
+    return {
+        "key": key, "rows": rows, "say": say, "tone": tone,
+        #: 왜 짧은 창을 판정에서 뺐는지 화면이 적을 수 있게.
+        "note": ("판정은 60·120일만 봐요 — 5·20일 감마는 부호가 중위 5~7일마다 "
+                 "뒤집혀서 신호가 아니에요."),
+    }
+
+
 def span_slice(n: int, span: int | None) -> slice:
     """구간이 보는 **마지막 `span` 봉**. `None`·0·음수는 전구간.
 
@@ -313,6 +409,9 @@ def cash_matrix(d: FlowData, span: int | None = None,
     total = {c: 0 for c, _ in CASH_COLS}
     total_supply = 0.0
     pending_total = 0
+    #: 봉마다의 **잔차** — 표가 닫혔나를 날 단위로 재려고 모은다(`_matrix_check`).
+    #: 합만 재면 반올림이 쌓여 「깨진 하루」가 그 속에 숨는다.
+    resid = [0] * len(dates)
     for key in ktb_issuance.TENORS:
         got = d.cash.get(key)
         if got is None:
@@ -324,6 +423,12 @@ def cash_matrix(d: FlowData, span: int | None = None,
             cols = apply_pd(cols, sup, pd_share)
         s = sum(sup[cut])
         total_supply += s
+        #: 이 만기물이 봉마다 보태는 잔차. PD 가 켜졌으면 `cols` 에 공급이 이미
+        #: 들어 있으므로 그만큼 빼야 기대(0)로 돌아온다.
+        for i in range(len(dates)):
+            resid[i] += sum(cols[c][i] for c, _ in CASH_COLS)
+            if pd_share is not None:
+                resid[i] -= round(sup[i])
         vals = {c: sum(cols[c][cut]) for c, _ in CASH_COLS}
         for c, v in vals.items():
             total[c] += v
@@ -335,10 +440,71 @@ def cash_matrix(d: FlowData, span: int | None = None,
         "span": span or len(dates),
         "from": dates[cut][0] if dates[cut] else None,
         "to": dates[-1] if dates else None,
-        "cols": [{"key": c, "label": lab} for c, lab in CASH_COLS],
+        #: ★`pd` = **가정이 섞인 열** [OWNER 2026-10-20]. 노브가 켜지면 금융투자·
+        #: 은행 칸은 「실제로 산 수」가 아니라 공급을 비율로 더한 수다(실측: 은행
+        #: 3년물 +12.9 → +27.8조, 공급 37.3 × 0.4 = 14.9 를 얹은 것). 종전에는
+        #: 조건 스트립의 회색 문장만 그 사실을 말해서, **표만 보면 못 가렸다**.
+        #: 가정이 섞인 칸은 표 안에서 구별돼야 한다.
+        "cols": [{"key": c, "label": lab,
+                  "pd": bool(pd_share is not None and c in PD_COLS)}
+                 for c, lab in CASH_COLS],
         "rows": rows,
         "total": {"label": "합계", "supply": round(total_supply), "cols": total},
         "pending": pending_total,
+        #: ★**표가 닫혔나** — 화면이 눈으로 더하지 않아도 되게 서버가 센다.
+        #:
+        #: `ktb_investor` 는 열 주체 합이 **0** 인 완결 회계다(머리 §현물 ②의 증거).
+        #: PD 노브가 켜지면 공급을 두 주체에 더하므로 그 합이 **공급과 같아진다**
+        #: (실측 2026-10-20, 1Y: −6.1+85.4+…+0.5 = 198.9조 = 발행 열). 즉 이 한
+        #: 줄이 「만기물 분해가 샜나 · PD 가 두 번 더해졌나」를 동시에 잡는다.
+        "check": _matrix_check(resid, dates, cut, pd_share is not None),
+    }
+
+
+#: 봉 하나가 반올림으로 벌어질 수 있는 폭(백만원).
+#:
+#: ★**원천이 영합을 반올림까지만 지킨다** [실측 2026-10-20]. 1,795봉 중 **911봉**
+#: 에서 열 주체 합이 0 이 아니고, 거의 전부 ±1~5백만원이다 — 벤더가 주체마다
+#: 백만원으로 끊어 적어서 합이 정확히 0 으로 안 닫힌다. 인계문의 「주체 합이 0
+#: 이다(30영업일 전부)」는 그 30일 표본에서 참이었고 **전 구간에서는 근사**다.
+CHECK_TOL_PER_BAR = 10
+
+#: 반올림으로는 설명이 안 되는 봉 — 이 위면 **자료가 깨진 날**이다.
+#: 실측 넷: 2026-04-13 **35,000**(350억) · 2023-01-18 6,999 · 2026-04-17 5,999 ·
+#: 2023-04-11 1,998. 나머지 봉은 전부 5 이하다.
+CHECK_BREAK = 1_000
+
+
+def _matrix_check(resid: list[int], dates: list[str], cut: slice,
+                  pd_on: bool) -> dict[str, Any]:
+    """주체 합이 기대와 맞나 — 기대는 PD 가 꺼졌으면 0, 켜졌으면 공급이다.
+
+    ★**합만 보면 안 된다.** 반올림 잔차가 봉마다 깔려 있어 창이 길면 저절로
+    쌓이고, 그 속에 **진짜 깨진 하루**가 숨는다(2026-04-13 의 350억이 1년 창의
+    잔차 289.7억의 거의 전부다). 그래서 봉 단위로 재서 **깨진 날을 지목한다** —
+    「어긋난다」만 적으면 화면이 쓸 수 없는 경고가 된다.
+    """
+    win = resid[cut]
+    days = dates[cut]
+    got = sum(win)
+    breaks = sorted(
+        ((abs(v), d, v) for v, d in zip(win, days) if abs(v) > CHECK_BREAK),
+        reverse=True)
+    ok = not breaks and abs(got) <= CHECK_TOL_PER_BAR * max(len(win), 1)
+    if ok:
+        say = ("주체 합이 발행과 같아요 — PD 인수를 더했으니 그래야 해요."
+               if pd_on else "주체 합이 0 이에요 — 유통시장 회계라 그래야 해요.")
+    elif breaks:
+        _a, d0, v0 = breaks[0]
+        more = f" 그런 날이 {len(breaks)}일이에요." if len(breaks) > 1 else ""
+        say = (f"이 구간에 원천이 안 닫히는 날이 있어요 — {d0} 하루가 "
+               f"{v0 / 100:,.0f}억이에요.{more}")
+    else:
+        say = "주체 합이 반올림보다 많이 벌어졌어요 — 만기물 분해를 다시 봐야 해요."
+    return {
+        "sum": got, "ok": ok, "pd": pd_on,
+        "breaks": [{"date": d, "amount": v} for _a, d, v in breaks[:5]],
+        "say": say,
     }
 
 

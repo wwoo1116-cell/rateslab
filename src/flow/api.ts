@@ -16,7 +16,7 @@ export type FutTenor = '3Y' | '10Y';
 export type CashTenor = 'ALL' | '2Y' | '3Y' | '5Y' | '10Y' | '20Y' | '30Y' | '50Y' | '물가';
 export type FlowTenor = FutTenor | CashTenor;
 /** 이동평균 창(영업일). 0 은 끔. 서버의 `MA_WINDOWS` 와 같다. */
-export type MaWindow = 0 | 5 | 20 | 60;
+export type MaWindow = 0 | 5 | 20 | 60 | 120;
 
 /** 대분류 한 칸 — 서로 더하면 **0** 이다(영합). 순위가 아니라 대조다. */
 export interface FlowTop {
@@ -82,11 +82,22 @@ export interface FlowMatrixBoard {
   span: number;
   from: string | null;
   to: string | null;
-  cols: { key: string; label: string }[];
+  /** `pd` 가 참인 열은 **가정이 섞인 칸**이다 — PD 노브가 켜지면 금융투자·은행에
+   *  공급을 비율로 더하므로 「실제로 산 수」가 아니다. 표가 그 사실을 적어야 한다. */
+  cols: { key: string; label: string; pd: boolean }[];
   rows: { key: CashTenor; label: string; supply: number; cols: Record<string, number> }[];
   total: { label: string; supply: number; cols: Record<string, number> };
   /** 현물 자료가 그 날에 아직 안 닿아 발행 열에 못 얹은 입찰 건수. */
   pending: number;
+  /** 표가 닫혔나 — 주체 합은 PD 끔이면 0, 켬이면 발행과 같아야 한다. 서버가 센다. */
+  check: {
+    sum: number;
+    ok: boolean;
+    pd: boolean;
+    /** 반올림으로 설명이 안 되는 날들(큰 것부터 최대 다섯). */
+    breaks: { date: string; amount: number }[];
+    say: string;
+  };
 }
 
 export interface FlowBoard {

@@ -183,8 +183,14 @@ class Test페이로드:
         cols["INDI"] = [0] * n
         cols["GOVT"] = [0] * n
         cols["ETC"] = [0] * n
-        cash = {c: [100_000 * (1 if i % 2 else -1) for i in range(n)]
-                for c, _ in flow.CASH_COLS}
+        #: ★**영합이어야 한다** [고침 2026-10-20]. 종전에는 열 주체가 전부 같은
+        #: 값이라 하루 합이 ±1,000,000 이었다 — 실제 `ktb_investor` 는 열 주체 합이
+        #: 0 인 완결 회계이고(`flow.py` 머리 §현물 ②), 그 성질을 안 닮은 픽스처
+        #: 위에서는 「표가 닫혔나」를 아예 못 잰다. 주체마다 **부호를 갈라** 합을
+        #: 0 으로 두되, 봉마다 뒤집는 것은 그대로 둔다(σ 가 서야 순위 시험이 산다).
+        cash = {c: [(1 if j % 2 else -1) * 100_000 * (1 if i % 2 else -1)
+                    for i in range(n)]
+                for j, (c, _) in enumerate(flow.CASH_COLS)}
         #: 만기물 바구니 — 현물은 **전부 3년물**에 들고 나머지는 0. `ALL` 은 그 합이라
         #: 분리 전 한 장과 같은 수다(§현물 만기물 ①).
         buckets = {
@@ -297,6 +303,40 @@ class Test페이로드:
         # 발행 열은 공급표 그대로 — 3년 2.4조만 날짜축에 얹히고 10년은 축 뒤다.
         assert m["total"]["supply"] == 2_400_000
         assert m["pending"] == 1
+
+    def test_가정이_섞인_열을_표가_말한다(self, injected):
+        """★[OWNER 2026-10-20] PD 가 켜지면 금융투자·은행 칸은 「실제로 산 수」가
+        아니다 — 조건 줄의 회색 문장만 그 사실을 말하면 **표만 보고는 못 가린다**.
+        어느 열이 가정인지 페이로드가 든다."""
+        off = flow.board("cash", "ALL", span=None)["matrix"]
+        assert not any(c["pd"] for c in off["cols"]), "안 켰는데 가정 표식이 섰어요"
+        on = flow.board("cash", "ALL", span=None, pd_share=0.6)["matrix"]
+        marked = {c["key"] for c in on["cols"] if c["pd"]}
+        assert marked == set(flow.PD_COLS)
+
+    def test_표가_닫혔나를_서버가_센다(self, injected):
+        """주체 합은 PD 끔이면 0, 켬이면 발행과 같다 — 그 한 줄이 「만기물 분해가
+        샜나 · PD 가 두 번 더해졌나」를 동시에 잡는다."""
+        off = flow.board("cash", "ALL", span=None)["matrix"]["check"]
+        assert off["ok"] and off["sum"] == 0 and off["breaks"] == []
+        assert "0 이에요" in off["say"]
+        on = flow.board("cash", "ALL", span=None, pd_share=0.6)["matrix"]["check"]
+        assert on["ok"] and on["pd"] and "발행과 같아요" in on["say"]
+
+    def test_안_닫히는_날은_지목한다(self, injected):
+        """★합만 보면 반올림이 쌓여 **깨진 하루**가 그 속에 숨는다 — 실제 자료에
+        2026-04-13 하루가 350억이고 그것이 1년 창 잔차의 거의 전부다. 「어긋나요」만
+        적으면 쓸 수 없는 경고라, 날짜와 크기를 든다."""
+        d = flow.load()
+        dates, _ = d.cash["ALL"]
+        # 한 봉에 반올림으로 설명 안 되는 구멍을 낸다.
+        d.cash["3Y"][1]["insurance"][-2] += flow.CHECK_BREAK * 3
+        got = flow.board("cash", "ALL", span=None)["matrix"]["check"]
+        assert got["ok"] is False
+        assert got["breaks"] and got["breaks"][0]["date"] == dates[-2]
+        assert got["breaks"][0]["amount"] == flow.CHECK_BREAK * 3
+        assert dates[-2] in got["say"]
+        d.cash["3Y"][1]["insurance"][-2] -= flow.CHECK_BREAK * 3
 
     def test_행렬은_구간을_봉_수로_자른다(self, injected):
         """표와 그림이 **같은 창**을 봐야 한다 — 화면이 쓰는 봉 수를 그대로 받는다."""
