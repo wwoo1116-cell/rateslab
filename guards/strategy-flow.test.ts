@@ -124,11 +124,17 @@ describe('⑤ 리드아웃 스트립이 범례를 흡수한다', () => {
       .not.toMatch(/sr-casedash|범례/);
   });
 
-  it('스트립이 `sr-plot` 보다 **먼저** 선다 — 그림 밖·위', () => {
+  it('스트립이 **제 그림(누적)** 보다 먼저 선다 — 그림 밖·위', () => {
+    /* ⚠종전에는 **첫** `sr-plot` 보다 앞인지로 쟀다. 2026-10-20 에 이동평균·감마가
+       주인공이 되면서 **일별 그림이 앞으로** 왔고(판정 → 일별 → 누적), 그 순간
+       이 자가 거짓 양성을 냈다 — 스트립은 여전히 제 그림 위에 있는데.
+       재는 것은 「첫 그림보다 앞」이 아니라 **「그 스트립이 설명하는 그림보다 앞」**
+       이다. 누적 그림은 `lines={lines}` 를 받는 쪽이다. */
     const strip = FLOW_PAGE.indexOf('<ChartReadoutStrip');
-    const plot = FLOW_PAGE.indexOf('className="sr-plot"');
+    const cum = FLOW_PAGE.indexOf('lines={lines}');
     expect(strip).toBeGreaterThan(0);
-    expect(plot).toBeGreaterThan(strip);
+    expect(cum, '누적 그림을 못 찾았어요').toBeGreaterThan(0);
+    expect(cum).toBeGreaterThan(strip);
   });
 
   it('칸마다 **값과 토글**을 든다 — 범례이자 값이자 손잡이', () => {
@@ -329,6 +335,24 @@ describe('⑦ 만기물 · PD 인수 · 이동평균 · 발행 면 [OWNER 2026-1
     expect(body).not.toMatch(/kind: 'histogram'[\s\S]{0,200}axis: 'aux'/);
     /* 축이 둘이라는 것을 안 적으면 「그날보다 평균이 크다」로 읽힌다. */
     expect(FLOW_PAGE).toMatch(/평균선은 왼쪽 축/);
+  });
+
+  /* ⑳ ★**주인공 차례** [OWNER 2026-10-20 — 「이게 메인이어야 하는데 반영된거
+     맞니」]. 첫 판에서 판정 문장만 키우고 자리는 안 옮겨서, 주인공이 작은 칸의
+     맨 아래에 서서 화면 밖으로 밀렸다(일별+MA 161px 대 누적 321px). */
+  it('이동평균·감마가 **주인공 자리**에 선다', () => {
+    const card = FLOW_PAGE.slice(FLOW_PAGE.indexOf('flexBasis={460}'));
+    const gamma = card.indexOf('<GammaLine');
+    const daily = card.indexOf('lines={dailyLines}');
+    const cum = card.indexOf('lines={lines}');
+    expect(gamma, '판정이 없어요').toBeGreaterThan(0);
+    expect(gamma, '판정이 그림들 **뒤**에 있어요 — 머리말이어야 해요')
+      .toBeLessThan(daily);
+    expect(daily, '일별+MA 가 누적 **뒤**에 있어요 — 앞이어야 해요').toBeLessThan(cum);
+    /* 몫도 일별이 커야 한다. */
+    expect(card).toMatch(/lines=\{dailyLines\}[\s\S]{0,40}/);
+    const dailyBox = card.lastIndexOf('flexGrow={2}', daily);
+    expect(dailyBox, '일별 그림이 큰 몫(flexGrow 2)을 안 가졌어요').toBeGreaterThan(0);
   });
 
   /* ⑲ ★**이 면은 설명이지 예측이 아니다** [판정 2026-10-20]. 수급으로 금리

@@ -693,60 +693,38 @@ export function FlowPage() {
           </Box>
         </VStack>
 
+        {/* ★**이 칸의 주인공은 이동평균과 감마다** [OWNER 2026-10-20 — 「이게
+            메인이야,, 난 이걸 보고 싶은거고」]. 10-20 첫 판에서 판정 문장만 크게
+            키우고 **자리는 안 옮겼더니**, 주인공이 작은 칸(460) 안의 맨 아래에
+            서서 화면 밖으로 밀렸다(일별+MA 161px 대 누적 321px, 카드 제목은
+            「누적 순매수」). 차례를 뒤집는다:
+
+              제목(고른 칸) → **판정** → 일별+MA(큰 그림) → 누적(작은 그림)
+
+            누적을 안 지우는 이유는 그것이 **증거**이기 때문이다 — 「이 구간에
+            얼마나 샀나」가 거기 있고, 판정은 그 위의 읽기다. */}
         <VStack className="sr-card" flexBasis={460} flexGrow={1} flexShrink={1}
           minWidth={0} minHeight={0}>
           <VStack paddingX={2} paddingTop={1.5} paddingBottom={0.5} gap={0.75}>
             <HStack alignItems="baseline" justifyContent="space-between" gap={1}>
-              {/* 단위는 **제목이 진다** — 표의 열 머리가 하는 그 일
-                  (`FlowTable::unitOf`). 스트립·사실 칸의 값은 민짜라 단위를
-                  읽을 자리가 여기 말고 없고, 누적(조)과 일별(억)이 다르다. */}
-              <Text as="h3" font="label1">누적 순매수 ({cumWord})</Text>
+              {/* 제목이 **고른 칸**을 말한다 — 종전에는 아래 그림 하나의 이름
+                  (「누적 순매수」)이라, 카드가 무엇에 대한 것인지 안 적혀 있었다. */}
+              <Text as="h3" font="label1">
+                {CASH_TENOR_LABEL[cashTenor]} · {win?.daily?.label ?? ''} — 사는 속도
+              </Text>
               <Text as="span" font="legal" color="fgMuted">
-                고른 구간의 첫날부터 다시 세요
+                일별 {unitWord} · 누적 {cumWord}
               </Text>
             </HStack>
           </VStack>
-          {/* ★리드아웃 스트립은 **그림 밖·위**에 선다 [OWNER 2026-09-21] —
-              계열 이름·값·끄는 손잡이 셋을 한 칸에 모은다. 따로 두면
-              「지금 그려진 것」과 「끄는 손잡이」가 갈릴 수 있다. */}
-          {/* ★`width="100%"` 가 있어야 한다 — 없으면 `VStack` 안에서 칸 폭만큼만
-              서서(실측 141px · 계열 영역 16px) 스트립이 통째로 잘린다. 값은
-              DOM 에 다 들어 있는데 **안 보이는** 고장이라 눈으로만 잡힌다. */}
-          {/* ★감싸는 상자는 **세로**여야 한다. `Box` 는 CDS 기본이 가로 flex 라
-              `width="100%"` 를 줘도 **상자만** 늘고 안의 스트립은 제 내용 폭으로
-              줄어든다(실측: 상자 618px · 스트립 141px · 계열 영역 16px — 값은
-              DOM 에 다 있는데 안 보였다). 세로 상자는 교차축이 stretch 라 찬다.
-              오늘 같은 뿌리를 두 번 밟았다(카드도 `Box` 였다). */}
-          <VStack width="100%" paddingBottom={0.5}>
-            <ChartReadoutStrip
-              date={at.date}
-              slots={slots}
-              ariaLabel={`${FACE[face].label} 누적 순매수 — 커서가 짚은 날의 값`}
-            />
-          </VStack>
-          {/* 그림 둘이 **남는 높이를 나눠 갖는다** — 고정 높이로 두면 카드 아래가
-              빈다(실측). 누적이 둘, 일별이 하나 몫이다. */}
+          {/* ── 판정 — 이 카드의 머리말 ──────────────────────────────────── */}
+          {got.gamma ? (
+            <VStack paddingX={2} paddingBottom={1}>
+              <GammaLine g={got.gamma} />
+            </VStack>
+          ) : null}
           <VStack paddingX={2} paddingBottom={1} gap={0.5} flexGrow={1} minHeight={0}>
-            {/* ★`flexBasis={0}` 이 있어야 `flexGrow` 의 2:1 이 **실제로** 그 비율이
-                된다. 기본 `auto` 면 그림의 고유 높이가 먼저 자리를 잡고 남는
-                것만 2:1 로 갈려서, 실측 345:57(약 6:1)이 나왔다. */}
-            <Box className="sr-plot" flexGrow={2} flexBasis={0} minHeight={0}>
-              <TimeChart
-                dates={win?.dates ?? []}
-                lines={lines}
-                precision={0}
-                /* ★시간축을 **둘 다** 세운다. 쌓인 차트는 보통 위쪽 축을 숨기는데
-                   (`hideTimeAxis`), 여기는 두 그림 사이에 제목 줄이 끼어 있어
-                   아래 축이 위 그림의 것으로 안 읽힌다 — 날짜를 못 읽겠다는
-                   지적이 그 자리였다 [OWNER 2026-10-19]. */
-                onHoverIndex={onCum}
-                syncIndex={cursor?.src === 'day' ? cursor.i : null}
-                hoverLabel={(i) => `${win?.dates[i] ?? ''} · `
-                  + (win?.cum ?? []).map((c) => `${c.label} ${fmtCum(c.values[i] ?? 0)}${cumWord}`).join(', ')}
-                accessibilityLabel={`${FACE[face].label} 누적 순매수 — ${got.series.cum.map((s) => s.label).join(', ')}`}
-                {...stack}
-              />
-            </Box>
+            {/* ── 일별 + 이동평균 넷 — **큰 그림** ─────────────────────────── */}
             <HStack alignItems="baseline" justifyContent="space-between" gap={1}>
               <Text as="span" font="label2">
                 일별 — {win?.daily?.label ?? ''} ({unitWord})
@@ -771,7 +749,10 @@ export function FlowPage() {
                 </Text>
               </HStack>
             </HStack>
-            <Box className="sr-plot" flexGrow={1} flexBasis={0} minHeight={120}>
+            {/* ★`flexBasis={0}` 이 있어야 `flexGrow` 가 **실제로** 그 비율이 된다.
+                기본 `auto` 면 그림의 고유 높이가 먼저 자리를 잡고 남는 것만
+                갈려서, 실측 345:57(약 6:1)이 나왔다. 몫은 **일별이 둘**이다. */}
+            <Box className="sr-plot" flexGrow={2} flexBasis={0} minHeight={160}>
               <TimeChart
                 dates={win?.dates ?? []}
                 lines={dailyLines}
@@ -792,8 +773,42 @@ export function FlowPage() {
                 {...stack}
               />
             </Box>
-            {/* ── 감마 한 줄 [OWNER 2026-10-20 — 「그림아래 감마 한줄로」] ───── */}
-            {got.gamma ? <GammaLine g={got.gamma} /> : null}
+            {/* ── 누적 — **증거**. 아래 작은 그림으로 내려왔다 ─────────────── */}
+            <HStack alignItems="baseline" justifyContent="space-between" gap={1}>
+              <Text as="span" font="label2">누적 순매수 ({cumWord})</Text>
+              <Text as="span" font="legal" color="fgMuted">
+                고른 구간의 첫날부터 다시 세요
+              </Text>
+            </HStack>
+            {/* ★리드아웃 스트립은 **그 그림 밖·위**에 선다 [OWNER 2026-09-21] —
+                계열 이름·값·끄는 손잡이 셋을 한 칸에 모은다. 따로 두면 「지금
+                그려진 것」과 「끄는 손잡이」가 갈릴 수 있다.
+                ⚠감싸는 상자는 **세로**여야 한다 — `Box`(CDS 기본 가로 flex)면
+                `width="100%"` 를 줘도 상자만 늘고 스트립은 제 내용 폭으로 줄어
+                통째로 잘린다(실측: 상자 618 · 스트립 141 · 계열 영역 16px). */}
+            <VStack width="100%">
+              <ChartReadoutStrip
+                date={at.date}
+                slots={slots}
+                ariaLabel={`${FACE[face].label} 누적 순매수 — 커서가 짚은 날의 값`}
+              />
+            </VStack>
+            <Box className="sr-plot" flexGrow={1} flexBasis={0} minHeight={120}>
+              <TimeChart
+                dates={win?.dates ?? []}
+                lines={lines}
+                precision={0}
+                /* ★시간축을 **둘 다** 세운다. 쌓인 차트는 보통 위쪽 축을 숨기는데
+                   (`hideTimeAxis`), 여기는 두 그림 사이에 제목 줄이 끼어 있어
+                   아래 축이 위 그림의 것으로 안 읽힌다 [OWNER 2026-10-19]. */
+                onHoverIndex={onCum}
+                syncIndex={cursor?.src === 'day' ? cursor.i : null}
+                hoverLabel={(i) => `${win?.dates[i] ?? ''} · `
+                  + (win?.cum ?? []).map((c) => `${c.label} ${fmtCum(c.values[i] ?? 0)}${cumWord}`).join(', ')}
+                accessibilityLabel={`${FACE[face].label} 누적 순매수 — ${got.series.cum.map((s) => s.label).join(', ')}`}
+                {...stack}
+              />
+            </Box>
           </VStack>
         </VStack>
       </HStack>
