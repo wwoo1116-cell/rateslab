@@ -371,6 +371,32 @@ describe('⑦ 만기물 · PD 인수 · 이동평균 · 발행 면 [OWNER 2026-1
     expect(FLOW_LAB, '탐색의 우연을 화면이 안 적어요').toMatch(/탐색의 우연/);
   });
 
+  it('실험 창이 **캐논 부품**을 쓴다 — 손으로 쌓지 않는다', () => {
+    /* [OWNER 2026-10-20 — 「v2 디자인 문법 사용하려면 제대로 사용하기」]. 첫 판은
+       수 네 칸을 `VStack` 으로 쌓았고 커서 리드아웃이 아예 없었다 — 둘 다 이
+       리포에 이미 있는 부품이다(CLAUDE.md 캐논 규칙 1). */
+    expect(FLOW_LAB, '사실 스트립을 손으로 쌓고 있어요').toMatch(/<StatColumn/);
+    expect(FLOW_LAB).toMatch(/<Stat /);
+    expect(FLOW_LAB, '커서 리드아웃이 없어요').toMatch(/<ChartReadoutStrip/);
+    expect(FLOW_LAB, '값 자리를 안 비우면 커서마다 칸이 흔들려요').toMatch(/slotChars\(/);
+    expect(FLOW_LAB, '컨트롤에 라벨이 위로 안 서요').toMatch(/<Field label=/);
+    /* 얼라인 — 행은 바닥 정렬이고 버튼도 32px 상자에 담긴다. */
+    expect(FLOW_LAB).toMatch(/alignItems="flex-end"/);
+    expect(FLOW_LAB, '실행 버튼이 32px 상자 밖이에요')
+      .toMatch(/<Box width=\{96\} height=\{CONTROL_H\}>[\s\S]{0,400}<Button/);
+    /* hex 는 direction.css 에만 — 창에는 없다. */
+    expect(FLOW_LAB).not.toMatch(/#[0-9a-fA-F]{6}/);
+  });
+
+  it('창이 **단위를 안 섞는다** — `fmtJo` 는 백만원을 받는다', () => {
+    /* ★실측 2026-10-20: `dv01`(원)을 `fmtJo`(백만원)에 그대로 넣어 1,000만원이
+       「10.0조」로 찍혔다. 단위가 다른 수를 같은 서식에 넣으면 **그럴듯하게**
+       틀린다 — 화면만 보고는 못 가린다. */
+    expect(FLOW_LAB, 'dv01 을 fmtJo 에 넣고 있어요 — 단위가 달라요')
+      .not.toMatch(/fmtJo\(got\.dv01\)/);
+    expect(FLOW_LAB).toMatch(/got\.dv01 \/ 1e4/);
+  });
+
   it('실험 창이 **스스로 안 돈다** — 사람이 실행을 누른다', () => {
     /* Backtest 와 같은 규율(`BacktestWindow` 머리). 손잡이마다 저절로 돌면
        「고르는 중에 결과가 바뀌는」 화면이 되고, 그러면 제일 좋은 칸을 무심코
