@@ -202,7 +202,13 @@ export function FlowMatrix({
             `display: inline` 이라, 둘을 나란히 두면 **한 줄에 이어 붙는다**
             (실측 2026-10-20 — 경고 문장 끝에 설명 문장이 그대로 붙었다). 한
             문단일 때는 안 드러났던 자리다. */}
-        <VStack gap={0.5} paddingX={1} paddingY={1}>
+        {/* ── 가로 패딩은 **0** [디자인 감사 2026-10-22] ────────────────────
+            `paddingX={1}` 이었고, 그래서 이 문단들이 바로 위 표보다 6px 안으로
+            들어갔다 — 실측: 표·제목이 41 / 1127 인데 이 문단은 47 / 1121.
+            가로 여백은 **바깥 상자가 이미 준다**(`FlowPage` 의 표 블록
+            `paddingX={2}`). 여기서 또 주면 같은 카드 안에 가장자리가 둘이 된다.
+            세로는 남긴다 — 표와 글 사이는 떨어져야 한다. */}
+        <VStack gap={0.5} paddingY={1}>
           <Text as="p" font="legal"
             color={matrix.check.ok ? 'fgMuted' : 'fgWarning'}>
             {matrix.check.say}
