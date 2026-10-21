@@ -77,6 +77,15 @@ export function TopNav({
 }) {
   const { scheme, toggleScheme } = useScheme();
   const [open, setOpen] = useState<SectionId | null>(null);
+  /* ── 어떻게 열렸는지를 기억한다 [디자인 감사 2026-10-21] ────────────────────
+   *
+   * 패널에 등장 모션을 거는데(`type.css` 의 `.sr-mega`), **키보드로 연 것에는
+   * 걸면 안 된다.** 키보드 동작은 하루에 수백 번이라 모션이 붙으면 느리고
+   * 동떨어진 느낌이 된다 — 모션 판정의 1번 기준(빈도)이 그것이다.
+   *
+   * CSS 만으로는 못 가른다: `@media (hover: hover)` 는 **장치**를 묻지
+   * «이번에 무엇으로 열었나» 를 묻지 않는다. 그래서 여는 손이 직접 적는다. */
+  const [openVia, setOpenVia] = useState<'pointer' | 'focus'>('pointer');
   const hostRef = useRef<HTMLElement | null>(null);
   const current = sectionOf(tab);
 
@@ -165,8 +174,14 @@ export function TopNav({
               aria-expanded={PANELED.includes(s.id) ? s.id === open : undefined}
               aria-current={s.id === current ? 'page' : undefined}
               accessibilityLabel={s.label}
-              onMouseEnter={() => setOpen(PANELED.includes(s.id) ? s.id : null)}
-              onFocus={() => setOpen(PANELED.includes(s.id) ? s.id : null)}
+              onMouseEnter={() => {
+                setOpenVia('pointer');
+                setOpen(PANELED.includes(s.id) ? s.id : null);
+              }}
+              onFocus={() => {
+                setOpenVia('focus');
+                setOpen(PANELED.includes(s.id) ? s.id : null);
+              }}
               onClick={() => go(tabForSection(s.id, lastGroup))}
             >
               <TextHeadline as="span" noWrap>
@@ -207,7 +222,12 @@ export function TopNav({
               오버레이의 관례이기도 하다. aria-hidden 은 보조기술용 표기일 뿐
               포인터 이벤트와 무관하다. */}
           <Box className="sr-megascrim" aria-hidden="true" onClick={() => setOpen(null)} />
-          <Box className="sr-mega" role="group" aria-label={`${openSection.label} 메뉴`}>
+          <Box
+            className="sr-mega"
+            data-via={openVia}
+            role="group"
+            aria-label={`${openSection.label} 메뉴`}
+          >
           <HStack className="sr-mega-inner" gap={4} alignItems="flex-start">
             {/* 여기는 이제 Backtest 뿐이다 — 1항목 섹션의 패널은 은퇴했다
                 (위 섹션 버튼 주석). 항목 하나짜리 패널 렌더 분기도 함께 걷어냈다. */}

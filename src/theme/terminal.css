@@ -1122,12 +1122,23 @@
   min-width: 0;
 }
 
-/* 칩은 컨트롤이라 반경 4 다(파일 머리의 프레임/컨트롤 구분). */
+/* 칩은 컨트롤이라 반경 4 다(파일 머리의 프레임/컨트롤 구분).
+   ── 20 → 24px [디자인 감사 2026-10-21] ──────────────────────────────────────
+   이건 `<button>` 이다(`ObjectExplorer.tsx` — 필터 해제). §2.5.8 이 24px 을
+   요구하고 `CLAUDE.md` §키보드6 이 그걸 이 리포의 규칙으로 적어 뒀는데,
+   **그 규칙이 태어난 레인 안에서** 20px 로 서 있었다. 그 레인의 가드
+   (`terminal-keyboard`)가 `GraphApp`·`TimelineApp` 두 파일의 상수만 지목해서
+   같은 화면의 칩을 안 봤다 — 「범위가 좁은 가드」의 네 번째 사례다.
+
+   판정만 덧대지 않고 상자를 키우는 까닭: 이 칩은 `flex-wrap` 행에 서고 행
+   사이 gap 이 4px 이라, 위아래로 2px 씩 넘기면 **접힌 다음 줄 칩과 판정이
+   맞닿는다**(4 = 2+2). 겹친 판정은 엉뚱한 칩을 누르게 하므로 여기서는 상자를
+   키우는 쪽이 맞다. 행이 4px 높아진다. */
 .sr-term-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 20px;
+  height: 24px;
   padding: 0 4px;
   border: 1px solid var(--sr-term-line);
   border-radius: 4px;

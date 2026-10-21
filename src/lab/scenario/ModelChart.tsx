@@ -159,7 +159,7 @@ export function ModelChart({ rows, asof }: { rows: ScenarioRow[]; asof: string }
           12개월 뒤 IRS 커브
         </Text>
         <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
-          <Text as="span" font="display3" tabularNumbers noWrap>
+          <Text as="span" font="title1" tabularNumbers noWrap>
             {lvl(head.scenario12m)}
             <Box as="span" className="sr-hero-unit">
               %

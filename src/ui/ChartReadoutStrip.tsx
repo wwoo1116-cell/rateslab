@@ -40,8 +40,14 @@ import { directionClass, directionGlyph, unsignedDelta } from '@/table/tint';
 
 /** 줄의 높이. **상수여야 한다** — `fill` 로 그리는 화면이 그림 높이를 «남는
  *  만큼» 으로 재기 때문에, 이 값이 흔들리면 그림도 같이 흔들린다
- *  (`ui/BottomStrip.tsx::STRIP_H` 가 같은 이유로 상수다). */
-export const READOUT_STRIP_H = 22;
+ *  (`ui/BottomStrip.tsx::STRIP_H` 가 같은 이유로 상수다).
+ *
+ *  22 → **26** [디자인 감사 2026-10-21]. 이 줄의 계열 칸은 `<button>` 이고
+ *  20px 이었다 — §2.5.8 과 `CLAUDE.md` §키보드6 의 24px 미달이다. 판정만
+ *  덧대는 표준 해법은 여기서 못 쓴다(`type.css` 의 `.sr-strip-series` 주석:
+ *  가로 밀기 때문에 `overflow-y` 가 `hidden` 으로 계산돼 판정이 잘린다).
+ *  그래서 칸을 24 로 키웠고 줄은 그만큼 26 이 됐다 — 그림이 4px 줄어든다. */
+export const READOUT_STRIP_H = 26;
 
 /**
  * 한 칸. 이름 옆에 값이 오고, 그려진 선이 있으면 그 색 견본이 앞에 선다.

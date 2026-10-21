@@ -52,7 +52,6 @@ import {
   Text,
   TextBody,
   TextCaption,
-  TextDisplay3,
   TextLabel1,
   TextLabel2,
   TextLegal,
@@ -955,7 +954,7 @@ export function RvPage() {
 
       {/* ── 히어로 — Main 의 그 문법이다(PreviewPane: "이름은 작게, **값은
           크게**"). 이 화면의 값은 숫자가 아니라 오늘의 1위 종목이라, 종목명이
-          TextDisplay3 로 선다 [OWNER 2026-08-19 — "한 줄인데 눈에 안 띔"].
+          title1 로 선다 [OWNER 2026-08-19 — "한 줄인데 눈에 안 띔"].
           메타(Score·버퍼·순위변동)는 히어로 옆 뮤트 — Main 히어로의 변화
           배지 자리다. */}
       {top || pick ? (
@@ -975,9 +974,9 @@ export function RvPage() {
                   aria-label={`${top.sectorLabel} ${top.tenor} 이력 단면 열기`}
                   onClick={() => setDrill(top)}
                 >
-                  <TextDisplay3 as="span" noWrap>
+                  <Text font="title1" as="span" noWrap>
                     {top.sectorLabel} {top.tenor}
-                  </TextDisplay3>
+                  </Text>
                 </button>
                 <TextBody as="span" color="fgMuted" tabularNumbers noWrap>
                   Score {top.score?.toFixed(0)} · 한 달 {sig(top.trMonthBp)}bp
@@ -1008,7 +1007,7 @@ export function RvPage() {
                       aria-label={`${pick.item.sectorLabel} ${pick.item.tenor} 이력 단면 열기`}
                       onClick={() => setDrill(pick.item)}
                     >
-                      <Text font="display3" as="span" noWrap>
+                      <Text font="title1" as="span" noWrap>
                         {pick.item.sectorLabel} {pick.item.tenor}
                       </Text>
                     </button>

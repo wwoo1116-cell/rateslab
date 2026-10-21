@@ -39,7 +39,6 @@ import {
   Text,
   TextBody,
   TextCaption,
-  TextDisplay3,
   TextLabel1,
   TextLabel2,
   TextLegal,
@@ -1258,13 +1257,14 @@ export function BacktestWindow({
               <TextCaption as="span" color="fgMuted">
                 총 손익 · {result.from} → {result.to}
               </TextCaption>
-              <TextDisplay3
+              <Text
+                font="title1"
                 as="span"
                 tabularNumbers
                 className={result.pnl > 0 ? 'sr-up' : result.pnl < 0 ? 'sr-down' : undefined}
               >
                 {fmtKrw(result.pnl)}
-              </TextDisplay3>
+              </Text>
               {/* 분해 [OWNER 2026-08-11 — 교과서]. **항등식이지 귀속 모델이
                   아니다**: 평가 + 롤다운 + 캐리 (+ 조달) = 총손익, 정확히.
                   항목마다 부호색을 준다(v1 과 같은 규칙) — 어느 성분이 벌었고

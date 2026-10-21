@@ -207,7 +207,7 @@ export function IssuanceFace({ span, controls }: { span: Span; controls: ReactNo
       <VStack gap={0.25}>
         <Text as="span" font="legal" color="fgMuted">최근 입찰</Text>
         <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
-          <Text as="h2" font="display3">{L.label}</Text>
+          <Text as="h2" font="title1">{L.label}</Text>
           <Text as="span" font="title3" tabularNumbers>{jo(L.amount)}조</Text>
           <Text as="span" font="body" color="fgMuted" tabularNumbers>
             {L.date} · {L.names.join('·')} · 응찰률 {pct1(L.ratio)} · 낙찰 {rate3(L.rate)}

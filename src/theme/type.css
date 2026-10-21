@@ -103,6 +103,64 @@ body,
 .sr-flat {
   font-variant-numeric: tabular-nums;
 }
+/* ── 누름 — **앱 전체에 한 방언** [디자인 감사 2026-10-21] ──────────────────
+ *
+ * 실측: 이 앱의 `:active` 선언이 **1건**이었다 — `terminal.css` 의 팬 영역
+ * 커서 하나(`grabbing`)뿐이고, 그나마 모양이 아니라 커서다. 같은 시점에
+ * `:hover` 24건 · `:focus-visible` 20건이었다. 즉 **호버와 포커스는 다 달고
+ * 누름만 통째로 빠져 있었다**(일곱 상태 중 셋).
+ *
+ * 하루 종일 떠 있는 데스크 도구에서 이게 제일 크다 — 오너가 제일 자주 하는
+ * 동작이 제일 피드백이 없었다.
+ *
+ * ── 값은 새로 안 만든다 ────────────────────────────────────────────────────
+ * 0.97 은 「미묘하되 분명한」 구간(0.95~0.98)의 가운데이고, 시간은
+ * `--sr-motion-fast`(120ms)가 「누름 100~160ms」 안에 이미 있다. 그래서
+ * `motion.css` 에 더할 것이 없다 — 세 시간·한 곡선 그대로다.
+ *
+ * ── 왜 부품마다 안 적고 여기 한 번 적나 ────────────────────────────────────
+ * 부품마다 적으면 **다음에 생기는 컨트롤이 빠진다.** 이 앱이 「같은 것을 네 곳에
+ * 따로 정의」해서 얼라인이 갈렸던 판례(`Field` 넷, CLAUDE.md §얼라인 8)와 같은
+ * 병이다. 그래서 요소 선택자 하나로 건다.
+ *
+ * ── 왜 `button` 이고 행이 아닌가 ───────────────────────────────────────────
+ * 표 행은 `<button>` 이 아니라 `TableRow` + `tabIndex`(`InstrumentTable`)라
+ * 이 규칙이 닿지 않는다. 60px 행이 눌릴 때마다 줄어들면 격자가 흔들리므로
+ * **닿지 않는 것이 맞다.** 누르는데 커지면 안 되는 예외가 생기면
+ * `data-nopress` 를 달 것 — 끄는 손잡이를 같이 둔다.
+ *
+ * 감속은 `motion.css` 의 블랭킷이 덮는다(`prefers-reduced-motion`).
+ */
+button {
+  transition: transform var(--sr-motion-fast) var(--sr-ease-out);
+}
+
+button:not(:disabled):not([data-nopress]):active {
+  transform: scale(0.97);
+}
+
+/* ── 빈 그림 자리의 0선 (`ui/DataState.tsx::ChartBlank`) ─────────────────────
+ * 선은 상자 한가운데를 가로지르고, 문장은 그 선 위에 뜬다. 까닭은 그 부품의
+ * 머리 주석에 있다 — 축이 서 있으면 들어올 수가 어디 설지 보인다.
+ * `::before` 로 긋는 이유: 문장과 같은 상자를 쓰되 흐름을 안 밀기 위해서다. */
+.sr-chartblank {
+  position: relative;
+}
+
+.sr-chartblank::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 50%;
+  border-top: 1px solid var(--color-bgLine);
+}
+
+.sr-chartblank > * {
+  position: relative;
+  background: var(--sr-card);
+  padding-inline: 8px;
+}
+
 /* ── The three surfaces, applied ────────────────────────────────────────────
  * Definitions and the measurement behind them live in `direction.css`; this is
  * only where they land. The page is the ground, cards sit on it, and controls
@@ -154,6 +212,10 @@ body,
   gap: 12px;
   flex: 1 1 auto;
   min-width: 0;
+  /* 20 → 24 [디자인 감사 2026-10-21] — 아래 「24px 과녁」 주석이 까닭이다.
+     이 줄의 칸이 `<button>` 인데 §2.5.8 의 24px 에 못 미쳤고, 바로 아래
+     `overflow-y: hidden` 때문에 판정만 덧대는 해법이 이 자리에서는 잘린다. */
+  height: 24px;
   container-type: inline-size;
   /* ── 넘치면 **옆으로 민다** [실측 2026-09-21 브라우저] ─────────────────────
    * MA 다섯을 다 켜면 계열 칸이 여덟이다. 값을 사다리대로 다 내려놓아도
@@ -208,6 +270,34 @@ body,
    것은 견본과 변화 하나뿐이라는 규칙 그대로다. */
 .sr-readout-strip button.sr-strip-slot {
   cursor: pointer;
+}
+
+/* ── 24px 과녁 [디자인 감사 2026-10-21] ──────────────────────────────────────
+ *
+ * 실측: Main 한 면의 상호작용 요소 62개 중 **26개가 24px 미만**이었고 그중
+ * 22개가 이 칸들이다(카드 3장 × 7칸 — MA5·MA10·MA20·MA60·MA120·CD 91일·
+ * 기준금리). 차트에서 제일 자주 누르는 것들이 전부 20px 이었다.
+ *
+ * `CLAUDE.md` §키보드6 이 「눌리는 것은 24px 이상(§2.5.8)」을 못 박았고 그
+ * 규칙의 가드(`terminal-keyboard`)는 터미널 파일만 재서 여기 안 돌아왔다.
+ *
+ * ── 지침의 표준 해법이 **이 자리에서는 안 된다** (실측 2026-10-21 브라우저) ──
+ * 규칙 6 은 「그림을 키우지 말고 판정만 넓힌다」이고 첫 수리가 그대로 했다 —
+ * `::after` 로 24px 판정 사각형을 덧댔다. 계산된 값은 맞았는데(`height: 24px`,
+ * `position: absolute`) **실제로는 안 잡혔다**: `elementFromPoint` 로 칸 위
+ * 1px 을 짚으면 버튼이 아니라 `.sr-readout-strip` 이 나왔다.
+ *
+ * 까닭은 바로 위 `.sr-strip-series` 다 — 가로 밀기 때문에 `overflow-x: auto`
+ * 인데, CSS 는 한 축만 `visible` 로 둘 수 없어서 `overflow-y` 가 `hidden` 으로
+ * 계산되고 **세로로 넘친 판정이 잘린다.** 가로 밀기를 포기할 수 없으므로
+ * (그 주석의 실측: 칸 여덟이면 이름만으로 한 줄을 넘는다) 판정 덧대기는 이
+ * 자리에서 쓸 수 없는 도구다.
+ *
+ * 그래서 **상자를 키운다**: 칸 20 → 24, 줄 22 → 26(`READOUT_STRIP_H`).
+ * 그림이 4px 줄어든다. 그 값이 이 규칙의 가격이고, 깎을 방법이 없다.
+ * (높이는 위 `.sr-strip-series` 블록이 진다 — 같은 선택자를 두 번 적지 않는다.) */
+.sr-readout-strip .sr-strip-slot {
+  min-height: 24px;
 }
 
 /* ── 좁아지면 **값만** 내려놓는다 ───────────────────────────────────────────
@@ -419,7 +509,8 @@ body,
   cursor: pointer;
   transition:
     background var(--sr-motion-fast) var(--sr-ease-out),
-    color var(--sr-motion-fast) var(--sr-ease-out);
+    color var(--sr-motion-fast) var(--sr-ease-out),
+    transform var(--sr-motion-fast) var(--sr-ease-out);
 }
 
 .sr-naviconbtn:hover {
@@ -639,10 +730,24 @@ tr[aria-current='true'] > td {
 /* `display: inline` is load-bearing: CDS's `Box` is `display: flex` even with
  * `as="span"`, so without this the unit drops onto its own line under the
  * number it belongs to. */
+/* ── 굵기 역전을 푼다 [디자인 감사 2026-10-21] ──────────────────────────────
+ *
+ * 실측: 히어로가 `display3`(40/400)이고 이 단위가 0.45em(=18px)/**600** 이었다.
+ * 즉 **화면에서 제일 큰 글자가 제일 얇고, 그 옆 단위가 더 굵었다.** 뮤트 색이
+ * 그걸 반쯤 가리고 있었을 뿐 굵기 위계는 거꾸로 걸려 있었다.
+ *
+ * 히어로가 `title1`(28/600)로 바뀌었으므로 단위는 **한 단계 아래로 내려간다**.
+ * 0.45em 을 그대로 두면 28×0.45 = 12.6px 이라 13px 바닥 아래로 떨어지므로
+ * 비율을 다시 잡는다: 13/28 ≈ 0.464em. 굵기는 `legal`(이 앱에서 500 —
+ * `sauronTheme.ts`, 한글 13px 보정)이라 숫자(600)보다 분명히 한 단계 아래다.
+ *
+ *     이전  숫자 40/400  ·  단위 18/600  ← 역전
+ *     이후  숫자 28/600  ·  단위 13/500  ← 제자리
+ */
 .sr-hero-unit {
   display: inline;
-  font-size: 0.45em;
-  font-weight: var(--fontWeight-headline);
+  font-size: 0.464em;
+  font-weight: var(--fontWeight-legal);
   margin-left: 0.15em;
   color: var(--color-fgMuted);
 }
@@ -1669,11 +1774,17 @@ thead th {
   border: 0;
   border-radius: 999px;
   padding: 2px 8px;
+  /* 24px 과녁 [디자인 감사 2026-10-21]. 이것도 `<button>` 인데 내용 높이가
+     19px 이라 §2.5.8 미달이었다. 띠가 34px 이라 10px 이 남으므로 여기서는
+     판정을 덧댈 것도 없이 상자만 세운다 — 베이스라인 정렬은 그대로다
+     (라벨·값·변화가 한 줄에 앉는 것이 이 칸의 전부다). */
+  min-height: 24px;
   background: transparent;
   color: inherit;
   font: inherit;
   cursor: pointer;
-  transition: background var(--sr-motion-fast) var(--sr-ease-out);
+  transition: background var(--sr-motion-fast) var(--sr-ease-out),
+    transform var(--sr-motion-fast) var(--sr-ease-out);
 }
 
 .sr-strip-anchor:hover {
@@ -1683,6 +1794,22 @@ thead th {
 .sr-strip-anchor:focus-visible {
   outline: 2px solid var(--color-fg);
   outline-offset: 1px;
+}
+
+/* ── 13px 바닥 보정 [디자인 감사 2026-10-21] ────────────────────────────────
+ *
+ * 이 줄의 글자는 13px 인데 굵기가 **400** 이었다(라벨·변화). `DESIGN.md` §1.1
+ * 근거 3 이 「한글은 12~13px 에서 400 이면 ㅇ/ㅎ 의 속공간과 ㄹ/ㅂ 의 이음이
+ * 메워진다」로 **13px legal 만 500** 을 쓰기로 확정한 바로 그 자리다. 앱에서
+ * 이 규칙을 어긴 13/400 여섯 개가 전부 이 부품에 있었다.
+ *
+ * 두 단계는 그대로 둔다 — 보조(라벨·변화)는 500, 값은 600. 종전에는 400 대 500
+ * 이었고, 아래 칸(400)이 규격 밖이었다. 위로 한 칸씩 민다.
+ *
+ * 굵기를 리터럴로 안 적는 이유: `sauronTheme.ts` 가 `legal: '500'` 을 가지고
+ * 있고 `guards/motion-tokens` 계열의 규율대로 **수는 한 곳**이어야 한다. */
+.sr-strip-anchor {
+  font-weight: var(--fontWeight-legal);
 }
 
 .sr-strip-anchor-label {
@@ -1696,29 +1823,39 @@ thead th {
 }
 
 .sr-strip-anchor-now {
-  font-weight: 500;
+  font-weight: var(--fontWeight-caption);
 }
 
-/* 접기 단추 — 알약이 아니라 20×20 정사각(키트 실측). 다른 컨트롤과 다른 모양인
-   것이 의도다: 이건 라벨이 아니라 크롬 조작이다. */
+/* 접기 단추 — 알약이 아니라 정사각(키트 실측). 다른 컨트롤과 다른 모양인
+   것이 의도다: 이건 라벨이 아니라 크롬 조작이다.
+   ── 20×20 → 24×24, 11/700 → 13/600 [디자인 감사 2026-10-21] ────────────────
+   둘 다 규칙 위반이었고 가드가 그 자리를 안 보고 있었다.
+   ① 20px 은 `CLAUDE.md` §키보드6(「눌리는 것은 24px 이상」·WCAG 2.5.8) 미달.
+      그 규칙의 가드(`terminal-keyboard`)가 터미널 파일만 재서 안 걸렸다.
+      스트립이 34px 이라 24 는 자리가 남는다 — 판정을 덧대지 않고 상자를 키운다.
+   ② 11px·700 은 **CDS 스케일에 둘 다 없다**(크기는 13 아래가 없고 굵기는
+      400/600 둘뿐 · `DESIGN.md` §1.1). 종전 주석은 「11px 글리프는 한 단계 굵어야
+      읽힌다」였는데, 그 문제의 답은 **굵히는 것이 아니라 키우는 것**이다 —
+      13/600 은 CDS `caption` 그대로이고 11/700 보다 잘 읽힌다. */
 .sr-strip-collapse {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   margin-left: 4px;
   border: 0;
   border-radius: 6px;
   background: var(--sr-control);
   color: var(--color-fgMuted);
-  font-size: 11px;
-  font-weight: 700; /* 11px 글리프는 한 단계 굵어야 읽힌다 */
+  font-size: 13px;
+  font-weight: var(--fontWeight-caption);
   line-height: 1;
   cursor: pointer;
   transition:
     background var(--sr-motion-fast) var(--sr-ease-out),
-    color var(--sr-motion-fast) var(--sr-ease-out);
+    color var(--sr-motion-fast) var(--sr-ease-out),
+    transform var(--sr-motion-fast) var(--sr-ease-out);
 }
 
 .sr-strip-collapse:hover {
@@ -2401,7 +2538,8 @@ thead th {
   cursor: pointer;
   transition:
     background var(--sr-motion-fast) var(--sr-ease-out),
-    color var(--sr-motion-fast) var(--sr-ease-out);
+    color var(--sr-motion-fast) var(--sr-ease-out),
+    transform var(--sr-motion-fast) var(--sr-ease-out);
 }
 
 .sr-pillbtn:hover {
@@ -3408,4 +3546,128 @@ tr.sr-mr-book > td {
 .sr-corr th:last-child,
 .sr-corr td:last-child {
   padding-right: 0;
+}
+
+/* ═══ 등장 모션 넷 [디자인 감사 2026-10-21 · 모션 기회 탐색] ═══════════════════
+ *
+ * 이 앱은 모션이 **거의 필요 없다** — 하루 종일 떠 있는 데스크 도구라 「덜」이
+ * 맞는 방향이고, 제일 큰 결함(`:active` 누름 0건)은 이미 닫았다. 아래 넷은
+ * 네 질문(빈도 · 목적 · 속도 · 기능)을 전부 통과한 것만 남은 것이고, 거른 것이
+ * 더 많다(섹션 탭 전환 · 커서 리드아웃 · 실시간 숫자 굴리기 · 드래그 스프링 ·
+ * 차트 선 그리기 — 전부 「읽는 데이터」 아니면 「하루 백 번」이라 탈락).
+ *
+ * **새 토큰은 하나도 안 만든다.** 넷 다 세 시간·한 곡선 안에서 끝나고,
+ * `transform`/`opacity` 만 건드린다(레이아웃 속성 금지). 감속 설정은
+ * `motion.css` 의 블랭킷이 이미 0 으로 만든다.
+ *
+ * `@starting-style` 을 쓰는 이유: 마운트 직후의 「시작 값」을 CSS 가 직접 적을 수
+ * 있어 `useEffect` 로 `mounted` 를 세우는 판이 통째로 사라진다. 지원하지 않는
+ * 브라우저에서는 **모션만 없고 화면은 멀쩡하다** — 안전한 쪽으로 degrade 한다.
+ */
+
+/* ── ① 메가 패널 — 튀지 않고 열린다 ─────────────────────────────────────────
+ *
+ * 실측: 섹션에 커서를 올리면 전체 폭 패널과 덮개가 **즉시 튄다**(전이 0).
+ * 빈도는 「수십 회/일」이라 **거의 안 보일 만큼만** 움직인다 — 120ms 에 2px 이다.
+ *
+ * ★`data-via='focus'` 는 제외한다. 키보드로 연 것(Tab 이동)에 모션을 걸면
+ * 하루 수백 번의 동작이 느려진다. `@media (hover: hover)` 로는 못 가른다 —
+ * 그건 장치를 묻지 «이번에 무엇으로 열었나» 를 묻지 않는다. 그래서 `TopNav`
+ * 가 여는 손에서 직접 적어 준다. */
+.sr-mega[data-via='pointer'] {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--sr-motion-fast) var(--sr-ease-out),
+    transform var(--sr-motion-fast) var(--sr-ease-out);
+}
+
+@starting-style {
+  .sr-mega[data-via='pointer'] {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
+.sr-megascrim {
+  opacity: 1;
+  transition: opacity var(--sr-motion-fast) var(--sr-ease-out);
+}
+
+@starting-style {
+  .sr-megascrim {
+    opacity: 0;
+  }
+}
+
+/* ── ② 떠 있는 창 — 중앙에서 선다 ───────────────────────────────────────────
+ *
+ * 저장된 자리에 즉시 나타나던 것을 220ms 로 세운다. 빈도는 「가끔」이라 표준
+ * 시간을 쓴다(`--sr-motion-base`).
+ *
+ * `transform-origin` 은 **중앙**이다. 팝오버는 트리거에서 자라야 하지만 이 창은
+ * 트리거에 매달려 있지 않고 제 좌표를 기억한다 — 모달과 같은 부류다.
+ *
+ * `scale(0)` 이 아니라 **0.97** 인 이유: 현실에서 아무것도 무(無)에서 나타나지
+ * 않는다. 0 에서 자라면 어디선가 튀어나온 것처럼 보인다.
+ *
+ * 퇴장은 못 건다 — 닫으면 React 가 **즉시 언마운트**하므로 나가는 프레임이
+ * 없다. 거는 방법은 마운트를 붙잡아 두는 상태 기계를 더하는 것인데, 이 창의
+ * 빈도에 그만한 기구를 들일 값어치가 없다. 들인다면 `--sr-motion-exit`(160ms)
+ * 이고 등장보다 짧다는 규칙은 그때도 그대로다. */
+.sr-window {
+  opacity: 1;
+  transform: scale(1);
+  transform-origin: center;
+  transition:
+    opacity var(--sr-motion-base) var(--sr-ease-out),
+    transform var(--sr-motion-base) var(--sr-ease-out);
+}
+
+@starting-style {
+  .sr-window {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+}
+
+/* ── ③ 창 안 서랍 — 내용만 들어온다 ─────────────────────────────────────────
+ *
+ * `{open && tab ? … }` 이 툭 튀어나오던 자리다.
+ *
+ * ★**높이는 안 건드린다.** 아코디언을 「펼치는」 모션은 레이아웃 속성
+ * 애니메이션이고, 이 리포에 그 예외는 `.sr-strip` 하나뿐이며 거기엔 «합성
+ * 속성으로는 표현 불가» 라는 증명이 붙어 있다. 여기엔 그 증명이 없다. 그래서
+ * **상자는 즉시 서고 내용만 들어온다** — 급변을 다리 놓는다는 목적은 그것으로
+ * 충분하고, 격자는 한 프레임도 안 흔들린다. */
+.sr-drawer-body {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--sr-motion-fast) var(--sr-ease-out),
+    transform var(--sr-motion-fast) var(--sr-ease-out);
+}
+
+@starting-style {
+  .sr-drawer-body {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* ── ④ 빈 그림 자리 — 0선이 떠오른다 ────────────────────────────────────────
+ *
+ * 넷 중 레버리지가 제일 낮다(몇 회/일). 0선과 문장이 깜빡 나타나는 대신
+ * 120ms 에 떠오른다. 들어오는 쪽만 건다 — **차트가 서는 쪽에는 안 건다**:
+ * 캔버스가 그려지는 순간을 늦추면 읽을 수 있는 시점이 늦어지고, 그건 「읽는
+ * 데이터는 장식으로 움직이지 않는다」에 걸린다. */
+.sr-chartblank {
+  opacity: 1;
+  transition: opacity var(--sr-motion-fast) var(--sr-ease-out);
+}
+
+@starting-style {
+  .sr-chartblank {
+    opacity: 0;
+  }
 }

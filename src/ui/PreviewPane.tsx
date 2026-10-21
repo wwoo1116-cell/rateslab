@@ -4,9 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Box, HStack, VStack } from '@coinbase/cds-web/layout';
 import {
+  Text,
   TextBody,
   TextCaption,
-  TextDisplay3,
   TextLabel1,
   TextLabel2,
   TextTitle3,
@@ -1003,14 +1003,14 @@ export function PreviewPane({
         </HStack>
 
         <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
-          <TextDisplay3 as="span" tabularNumbers noWrap>
+          <Text font="title1" as="span" tabularNumbers noWrap>
             {fmtLevel(row.now, row.unit)}
             {u ? (
               <Box as="span" className="sr-hero-unit">
                 {u}
               </Box>
             ) : null}
-          </TextDisplay3>
+          </Text>
           {view ? (
             <TextBody
               as="span"

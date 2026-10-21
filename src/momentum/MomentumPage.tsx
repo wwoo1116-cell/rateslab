@@ -538,7 +538,7 @@ export function MomentumPage() {
               금일 주문
             </Text>
             <HStack gap={1.5} alignItems="baseline" flexWrap="wrap">
-              <Text font="display3" as="span" tabularNumbers noWrap>
+              <Text font="title1" as="span" tabularNumbers noWrap>
                 {legs.some((l) => l.trade)
                   ? `회전 ${uk(sheet.standalone?.turnover)}`
                   : '금일 주문 없음'}

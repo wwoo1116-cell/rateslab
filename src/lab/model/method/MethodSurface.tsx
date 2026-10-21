@@ -400,7 +400,7 @@ function Scorecard() {
           <Text as="h3" font="label1">
             스코어카드
           </Text>
-          <Text as="span" font="display3" tabularNumbers noWrap>
+          <Text as="span" font="title1" tabularNumbers noWrap>
             {s.engine_passed}/{s.engine_total}
           </Text>
         </HStack>

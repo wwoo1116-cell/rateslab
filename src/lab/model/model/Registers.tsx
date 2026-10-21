@@ -122,7 +122,7 @@ export function EquationRegister() {
           <Text as="h3" font="label1">
             방정식 등록부
           </Text>
-          <Text as="span" font="display3" tabularNumbers noWrap>
+          <Text as="span" font="title1" tabularNumbers noWrap>
             {nWired}/{S.equations.length}
           </Text>
           <Text as="span" font="legal" color="fgMuted">
@@ -221,7 +221,7 @@ export function CoefficientTable() {
           <Text as="h3" font="label1">
             계수
           </Text>
-          <Text as="span" font="display3" tabularNumbers noWrap>
+          <Text as="span" font="title1" tabularNumbers noWrap>
             {S.coefficients.length}
           </Text>
           <Text as="span" font="legal" color="fgMuted">
@@ -360,7 +360,7 @@ export function Census() {
           <Text as="h3" font="label1">
             인쇄되지 않은 식
           </Text>
-          <Text as="span" font="display3" tabularNumbers noWrap>
+          <Text as="span" font="title1" tabularNumbers noWrap>
             {c.unprinted}
           </Text>
           <Text as="span" font="legal" color="fgMuted">

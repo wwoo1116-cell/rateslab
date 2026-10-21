@@ -55,7 +55,7 @@ import { BASIS_LABEL } from '@/table/InstrumentTable';
 import { ROW_H } from '@/table/rowHeight';
 import { directionClass, directionGlyph, tintStyle, unsignedDelta } from '@/table/tint';
 import { Cond } from '@/ui/Cond';
-import { ErrorState, LoadingState } from '@/ui/DataState';
+import { ChartBlank, ErrorState, LoadingState } from '@/ui/DataState';
 import { ThHelp } from '@/ui/ThHelp';
 import { Stat, StatColumn } from '@/ui/Stat';
 
@@ -812,7 +812,7 @@ export function MrPage() {
                 setStratOpen(true);
               }}
             >
-              <Text font="display3" as="span" noWrap>
+              <Text font="title1" as="span" noWrap>
                 {rows[0].label}
               </Text>
             </button>
@@ -1190,7 +1190,7 @@ export function MrPage() {
                 {/* 큰 건 제목이 아니라 숫자다(공간문법). 통합 줄의 그 숫자는
                     레벨이 아니라 **평균 |z|** 다. */}
                 <HStack gap={2} alignItems="baseline" flexWrap="wrap">
-                  <Text font="display3" as="span" tabularNumbers>
+                  <Text font="title1" as="span" tabularNumbers>
                     {watch.meanAbsZ == null ? '—' : `${watch.meanAbsZ.toFixed(2)}σ`}
                   </Text>
                   <Text font="body" as="span" color="fgMuted">
@@ -1203,7 +1203,7 @@ export function MrPage() {
               <>
                 {/* 큰 건 제목이 아니라 숫자다(공간문법). */}
                 <HStack gap={2} alignItems="baseline" flexWrap="wrap">
-                  <Text font="display3" as="span" tabularNumbers>
+                  <Text font="title1" as="span" tabularNumbers>
                     {fmtLevel(sel.v, sel.unit as Unit)}
                     {unitSuffix(sel.unit as Unit)}
                   </Text>
@@ -1230,11 +1230,17 @@ export function MrPage() {
                 <PlanStats r={sel} place="card" />
               </>
             ) : (
-              <Text font="body" as="span" color="fgMuted">
-                {plan.excluded.length === plan.total
-                  ? '계열을 하나도 못 구웠어요 — 위의 사유를 보세요.'
-                  : '산출이 끝나는 대로 계열이 여기 서요.'}
-              </Text>
+              /* 그림 자리의 빈칸은 **0선 + 한 문장**이다 [디자인 감사 2026-10-21].
+                 종전에는 문장 하나가 카드 꼭대기에 뜨고 그 아래가 통째로 빈
+                 공백이었다(실측 380px). 같은 화면 왼쪽 순위표는 머리만 세우고
+                 아래를 비워서, 한 화면이 같은 상태를 두 문법으로 말했다. */
+              <ChartBlank
+                note={
+                  plan.excluded.length === plan.total
+                    ? '계열을 하나도 못 구웠어요 — 위의 사유를 보세요.'
+                    : '산출이 끝나는 대로 계열이 여기 서요.'
+                }
+              />
             )}
              </VStack>
             </div>
