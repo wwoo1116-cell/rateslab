@@ -3250,7 +3250,8 @@ def momentum_book() -> dict:
 
 @router.get("/api/flow/board")
 def flow_board(side: str = "fut", tenor: str = "3Y", pd: float | None = None,
-               ma: int = 0, daily: str | None = None, span: int | None = None) -> dict:
+               ma: int = 0, daily: str | None = None, span: int | None = None,
+               unit: str = "native") -> dict:
     """한 면 — 대분류 대조 + 기관계 세분 순위 + 누적·일별 계열(+이동평균).
 
     `side` 는 `fut`(선물)·`cash`(현물)다. **단위가 달라 한 축에 못 겹친다**
@@ -3268,10 +3269,17 @@ def flow_board(side: str = "fut", tenor: str = "3Y", pd: float | None = None,
     [OWNER 2026-10-20] `span` 은 테너 × (발행 + 주체) 행렬이 합할 **마지막 봉 수**다.
     화면이 그림을 자르는 그 수(`src/flow/span.ts` 의 `SPAN_BARS`)를 그대로 넘겨
     표와 그림이 같은 창을 보게 한다 — 날짜로 넘기면 휴일 하나에 둘이 갈린다.
+
+    ★[OWNER 2026-10-21] `unit` — `native`(계약·백만원·기본) 또는 `dv01`(원/bp).
+    금리 데스크는 흐름을 계약수로 적지 않는다. 3년 한 계약 28,562원/bp 와 10년
+    84,134 는 **2.95배** 다르므로 환산 없이는 만기물을 더하거나 비교할 수 없다
+    (`flow.py` 머리 §DV01 환산 — 환산의 금리 원천과 근사 셋이 거기 있다).
+    응답의 `unit`·`unitKey`·`unitNote` 가 **어느 눈금인지와 그 한계**를 말한다 —
+    배수를 못 읽으면 원단위로 떨어지고 `unitNote` 가 그 사실을 적는다.
     """
     try:
         return flow.board(side=side, tenor=tenor, pd_share=pd, ma=ma, daily=daily,
-                          span=span)
+                          span=span, unit=unit)
     except (flow.FlowError, ktb_issuance.IssuanceError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except mysqldb.MissingCredentials as exc:

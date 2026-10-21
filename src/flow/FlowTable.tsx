@@ -29,7 +29,7 @@ import { fmtContracts, fmtEok, fmtJo } from '@/lib/format';
 import { directionClass, flowPctTint } from '@/table/tint';
 import { ThHelp } from '@/ui/ThHelp';
 
-import type { FlowRow, FlowSide } from './api';
+import type { FlowRow, FlowSide, FlowUnit } from './api';
 
 /** 값 한 칸 — **면마다, 그리고 열마다** 자가 다르다.
  *
@@ -37,23 +37,36 @@ import type { FlowRow, FlowSide } from './api';
  *  1,000배 다르다** — 일별을 조로 적으면 전부 `+0.0조` 로 뭉개지고(실측: 보험
  *  1,455억이 0.1조), 누적을 억으로 적으면 `−936,000억` 이 된다. 그래서 열이
  *  자기 단위를 지고 머리가 그것을 적는다. */
-function val(v: number, side: FlowSide, scale: 'day' | 'year' = 'day'): string {
+/** ★눈금이 `dv01` 이면 값이 **원/bp** 다 — `side` 와 무관하게 같은 자로 적는다.
+ *
+ *  그게 DV01 눈금을 들인 이유다: 계약과 백만원이 한 눈금에 선다. `fmtEok` 은
+ *  **백만원**을 받으므로 원을 `1e6` 으로 나눠 넘긴다.
+ *
+ *  ⚠`dv01` 에서는 일별과 올해가 **같은 자**(억원/bp)다. 조로 적으면 1년 누적도
+ *  소수 둘째 자리라 해상도가 없다(실측: 현물 1년 DV01 누적이 2,000억원/bp 대). */
+function val(v: number, side: FlowSide, scale: 'day' | 'year' = 'day',
+             unit: FlowUnit = 'native'): string {
+  if (unit === 'dv01') return fmtEok(v / 1e6);
   if (side !== 'cash') return fmtContracts(v);
   return scale === 'year' ? fmtJo(v) : fmtEok(v);
 }
 
 /** 열 머리에 붙는 단위 — 숫자 칸에 단위를 반복하지 않는다(폭 낭비). */
-function unitOf(side: FlowSide, scale: 'day' | 'year'): string {
+function unitOf(side: FlowSide, scale: 'day' | 'year',
+                unit: FlowUnit = 'native'): string {
+  if (unit === 'dv01') return '억원/bp';
   if (side !== 'cash') return '계약';
   return scale === 'year' ? '조' : '억';
 }
 
 export function FlowTable({
-  rows, side, floor, highlight, onHover, picked, onPick,
+  rows, side, floor, highlight, onHover, picked, onPick, unit = 'native',
 }: {
   rows: readonly FlowRow[];
   side: FlowSide;
   floor: number;
+  /** 눈금 — `dv01` 이면 모든 칸이 억원/bp 다. */
+  unit?: FlowUnit;
   highlight?: string | null;
   onHover?: (key: string | null) => void;
   /** 일별 그림에 서 있는 주체 — 그 줄의 이름에 밑줄이 선다. */
@@ -75,7 +88,7 @@ export function FlowTable({
                   help="이름을 누르면 그 주체가 오른쪽 일별 그림(과 이동평균)에 서요."
                 />
               </th>
-              <th className="sr-rv-th">오늘 ({unitOf(side, 'day')})</th>
+              <th className="sr-rv-th">오늘 ({unitOf(side, 'day', unit)})</th>
               <th className="sr-rv-th">
                 <ThHelp
                   font="inherit"
@@ -83,9 +96,9 @@ export function FlowTable({
                   help="그 주체의 지난 1년 분포에서 오늘이 몇 번째 백분위인지예요 — 50 이 평소, 100 이 가장 큰 순매수, 0 이 가장 큰 순매도예요. 창에서 오늘은 빼고 재요(오늘이 제 잣대를 키우면 안 되니까요). 꼬리의 크기는 이 수로 안 갈려요 — 같은 줄의 「오늘」과 「일평균」을 보세요."
                 />
               </th>
-              <th className="sr-rv-th">5일 ({unitOf(side, 'day')})</th>
-              <th className="sr-rv-th">20일 ({unitOf(side, 'day')})</th>
-              <th className="sr-rv-th">올해 ({unitOf(side, 'year')})</th>
+              <th className="sr-rv-th">5일 ({unitOf(side, 'day', unit)})</th>
+              <th className="sr-rv-th">20일 ({unitOf(side, 'day', unit)})</th>
+              <th className="sr-rv-th">올해 ({unitOf(side, 'year', unit)})</th>
             </tr>
           </thead>
           <tbody>
@@ -120,6 +133,9 @@ export function FlowTable({
                         리드아웃 칸 하나가 값을 떨군다. 아랫줄은 **모집단**만
                         좁힌다 — 「평소에 얼마나 움직이나」. */}
                     <span className="sr-rv-sub">
+                      {/* ★이 수와 단위는 **날것**이다 — 하한을 재는 그 계열이고
+                          표시 눈금을 따라가지 않는다(`flow._series_row` 의 규율).
+                          따라가게 두면 아래 하한 설명과 단위가 어긋난다. */}
                       일평균 {val(Math.abs(r.avgAbs), side).replace('+', '')}
                       {unitOf(side, 'day')}
                     </span>
@@ -129,7 +145,7 @@ export function FlowTable({
                     (`table/tint.ts::flowPctTint` 머리). 세우는 축과 같아야 눈과
                     순위가 서로를 반박하지 않는다. */}
                 <td className="sr-rv-td" style={flowPctTint(r.pct)}>
-                  <span className={directionClass(r.d1)}>{val(r.d1, side)}</span>
+                  <span className={directionClass(r.d1)}>{val(r.d1, side, 'day', unit)}</span>
                 </td>
                 <td className="sr-rv-td">
                   {/* ★백분위 — 0~100 이고 **50 이 평소**다. 방향색은 50 기준으로
@@ -144,13 +160,13 @@ export function FlowTable({
                   )}
                 </td>
                 <td className="sr-rv-td">
-                  <span className={directionClass(r.d5)}>{val(r.d5, side)}</span>
+                  <span className={directionClass(r.d5)}>{val(r.d5, side, 'day', unit)}</span>
                 </td>
                 <td className="sr-rv-td">
-                  <span className={directionClass(r.d20)}>{val(r.d20, side)}</span>
+                  <span className={directionClass(r.d20)}>{val(r.d20, side, 'day', unit)}</span>
                 </td>
                 <td className="sr-rv-td">
-                  <span className={directionClass(r.ytd)}>{val(r.ytd, side, 'year')}</span>
+                  <span className={directionClass(r.ytd)}>{val(r.ytd, side, 'year', unit)}</span>
                 </td>
               </tr>
             ))}

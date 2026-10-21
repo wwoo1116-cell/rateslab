@@ -592,3 +592,56 @@ describe('㉓ 순위 키는 백분위다', () => {
       .toMatch(/꼬리의 크기는 이 수로 안 갈려요/);
   });
 });
+
+/* ㉔ DV01 눈금 [OWNER 2026-10-21]. 계약수로는 만기물을 더할 수 없다.
+ *
+ * 이 절은 **단위 함정 셋**을 지킨다. 셋 다 이 세션에 실제로 밟았다:
+ *   ① `creditmatrix` 는 소수를 주고 `par_pvbp` 는 퍼센트를 받는다
+ *   ② `ALL` 은 바구니마다 환산한 **뒤** 더해야 한다
+ *   ③ 하한은 **날것**으로 재야 한다 — 환산값으로 재면 조용히 무력해진다
+ */
+describe('㉔ DV01 눈금', () => {
+  it('선물과 현물이 **다른 PVBP** 를 쓴다 — 다른 물건이다', () => {
+    /* 선물은 KRX 5% 합성채가 규약, 현물은 par 채권. 하나로 묶으면 둘 중 하나가
+       틀린다. */
+    expect(FLOW_PY).toContain('def par_pvbp(');
+    expect(FLOW_PY).toContain('def fut_dv01_per_contract(');
+    expect(FLOW_PY, 'par_pvbp 를 선물에 쓰지 말라는 경고가 없어요')
+      .toMatch(/선물에 쓰지 말 것/);
+  });
+
+  it('①커브는 **소수**이고 PVBP 는 **퍼센트**를 받는다', () => {
+    /* 이 리포가 단위로 세 번 틀린 자리. ×100 이 코드에 있고 근거가 옆에 있어야 한다. */
+    expect(FLOW_PY).toMatch(/cmx\.interp\(pts, years\) \* 100\.0/);
+    expect(FLOW_PY, '소수/퍼센트 경고가 없어요').toMatch(/소수를 퍼센트로/);
+  });
+
+  it('②전체는 바구니마다 환산한 **뒤** 더한다', () => {
+    expect(FLOW_PY).toContain('def cash_dv01_sum(');
+    expect(FLOW_PY, '액면 합에 배수 하나를 곱하면 틀린다는 말이 없어요')
+      .toMatch(/배수 하나를 곱하면 \*\*틀린다/);
+    /* `cashDv01` 에 `ALL` 을 두면 틀린 길이 생긴다 — 그 금지가 적혀 있어야 한다. */
+    expect(FLOW_PY).toMatch(/`ALL` 은 \*\*없다\*\*/);
+  });
+
+  it('③하한은 **날것**으로 잰다 — 환산값으로 재면 무력해진다', () => {
+    expect(FLOW_PY, '_series_row 가 날것 계열을 안 받아요')
+      .toMatch(/def _series_row\([\s\S]{0,220}native: list\[int\] \| None = None/);
+    expect(FLOW_PY).toMatch(/조용히 무력해진다/);
+    /* 화면도 같은 규율 — 일평균과 하한은 원단위로 적는다. */
+    expect(FLOW_TABLE).toMatch(/일평균 \{val\(Math\.abs\(r\.avgAbs\), side\)/);
+  });
+
+  it('화면은 **손잡이가 아니라 응답의 눈금**으로 서식을 고른다', () => {
+    /* 서버가 원단위로 떨어뜨렸는데 손잡이를 보고 서식을 고르면 계약수를
+       억원/bp 로 적는다. */
+    expect(FLOW_PAGE).toMatch(/got\?\.unitKey \?\? 'native'/);
+    expect(FLOW_PAGE, '눈금 손잡이가 없어요').toMatch(/label="눈금"/);
+    expect(FLOW_PAGE, '눈금의 한계를 안 세워요').toContain('got.unitNote');
+  });
+
+  it('원단위를 **지우지 않는다** — DV01 은 덧눈금이다', () => {
+    expect(FLOW_PY).toMatch(/UNITS = \("native", "dv01"\)/);
+    expect(FLOW_PY, '원단위가 기본이 아니에요').toMatch(/unit: str = "native"/);
+  });
+});

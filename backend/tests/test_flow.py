@@ -570,3 +570,83 @@ class Test미결제분해:
     def test_첫_봉이_하나뿐이면_이름이_없다(self):
         names, tally = flow.oi_tally([100.0], [1000.0])
         assert names == [None] and sum(tally.values()) == 0
+
+
+class TestDV01환산:
+    """계약수로는 만기물을 더할 수 없다 [OWNER 2026-10-21].
+
+    실측 2026-10-20: 3년 한 계약 28,562원/bp · 10년 84,134 — **2.95배**.
+    """
+
+    def test_선물_한_계약의_DV01이_만기마다_다르다(self):
+        a = flow.fut_dv01_per_contract(3.909, "3Y")
+        b = flow.fut_dv01_per_contract(4.189, "10Y")
+        assert 28_000 < a < 29_000
+        assert 83_000 < b < 85_000
+        assert b / a > 2.5          # 계약수를 그냥 더하면 이만큼 틀린다
+
+    def test_par_PVBP는_퍼센트를_받는다(self):
+        """★이 리포가 단위로 세 번 틀린 자리 — `creditmatrix` 는 **소수**를 준다.
+
+        0.03835(소수)를 그대로 넣으면 금리가 0 에 가까워 듀레이션이 만기와 같아
+        지고, PVBP 가 **1.6배 크게** 나온다.
+        """
+        right = flow.par_pvbp(3.835, 3.0)      # 3.835%
+        wrong = flow.par_pvbp(0.03835, 3.0)    # 소수를 그대로 넣은 꼴
+        assert right < wrong
+        assert wrong / right > 1.04            # 조용히 지나갈 크기가 아니다
+
+    def test_금리가_0이면_듀레이션이_만기다(self):
+        """극한 — 할인이 없으면 par 채권의 듀레이션은 만기와 같다."""
+        got = flow.par_pvbp(0.0, 10.0)
+        assert abs(got - 10.0 * 100.0 / 10_000.0) < 1e-12
+
+    def test_현물_백만원당_DV01이_만기에_따라_커진다(self):
+        got = [flow.cash_dv01_per_unit(4.0, b) for b in ("2Y", "10Y", "30Y")]
+        assert got[0] < got[1] < got[2]
+        assert got[2] / got[0] > 6              # 2년과 30년은 다른 물건이다
+
+    def test_모르는_바구니는_0이고_지어내지_않는다(self):
+        assert flow.cash_dv01_per_unit(4.0, flow.CASH_OTHER) == 0.0
+        assert flow.cash_dv01_per_unit(4.0, "없는것") == 0.0
+
+    def test_전체는_바구니마다_환산한_뒤_더한다(self):
+        """★액면 합에 배수 하나를 곱하면 **틀린다**.
+
+        2년물과 30년물에 액면 1,000 씩이면 액면 합은 2,000 이지만 DV01 합은
+        배수가 다른 둘의 합이다.
+        """
+        buckets = {"2Y": {"X": [1000]}, "30Y": {"X": [1000]}}
+        yields = {"2Y": [190.86], "30Y": [1683.20]}
+        got = flow.cash_dv01_sum(buckets, yields)
+        assert got["X"][0] == 1000 * 190.86 + 1000 * 1683.20
+        #: 액면 합(2,000)에 한 배수를 곱한 어느 값과도 다르다.
+        assert got["X"][0] != 2000 * 190.86
+        assert got["X"][0] != 2000 * 1683.20
+
+    def test_연수가_없는_바구니는_합에_안_들어간다(self):
+        buckets = {"3Y": {"X": [10]}, flow.CASH_OTHER: {"X": [999]}}
+        got = flow.cash_dv01_sum(buckets, {"3Y": [280.85]})
+        assert got["X"][0] == 10 * 280.85
+
+    def test_앞_채움은_원천이_늦으면_0이다(self):
+        """지어내지 않는다 — 0 이면 그 봉이 DV01 합에 안 들어간다."""
+        got = flow.align_forward(["2015-01-02", "2020-01-02", "2020-01-03"],
+                                 [("2020-01-02", 5.0)])
+        assert got == [0.0, 5.0, 5.0]
+
+    def test_하한은_표시_눈금이_아니라_날것으로_잰다(self):
+        """★내가 만든 단위 버그 [2026-10-21].
+
+        DV01 눈금에서 `avgAbs` 가 원/bp 인데 하한은 계약·백만원이라, 같은 계열로
+        재면 하한이 **조용히 무력해진다**. 「순위에 들 만큼 큰가」는 표시 눈금과
+        무관한 성질이다.
+        """
+        dates = [f"2026-01-{1 + i % 28:02d}" for i in range(flow.WINDOW + 1)]
+        native = [(100 if i % 2 else -100) for i in range(flow.WINDOW + 1)]
+        shown = [v * 1000 for v in native]      # 환산해 1,000배로 커진 꼴
+        row = flow._series_row("X", "X", "g", dates, shown, native)
+        #: 하한이 보는 수는 **날것**이라 1,000배로 커지지 않는다.
+        assert row["avgAbs"] == 100
+        #: 그래서 하한 100 위에서 순위 밖이다.
+        assert flow.rank_rows([row], 500.0)[0]["ranked"] is False

@@ -67,7 +67,7 @@ import { Stat, StatColumn } from '@/ui/Stat';
 
 import {
   fetchFlowBoard, fetchIssuanceBoard, type CashTenor, type FlowBoard, type FlowSide,
-  type FutTenor, type IssuanceBoard, type IssuanceUnit,
+  type FlowUnit, type FutTenor, type IssuanceBoard, type IssuanceUnit,
 } from './api';
 import { FlowLabWindow } from './FlowLabWindow';
 import { FlowMatrix } from './FlowMatrix';
@@ -294,6 +294,12 @@ export function FlowPage() {
   const [pdOn, setPdOn] = useState(false);
   const [pdPct, setPdPct] = useState(60);
   const [daily, setDaily] = useState<string | null>(null);
+  /** ★눈금 — `native`(계약·백만원) ↔ `dv01`(원/bp) [OWNER 2026-10-21].
+   *
+   *  상태를 화면이 드는 까닭: 환산은 서버가 하지만(§16) **어느 눈금을 볼지는
+   *  읽는 사람의 선택**이고, 그 선택이 주소에 실려야 같은 화면을 남에게 보여 줄
+   *  수 있다(이 면의 다른 손잡이와 같은 규율). */
+  const [unit, setUnit] = useState<FlowUnit>('native');
   const pickFace = useCallback((f: Face) => { setFace(f); setDaily(null); }, []);
   /** 행렬의 칸 — 만기물과 주체를 **한 번에** 고른다 [OWNER 2026-10-20].
    *
@@ -347,7 +353,7 @@ export function FlowPage() {
     /* 행렬이 합할 창을 **봉 수로** 넘긴다 — 그림을 자르는 그 수다(`span.ts`).
        날짜로 넘기면 휴일 하나에 표와 그림이 갈린다. `Infinity`(전체)는
        `flowQueryString` 이 빼고, 서버 기본이 전구간이라 뜻이 같다. */
-    fetchFlowBoard({ side, tenor, pdShare, daily, span: SPAN_BARS[span] }, signal)
+    fetchFlowBoard({ side, tenor, pdShare, daily, span: SPAN_BARS[span], unit }, signal)
       .then((r) => { setGot(r); setErr(null); setDown(false); })
       .catch((e: unknown) => {
         if (signal?.aborted) return;
@@ -355,7 +361,7 @@ export function FlowPage() {
         setErr(e instanceof Error ? e.message : String(e));
       })
       .finally(() => { if (!signal?.aborted) setBusy(false); });
-  }, [face, side, tenor, pdShare, daily, span]);
+  }, [face, side, tenor, pdShare, daily, span, unit]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -379,22 +385,31 @@ export function FlowPage() {
   const unitIsCash = side === 'cash';
   /** 일별 자 — 현물은 **억**이다. 조로 적으면 일별이 전부 `+0.0조` 로 뭉개진다
    *  (실측 2026-10-19). 누적(올해)만 조를 쓰고 그건 표가 진다. */
+  /** ★눈금이 서버가 **실제로 준 것**이어야 한다 — 손잡이가 아니다.
+   *
+   *  `unit='dv01'` 로 물었는데 배수를 못 읽으면 서버가 원단위로 떨어뜨리고
+   *  `unitKey: 'native'` 를 돌려준다. 손잡이를 보고 서식을 고르면 그때 계약수를
+   *  억원/bp 로 적는다. 그래서 **응답의 `unitKey`** 를 본다. */
+  const shown: FlowUnit = got?.unitKey ?? 'native';
+  const isDv01 = shown === 'dv01';
   const fmt = useCallback(
-    (v: number) => (unitIsCash ? fmtEok(v) : fmtContracts(v)),
-    [unitIsCash],
+    (v: number) => (isDv01 ? fmtEok(v / 1e6) : unitIsCash ? fmtEok(v) : fmtContracts(v)),
+    [unitIsCash, isDv01],
   );
   /** ★**누적 자는 다르다** — 현물 누적은 억으로 적으면 열 자리가 된다
    *  (실측 2026-10-19: 금융투자 1년 누적 −680,061,101백만원 = `−6,800,611억`).
    *  그 길이가 리드아웃 스트립을 넘쳐 **넷째 값이 밀려 나갔다**. 조로 적으면
    *  `−680.1` 여섯 자다. 표가 이미 같은 판단을 했고(`FlowTable::val` — 일별 억 ·
    *  올해 조), 그 규칙이 그림·스트립·사실 칸에는 안 와 있었다. */
+  /** ⚠DV01 에서는 **누적도 억**이다 — 조로 적으면 1년 누적이 소수 둘째 자리라
+   *  해상도가 없다(실측: 현물 1년 DV01 누적이 2,000억원/bp 대). */
   const fmtCum = useCallback(
-    (v: number) => (unitIsCash ? fmtJo(v) : fmtContracts(v)),
-    [unitIsCash],
+    (v: number) => (isDv01 ? fmtEok(v / 1e6) : unitIsCash ? fmtJo(v) : fmtContracts(v)),
+    [unitIsCash, isDv01],
   );
-  /** 칸 옆에 붙는 단위 말. 일별과 누적이 다르다. */
-  const unitWord = unitIsCash ? '억' : '계약';
-  const cumWord = unitIsCash ? '조' : '계약';
+  /** 칸 옆에 붙는 단위 말. 일별과 누적이 다르다(DV01 에서는 같다). */
+  const unitWord = isDv01 ? '억원/bp' : unitIsCash ? '억' : '계약';
+  const cumWord = isDv01 ? '억원/bp' : unitIsCash ? '조' : '계약';
 
   /** 창 안의 날짜와 **다시 센 누적**.
    *
@@ -579,6 +594,21 @@ export function FlowPage() {
       <Box width={250}>
         <Segmented label="구간" value={span} onChange={setSpan} options={SPAN_OPTIONS} fill />
       </Box>
+      {/* ★눈금 — 계약·백만원은 만기물끼리 **더할 수 없다**. 3년 한 계약과 10년
+          한 계약의 DV01 이 2.95배 다르다. 라벨에 단위를 적어 두면 「원/bp 가
+          무슨 눈금인가」를 도움말 없이 알 수 있다. */}
+      <Box width={210}>
+        <Segmented
+          label="눈금"
+          value={unit}
+          onChange={setUnit}
+          options={[
+            { value: 'native' as FlowUnit, label: face === 'cash' ? '백만원' : '계약' },
+            { value: 'dv01' as FlowUnit, label: '원/bp' },
+          ]}
+          fill
+        />
+      </Box>
       {face === 'cash' ? (
         /* ④ 만기물 — 아홉 칸. 「전체」가 분리 전 화면과 같은 수다. */
         <Box width={540}>
@@ -697,6 +727,13 @@ export function FlowPage() {
             ? ` (뺀 것 — ${got.excluded.map((e) => e.label).join(' · ')})`
             : ''}
         </Text>
+        {/* ★눈금의 한계 — 서버가 쥔 문장(`unitNote`)을 그대로 세운다(§16).
+            ⚠`unitKey` 가 `native` 로 돌아오면 **환산이 안 선 것**이다(배수를 못
+            읽었다). 손잡이는 `dv01` 인데 수는 계약수인 상태라, 그 사실을 말하지
+            않으면 읽는 사람이 원/bp 라고 믿는다. */}
+        {got.unitNote ? (
+          <Text as="p" font="legal" color="fgMuted">{got.unitNote}</Text>
+        ) : null}
         {/* ★구간의 2×2 집계 — 「요즘 무슨 장이었나」.
             **분모를 같이 적는다**(`counted`). 한쪽이 제자리인 날은 네 칸 어디도
             아니어서 넷의 합이 구간 봉 수보다 작고, 그걸 안 적으면 읽는 사람이
@@ -776,7 +813,7 @@ export function FlowPage() {
                 onHover={setHover}
               />
             ) : (
-              <FlowTable rows={got.sub} side={side} floor={got.rankFloor}
+              <FlowTable rows={got.sub} side={side} floor={got.rankFloor} unit={shown}
                 highlight={hover} onHover={setHover}
                 picked={got.series.daily?.key ?? null} onPick={setDaily} />
             )}
@@ -934,7 +971,7 @@ export function FlowPage() {
             </Text>
           </VStack>
           <Box paddingX={1} paddingBottom={1}>
-            <FlowTable rows={got.sub} side={side} floor={got.rankFloor}
+            <FlowTable rows={got.sub} side={side} floor={got.rankFloor} unit={shown}
               highlight={hover} onHover={setHover}
               picked={got.series.daily?.key ?? null} onPick={setDaily} />
           </Box>

@@ -152,13 +152,27 @@ export interface FlowMatrixBoard {
   };
 }
 
+/** 눈금 둘. `native` 가 원천(계약·백만원), `dv01` 이 덧눈금(원/bp).
+ *
+ *  금리 데스크는 흐름을 계약수로 적지 않는다 — 3년 한 계약 28,562원/bp 와
+ *  10년 84,134 는 **2.95배** 다르므로 환산 없이는 만기물을 더할 수 없다. */
+export type FlowUnit = 'native' | 'dv01';
+
 export interface FlowBoard {
   side: FlowSide;
   tenor: FlowTenor | null;
   /** ★**둘이 다른 것이 정상**이다 — 현물이 늦게 들어온다 [OWNER 2026-10-19].
    *  화면이 둘을 따로 적어야 하고, 어긋나는 것은 경고가 아니다. */
   asof: { fut: string | null; cash: string | null };
+  /** 화면이 쓸 단위 낱말 — 「계약」·「백만원」·「원/bp」. */
   unit: string;
+  /** ★어느 눈금인가. ⚠`unit='dv01'` 로 물었는데 배수를 못 읽으면 서버가
+   *  **원단위로 떨어지고** 이 값이 `native` 로 온다 — 화면이 손잡이를 그 자리로
+   *  되돌려야 읽는 사람이 원/bp 라고 믿지 않는다. 없을 수 있다(옛 서버). */
+  unitKey?: FlowUnit;
+  /** 그 눈금의 한계 한 줄(환산 원천·커브 없는 구간·행렬은 금액 그대로).
+   *  원단위에서는 `null`. */
+  unitNote?: string | null;
   days: number;
   /** 현물면은 **빈 배열**이다 — 상위 집합이 없으니 대조 칸도 없다. */
   top: FlowTop[];
@@ -211,6 +225,8 @@ export interface FlowQuery {
   daily?: string | null;
   /** 행렬이 합할 마지막 봉 수(`SPAN_BARS`). 없거나 `Infinity` 면 전구간. */
   span?: number | null;
+  /** 눈금. 없으면 `native`(원천). */
+  unit?: FlowUnit;
 }
 
 /* ── 「발행」 면 (`backend/app/ktb_issuance.py`) ───────────────────────────── */
@@ -301,6 +317,8 @@ export function flowQueryString(q: FlowQuery): string {
   /* `Infinity`(구간 「전체」)는 **안 싣는다** — 숫자가 아니라 `span=Infinity` 라는
      글자로 나가서 서버가 거절한다. 빼면 서버 기본이 전구간이라 뜻이 같다. */
   if (q.span != null && Number.isFinite(q.span)) parts.push(`span=${q.span}`);
+  /* 기본값은 **안 싣는다** — 캐시 열쇠를 같게 두려고(옛 주소와 한 글자도 안 갈린다). */
+  if (q.unit && q.unit !== 'native') parts.push(`unit=${q.unit}`);
   return parts.join('&');
 }
 

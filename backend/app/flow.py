@@ -122,6 +122,49 @@
    2×2 의 네 이름은 **가격 기준**으로 정의된 외부 관례이고, 여기서 뒤집으면 그
    관례를 읽어 온 사람이 거꾸로 읽는다. `basis` 가 부호 규약을 적는다.
 
+## ★DV01 환산 — 「누가 듀레이션을 가져갔나」 [OWNER 2026-10-21]
+
+금리 데스크는 흐름을 **계약수로 적지 않는다.** 3년 1만 계약과 10년 1만 계약은
+다른 물건이라, 환산 없이는 만기물을 **더하거나 비교할 수 없다.** 그래서 눈금을
+하나 더 둔다 — `unit='dv01'` 이면 모든 주체 계열이 **원/bp** 로 선다.
+
+실측(2026-10-20 벤더 내재금리 3.909%·4.189%): 3년 한 계약 **28,562원/bp** ·
+10년 한 계약 **84,134원/bp** — **2.95배**다. 계약수를 그냥 더하면 10년 한 계약을
+3년 한 계약과 같게 센다. 현물도 같다(백만원 액면당): 2Y 191 · 3Y 281 · 5Y 449 ·
+10Y 811 · 20Y 1,345 · 30Y 1,683 · 50Y 2,060원/bp — **끝과 끝이 10.8배**다.
+
+⚠**원단위를 지우지 않는다.** `unit='native'`(기본)이 계약·백만원이고 그것이
+원천의 수다. DV01 은 **덧눈금**이다 — 환산이 섞이면 원천과 대조할 수 없다.
+
+### 금리는 **어디서** 오나 — 둘이 다르다
+
+- **선물**: 벤더 내재금리(`futures.load().series[t].implied`). 축이 이 모듈의
+  선물 축과 **같다**(둘 다 2,646봉 · 2016-01-04~2026-10-20). ⚠**조정가에서
+  역산하지 않는다** — 그렇게 재던 값이 최대 182bp 틀린 기록이 있다
+  (`futures.dv01_of` 머리).
+- **현물**: `creditmatrix` 의 **국고채 커브**(`curve_points`+`interp`).
+  ⚠**단위가 소수다**(0.03835 = 3.835%) — `%` 를 받는 PVBP 에 넣기 전에 ×100 한다.
+  이 리포가 단위로 세 번 틀린 자리라 시험이 그 환산을 직접 잰다.
+
+### PVBP 가 **둘**인 까닭 — 선물과 현물은 다른 물건이다
+
+선물은 KRX **5% 합성채** 이론가가 규약이라 `futures.dv01_of`(=`synth_pvbp`)를
+그대로 쓴다. 현물에 같은 것을 쓰면 **안 된다** — 현물은 실제 쿠폰·실제 가격이다.
+그래서 현물은 **par 채권 PVBP**(`par_pvbp`)를 쓴다: 쿠폰 = 시장금리, 반년 지급,
+가격 100. 유통 중 채권을 par 로 근사하는 것은 흐름을 듀레이션으로 옮기는
+표준 관례이고, 한 바구니가 품은 종목들의 쿠폰이 흩어져 있어 그 이상 정밀하게
+갈 근거가 없다.
+
+⚠**근사인 것 셋을 적는다.**
+
+1. **바구니 이름을 만기로 쓴다.** 「10년물」 바구니에는 온더런 10년과 잔존 8년대
+   종목이 같이 있다 — 라벨 연수로 재면 그만큼 어긋난다.
+2. **`50Y` 는 커브 밖이다.** 국고 커브가 30Y 에서 끝나 `interp` 가 평평하게
+   늘린다. 금리는 그렇게 큰 영향이 아니지만(PVBP 는 만기가 주로 정한다)
+   **적어 둔다**.
+3. **`물가`(물가채)는 명목 커브로 잰다.** 실질금리가 아니라서 수준이 다르지만
+   듀레이션 눈금으로는 가깝다. 바구니를 지우는 것보다 적어 두는 것이 낫다.
+
 ## 현물 만기물 분리 · PD 인수 · 이동평균 [OWNER 2026-10-19 추가]
 
 ① **현물은 만기물로 갈린다.** `ktb_investor` 는 종목(isin)별이고 종목의 만기물은
@@ -223,6 +266,19 @@ CASH_OTHER = "기타"
 #: 전 표본 순매수의 88%(134.4조 중 118.0조)를 담는데 그 움직임이 분기 눈금이라,
 #: 60일까지로는 가속·감속이 잡음에 묻힌다(아래 §감마의 실측).
 MA_WINDOWS = (0, 5, 20, 60, 120)
+#: ★국채선물 한 계약의 액면(원). KRX 3년·10년 **둘 다 1억**이다.
+FUT_CONTRACT_FACE = 100_000_000.0
+#: 현물 순매수 한 단위의 액면(원) — 원천이 백만원이다.
+CASH_FACE_UNIT = 1_000_000.0
+#: 바구니 이름 → 연수. `물가` 는 10년으로 둔다(발행이 10년·20년이고 10년이 다수).
+#: ⚠근사다(§DV01 ⚠1·3). 바꿀 때는 그 절도 같이 고칠 것.
+CASH_TENOR_YEARS: dict[str, float] = {
+    "2Y": 2.0, "3Y": 3.0, "5Y": 5.0, "10Y": 10.0,
+    "20Y": 20.0, "30Y": 30.0, "50Y": 50.0, "물가": 10.0,
+}
+#: 눈금 둘. `native` 가 원천(계약·백만원)이고 `dv01` 이 덧눈금(원/bp).
+UNITS = ("native", "dv01")
+
 #: PD 인수를 받는 두 주체(§현물 만기물 ②).
 PD_COLS = ("financial_investment", "bank")
 
@@ -245,6 +301,12 @@ class FlowData:
     #: ⚠**기본값이 빈 사전**이다 — 시험 픽스처가 이 필드 없이 `FlowData` 를 짓고,
     #: 없으면 2×2 를 **안 싣는다**(지어내지 않는다).
     mkt: dict[str, dict[str, list[float]]] = field(default_factory=dict)
+    #: ★DV01 배수 — 만기 → 봉마다 **한 계약당 원/bp**. 축은 `fut` 와 같다.
+    futDv01: dict[str, list[float]] = field(default_factory=dict)
+    #: ★DV01 배수 — 바구니 → 봉마다 **백만원당 원/bp**. 축은 `cash` 와 같다.
+    #: ⚠`ALL` 은 **없다** — 바구니마다 환산한 뒤 더해야 하기 때문이다
+    #: (`cash_dv01_sum`). 여기에 `ALL` 을 두면 틀린 길이 생긴다.
+    cashDv01: dict[str, list[float]] = field(default_factory=dict)
 
 
 # ── 순수 산술 (DB 를 모른다) ────────────────────────────────────────────────
@@ -307,6 +369,114 @@ def oi_tally(close: list[float], oi: list[float], span: int | None = None,
         if n is not None:
             tally[n] += 1
     return names, tally
+
+
+def align_forward(dates: list[str], src: list[tuple[str, float]]) -> list[float]:
+    """원천 (날짜, 값) 을 **이 축의 날짜마다** 앞으로 채워 맞춘다.
+
+    두 원천의 영업일 달력이 완전히 같지 않아서 필요하다(현물이 하루 늦게 들어오는
+    그 성질과 같은 계열). 규약 둘:
+
+    - 그 날 값이 없으면 **직전 값**을 쓴다(앞 채움). 금리는 계단이 아니지만
+      하루 이월의 오차는 DV01 눈금에서 무시할 수준이다.
+    - 축의 **첫 봉보다 원천이 늦게 시작하면** 그 앞 구간은 `0.0` 이다 — 지어내지
+      않는다. 0 이면 그 봉이 DV01 합에 안 들어간다.
+
+    ⚠⚠**그 구간은 현물에 있다** [실측 2026-10-21 — 내가 「없다」고 적었고 틀렸다].
+    현물 축은 **2015-01-02** 부터인데 국고 커브는 **2020-01-02** 부터다 →
+    **128봉(7.1%) · 2015-01-02~2015-07-10** 이 배수 0 이다. 선물은 **0봉**이다
+    (벤더 내재금리가 축과 같은 날 시작한다). 기본 구간이 250봉이라 눈에 거의 안
+    닿지만, 「전체」로 열면 그 앞머리가 DV01 에서 비어 보인다 — 페이로드의
+    `unitNote` 가 그 사실을 적는다.
+    """
+    out: list[float] = []
+    j, cur = 0, 0.0
+    for d in dates:
+        while j < len(src) and src[j][0] <= d:
+            cur = src[j][1]
+            j += 1
+        out.append(cur)
+    return out
+
+
+def scale_series(cols: dict[str, list[int]], scale: list[float],
+                 ) -> dict[str, list[float]]:
+    """주체 계열 전부를 **봉마다 다른 배수**로 민다. 길이는 짧은 쪽에 맞춘다."""
+    n = min(len(scale), *(len(v) for v in cols.values())) if cols else 0
+    return {k: [v[i] * scale[i] for i in range(n)] for k, v in cols.items()}
+
+
+def cash_dv01_sum(buckets: dict[str, dict[str, list[int]]],
+                  yields: dict[str, list[float]]) -> dict[str, list[float]]:
+    """현물 **전체** 의 DV01 — ★바구니마다 환산한 **뒤에** 더한다.
+
+    ⚠액면 합(`ALL`)에 배수 하나를 곱하면 **틀린다.** 2년물 1조와 30년물 1조는
+    액면이 같고 DV01 이 8.8배 다르다(실측: 백만원당 191 대 1,683원/bp). 그래서
+    바구니별 환산이 먼저다.
+
+    `기타`(만기물을 못 푼 종목)는 연수가 없어 배수가 0 이고, 그래서 **DV01 합에
+    안 들어간다** — 지어내지 않는다. 화면이 그 사실을 `excluded` 로 적는다.
+    """
+    out: dict[str, list[float]] = {}
+    for b, cols in buckets.items():
+        sc = yields.get(b)
+        if not sc:
+            continue
+        part = scale_series(cols, sc)
+        for k, v in part.items():
+            cur = out.setdefault(k, [0.0] * len(v))
+            for i in range(min(len(cur), len(v))):
+                cur[i] += v[i]
+    return out
+
+
+def par_pvbp(y_pct: float, years: float, freq: int = 2) -> float:
+    """**par 채권**의 PVBP — 액면 100 기준, 양수(1bp 오르면 이만큼 싸진다).
+
+    쿠폰 = 시장금리, 가격 = 100, 반년 지급(국고채 규약). 닫힌형이다:
+
+        PVBP = (1 − (1+y/f)^(−n)) / y  ×  100 / 10,000
+
+    `(1 − (1+y/f)^-n)/y` 가 par 채권의 **수정듀레이션 × 가격/100** 이다
+    (par 이므로 가격이 100 이고 Macaulay 와 수정의 차이가 할인 한 번뿐이다).
+
+    ⚠**선물에 쓰지 말 것.** 선물은 KRX 5% 합성채가 규약이고 그쪽은
+    `futures.dv01_of` 가 진다(§DV01 §PVBP 가 둘인 까닭).
+
+    `y_pct` 는 **퍼센트**다(3.835, 0.03835 가 아니다) — `creditmatrix` 는 소수를
+    주므로 호출부가 ×100 해서 넣는다. 금리가 0 이면 듀레이션이 만기와 같아진다.
+    """
+    if years <= 0:
+        return 0.0
+    y = y_pct / 100.0
+    n = years * freq
+    if abs(y) < 1e-12:
+        dur = years                      # 극한: 할인이 없으면 듀레이션 = 만기
+    else:
+        dur = (1.0 - (1.0 + y / freq) ** (-n)) / y
+    return dur * 100.0 / 10_000.0
+
+
+def fut_dv01_per_contract(y_pct: float, tenor: str) -> float:
+    """국채선물 **한 계약**의 DV01(원/bp). 금리는 **벤더 내재금리**다.
+
+    실측 2026-10-20: 3Y **28,562** · 10Y **84,134** — **2.95배**다. 계약수를 그냥
+    더하면 10년 한 계약을 3년 한 계약과 같게 센다.
+    """
+    from . import futures                      # 순환을 피해 함수 안에서 든다
+    return futures.dv01_of(FUT_CONTRACT_FACE, y_pct, tenor)
+
+
+def cash_dv01_per_unit(y_pct: float, bucket: str) -> float:
+    """현물 순매수 **한 단위(백만원 액면)**의 DV01(원/bp).
+
+    바구니 이름을 만기로 쓴다(§DV01 ⚠1). 모르는 바구니는 0 이다 — 지어내지 않고,
+    0 이면 그 바구니가 DV01 합에 **안 들어간다**(`기타` 가 그렇다).
+    """
+    years = CASH_TENOR_YEARS.get(bucket, 0.0)
+    if years <= 0:
+        return 0.0
+    return CASH_FACE_UNIT / 100.0 * par_pvbp(y_pct, years)
 
 
 def percentile_of(hist: list[int], today: int) -> float | None:
@@ -783,9 +953,65 @@ def _fetch() -> FlowData:
         fut[tenor] = (dates, cols)
         mkts[tenor] = mk
 
-    return FlowData(mkt=mkts, fut=fut, cash=assemble_cash(
+    cash = assemble_cash(
         [(_iso(r[0]), str(r[1]), [int(r[2 + i] or 0) for i in range(len(CASH_COLS))])
-         for r in crows]), watermark=watermark())
+         for r in crows])
+    return FlowData(mkt=mkts, fut=fut, cash=cash, watermark=watermark(),
+                    futDv01=_fut_dv01_scales(fut),
+                    cashDv01=_cash_dv01_scales(cash))
+
+
+def _fut_dv01_scales(fut: dict[str, tuple[list[str], dict[str, list[int]]]],
+                     ) -> dict[str, list[float]]:
+    """만기마다 **한 계약당 원/bp** 를 봉마다. 금리는 **벤더 내재금리**다.
+
+    ⚠실패하면 **빈 사전**이다 — DV01 눈금이 안 서고 원단위는 그대로 선다.
+    환산을 못 하는 날에 추측으로 수를 내보내는 것보다 눈금 하나를 접는 쪽이 낫다.
+    """
+    from . import futures
+    try:
+        fd = futures.load()
+    except Exception:                                   # noqa: BLE001
+        return {}
+    out: dict[str, list[float]] = {}
+    for tenor, (dates, _cols) in fut.items():
+        fs = fd.series.get(tenor)
+        if fs is None:
+            continue
+        src = [(d.isoformat(), fut_dv01_per_contract(y, tenor))
+               for d, y in zip(fs.dates, fs.implied) if y is not None]
+        if src:
+            out[tenor] = align_forward(dates, src)
+    return out
+
+
+def _cash_dv01_scales(cash: dict[str, tuple[list[str], dict[str, list[int]]]],
+                      ) -> dict[str, list[float]]:
+    """바구니마다 **백만원당 원/bp** 를 봉마다. 커브는 `creditmatrix` 국고채다.
+
+    ⚠`creditmatrix` 는 **소수**를 준다(0.03835) — `par_pvbp` 는 `%` 를 받으므로
+    ×100 한다. 이 리포가 단위로 세 번 틀린 자리라 시험이 이 환산을 직접 잰다.
+    ⚠`ALL` 과 `기타` 는 **안 넣는다** — 전자는 바구니 합이 져야 하고(§환산)
+    후자는 연수가 없다.
+    """
+    from . import creditmatrix as cmx
+    try:
+        m = cmx.load()
+    except Exception:                                   # noqa: BLE001
+        return {}
+    curves = [(d.isoformat(), cmx.curve_points(m, "KTB", i))
+              for i, d in enumerate(m.dates)]
+    out: dict[str, list[float]] = {}
+    for bucket, (dates, _cols) in cash.items():
+        years = CASH_TENOR_YEARS.get(bucket, 0.0)
+        if years <= 0:
+            continue
+        #: ×100 — 소수를 퍼센트로. 이 한 줄이 §DV01 의 그 단위 함정이다.
+        src = [(d, cash_dv01_per_unit(cmx.interp(pts, years) * 100.0, bucket))
+               for d, pts in curves if pts]
+        if src:
+            out[bucket] = align_forward(dates, src)
+    return out
 
 
 def assemble_cash(rows: list[tuple[str, str, list[int]]],
@@ -841,7 +1067,7 @@ def reset_cache() -> None:
 
 def board(side: str = "fut", tenor: str = "3Y", pd_share: float | None = None,
           ma: int = 0, daily: str | None = None,
-          span: int | None = None) -> dict[str, Any]:
+          span: int | None = None, unit: str = "native") -> dict[str, Any]:
     """한 면 — 대분류 대조 + 세분 순위 + 누적·일별 계열(+이동평균).
 
     산술은 **여기 하나**다(§16) — 화면은 읽고 칠하기만 한다.
@@ -861,17 +1087,31 @@ def board(side: str = "fut", tenor: str = "3Y", pd_share: float | None = None,
         raise FlowError(f"이동평균 창은 {'·'.join(str(w) for w in MA_WINDOWS[1:])}일 중 하나예요: {ma}")
     if pd_share is not None and not (0.0 <= pd_share <= 1.0):
         raise FlowError(f"PD 배분은 0~1 사이예요: {pd_share}")
+    if unit not in UNITS:
+        raise FlowError(f"모르는 눈금이에요: {unit} (native·dv01)")
     d = load()
     if side == "fut":
-        return _fut_board(d, tenor, ma=ma, daily=daily, span=span)
-    return _cash_board(d, tenor, pd_share=pd_share, ma=ma, daily=daily, span=span)
+        return _fut_board(d, tenor, ma=ma, daily=daily, span=span, unit=unit)
+    return _cash_board(d, tenor, pd_share=pd_share, ma=ma, daily=daily,
+                       span=span, unit=unit)
 
 
 def _series_row(key: str, label: str, group: str, dates: list[str],
-                vals: list[int]) -> dict[str, Any]:
-    """한 주체의 오늘·구간·편차. **창은 오늘을 뺀** 직전 `WINDOW` 봉이다."""
+                vals: list[int], native: list[int] | None = None) -> dict[str, Any]:
+    """한 주체의 오늘·구간·편차. **창은 오늘을 뺀** 직전 `WINDOW` 봉이다.
+
+    ★`native` 는 **하한을 재는 계열**이다 [2026-10-21]. 화면 눈금이 DV01 이면
+    `vals` 는 원/bp 인데 `RANK_FLOOR` 는 계약·백만원이라, 같은 계열로 재면 하한이
+    **조용히 무력해진다**(개인의 일평균 24,154백만원이 ×300원/bp 하면 7백만원/bp
+    이고 그건 40,000 을 한참 넘는다).
+
+    「순위에 들 만큼 큰 주체인가」는 **표시 눈금과 무관한 성질**이므로 언제나
+    날것으로 잰다. 안 주면 `vals` 가 날것이라는 뜻이다.
+    """
     today = vals[-1] if vals else 0
-    sigma, avg = sigma_of(vals[:-1], today)
+    base = native if native is not None else vals
+    sigma, _ = sigma_of(vals[:-1], today)
+    _s, avg = sigma_of(base[:-1], base[-1] if base else 0)
     #: ★순위 키. σ 는 **남긴다** — 읽는 사람이 이미 보는 수를 지우지 않는다.
     pct = percentile_of(vals[:-1], today)
     year = dates[-1][:4] if dates else ""
@@ -889,14 +1129,21 @@ def _series_row(key: str, label: str, group: str, dates: list[str],
 
 
 def _fut_board(d: FlowData, tenor: str, ma: int = 0,
-               daily: str | None = None, span: int | None = None) -> dict[str, Any]:
-    dates, cols = d.fut[tenor]
+               daily: str | None = None, span: int | None = None,
+               unit: str = "native") -> dict[str, Any]:
+    dates, raw = d.fut[tenor]
     if not dates:
         raise FlowError(f"선물 {tenor} 자료가 없어요.")
+    #: ★DV01 눈금 — 배수가 없으면 **원단위로 떨어진다**(지어내지 않는다).
+    scale = d.futDv01.get(tenor) if unit == "dv01" else None
+    cols: dict[str, Any] = scale_series(raw, scale) if scale else raw
+    unit_word, unit_note = _unit_words(unit, bool(scale), "계약", dates, scale)
     last = {k: v[-1] for k, v in cols.items()}
 
     #: 함정 ① — 항등식이 깨지면 **세지 않고 말한다**. 조용히 더하면 이중계상이다.
-    err = inst_identity_error(last)
+    #: ⚠**날것으로 잰다.** 이건 원천 무결성 검사이고 화면 눈금과 무관하다 —
+    #: 환산값으로 재면 오차가 원/bp 로 적히고 부동소수 잡음까지 섞인다.
+    err = inst_identity_error({k: v[-1] for k, v in raw.items()})
     excluded: list[dict[str, str]] = [{
         "id": FUT_DEAD, "label": "정부",
         "why": "전 구간 0 이라 뺐어요 — 죽은 칼럼이에요.",
@@ -910,7 +1157,8 @@ def _fut_board(d: FlowData, tenor: str, ma: int = 0,
     top = [{"key": k, "label": lab, "value": last[k]} for k, lab in FUT_TOP]
     top.append({"key": "ETC", "label": "기타", "value": last["ETC"]})
     sub = rank_rows(
-        [_series_row(k, lab, "기관계 세분", dates, cols[k]) for k, lab in FUT_SUB],
+        [_series_row(k, lab, "기관계 세분", dates, cols[k], raw[k])
+         for k, lab in FUT_SUB],
         RANK_FLOOR,
     )
     #: 그림에 올릴 계열 — 외국인 + 세분 상위 셋. **최대 넷**이다(화면 제약).
@@ -919,7 +1167,9 @@ def _fut_board(d: FlowData, tenor: str, ma: int = 0,
     return {
         "side": "fut", "tenor": tenor,
         "asof": {"fut": dates[-1], "cash": cash_dates[-1] if cash_dates else None},
-        "unit": "계약",
+        "unit": unit_word,
+        "unitKey": unit if scale else "native",
+        "unitNote": unit_note,
         "days": len(dates),
         "top": top,
         "sub": sub,
@@ -942,7 +1192,7 @@ def _fut_board(d: FlowData, tenor: str, ma: int = 0,
 
 def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
                 ma: int = 0, daily: str | None = None,
-                span: int | None = None) -> dict[str, Any]:
+                span: int | None = None, unit: str = "native") -> dict[str, Any]:
     dates, cols = d.cash[tenor]
     if not dates:
         raise FlowError("현물 자료가 없어요.")
@@ -973,8 +1223,39 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
                         if pending else "")),
         }
 
+    #: ★DV01 눈금 — **PD 인수를 더한 뒤에** 환산한다. PD 는 액면 공급이라
+    #: 액면 위에서 더해야 하고, 환산을 먼저 하면 액면에 원/bp 를 더하게 된다.
+    #:
+    #: `ALL` 은 ★**바구니마다 환산한 뒤 더한다**(`cash_dv01_sum`) — 액면 합에 배수
+    #: 하나를 곱하면 틀린다(2년물 1조와 30년물 1조는 DV01 이 8.8배 다르다).
+    #: ⚠그래서 `ALL` 에서는 **PD 인수가 반영되지 않는다** — PD 는 고른 만기물의
+    #: `cols` 에 더해지고, DV01 합은 `d.cash` 의 날것 바구니에서 다시 쌓는다.
+    #: 둘을 같이 쓰려면 바구니마다 PD 를 나눠야 하는데 그 배분이 자료에 없다.
+    #: 하한을 잴 **날것** — 환산 전에 붙잡는다(PD 인수까지는 반영된 액면이다).
+    native = cols
+    dv_scale: list[float] | None = None
+    if unit == "dv01":
+        if tenor == "ALL":
+            buckets = {b: c for b, (dts, c) in d.cash.items()
+                       if b in CASH_TENOR_YEARS and dts == dates}
+            got = cash_dv01_sum(buckets, d.cashDv01)
+            if got:
+                cols = got
+                #: 「비어 있는 앞머리」를 말할 배수 — 아무 바구니나 같은 구간이다.
+                dv_scale = next(iter(d.cashDv01.values()), None)
+        else:
+            dv_scale = d.cashDv01.get(tenor)
+            if dv_scale:
+                cols = scale_series(cols, dv_scale)
+    unit_word, unit_note = _unit_words(
+        unit, dv_scale is not None, "백만원", dates, dv_scale)
+    if unit_note and dv_scale is not None:
+        #: 행렬은 **금액** 질문이라 안 바꾼다 — 그 경계를 말로 못 박는다.
+        unit_note += " 왼쪽의 테너 × 주체 표는 금액(조·억) 그대로예요."
+
     rows = rank_rows(
-        [_series_row(c, lab, "국고채 현물", dates, cols[c]) for c, lab in CASH_COLS],
+        [_series_row(c, lab, "국고채 현물", dates, cols[c], native[c])
+         for c, lab in CASH_COLS],
         CASH_RANK_FLOOR,
     )
     picked = [r["key"] for r in rows if r["ranked"]][:4]
@@ -998,7 +1279,9 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
     return {
         "side": "cash", "tenor": tenor,
         "asof": {"fut": None, "cash": dates[-1]},
-        "unit": "백만원",
+        "unit": unit_word,
+        "unitKey": unit if dv_scale else "native",
+        "unitNote": unit_note,
         "days": len(dates),
         #: 현물엔 상위 집합이 없다 — 대분류 대조 칸이 **없는 것이 맞다**.
         "top": [],
@@ -1020,6 +1303,28 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
         "excluded": excluded,
         "basis": basis,
     }
+
+
+def _unit_words(unit: str, ok: bool, native: str, dates: list[str],
+                scale: list[float] | None) -> tuple[str, str | None]:
+    """화면이 쓸 **단위 낱말**과 그 눈금에 붙는 경고 한 줄.
+
+    ★`unit='dv01'` 인데 배수가 없으면 **원단위로 떨어지고 그 사실을 말한다** —
+    조용히 떨어지면 읽는 사람이 원/bp 라고 믿고 계약수를 읽는다.
+    """
+    if unit != "dv01":
+        return native, None
+    if not ok:
+        return native, ("DV01 눈금을 세울 금리를 못 읽어서 "
+                        f"{native} 단위로 보여 드려요.")
+    #: 배수가 0 인 앞머리 — 커브가 없는 구간이다. **봉 수와 날짜를 적는다.**
+    blank = [d for d, v in zip(dates, scale or []) if v == 0.0]
+    note = ("원/bp 눈금이에요 — 만기물마다 DV01 로 환산해서 더했어요. "
+            "선물은 벤더 내재금리, 현물은 국고채 커브로 재요.")
+    if blank:
+        note += (f" ⚠{blank[0]}~{blank[-1]} 의 {len(blank):,}봉은 국고 커브가 "
+                 "없어서 0 이에요 — 그 구간은 이 눈금에서 비어 있어요.")
+    return "원/bp", note
 
 
 def _oi_block(mk: dict[str, list[float]] | None, dates: list[str],
