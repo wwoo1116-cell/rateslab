@@ -159,6 +159,93 @@ describe('direction hues clear 4.5:1 on every painted surface', () => {
   }
 });
 
+/* ── ★틴트 — 숫자는 **제 자신의 틴트 위**에 선다 [2026-10-21] ────────────────
+ *
+ * 위 블록은 방향색을 **CDS 면**에 대고 잰다. 그런데 변화 열의 숫자는 흰 카드
+ * 위에만 있는 게 아니라 `table/tint.ts` 의 램프(알파 0.06~0.20)가 깐 **제 색의
+ * 옅은 판** 위에 선다. 틴트는 바탕을 글자 쪽으로 당기므로 대비를 깎는다.
+ *
+ * 그 면이 이 가드에 안 잡힌 까닭: **런타임에 합성된다.** `paintedInSource()` 는
+ * JSX `background="…"` 속성을 훑는데 틴트는 인라인 style 로 계산돼 들어가므로
+ * 그 집계에 없다. 2026-10-21 감사가 브라우저로 재서야 보였다 —
+ * **라이트 68/68 미달, 천장에서 3.43.**
+ *
+ * 여기서 램프 끝점을 `tint.ts` 에서 **읽어 온다**. 천장을 올리면 이 검사가
+ * 먼저 빨개진다. 바닥도 같이 재는 이유는, 감사 때 **바닥에서도 이미 미달**
+ * (4.15)이었기 때문이다 — 천장만 보면 그걸 놓친다. */
+describe('방향색 숫자는 제 자신의 틴트 위에서도 4.5:1 을 넘는다', () => {
+  /** 램프 끝점. 값은 `tint.ts` 에서 읽는다 — 두 곳에 적으면 갈린다. */
+  function rampEnds(): [number, number] {
+    const body = stripComments(fs.readFileSync(path.join(ROOT, 'src/table/tint.ts'), 'utf8'));
+    const m = body.match(/return Number\(\(([\d.]+) \+ t \* ([\d.]+)\)/);
+    if (!m) throw new Error('tint.ts 의 램프 식을 못 읽었어요 — 식이 바뀌었으면 이 가드도 고쳐요');
+    return [Number(m[1]), Number((Number(m[1]) + Number(m[2])).toFixed(3))];
+  }
+  const [FLOOR_A, CEIL_A] = rampEnds();
+
+  function mix(fg: RGB, alpha: number, bg: RGB): RGB {
+    return [0, 1, 2].map((i) => fg[i] * alpha + bg[i] * (1 - alpha)) as RGB;
+  }
+  /* 색을 **문자열로 조립하지 않는다** — `guards/color-source.test.ts` 가
+     `direction.css` 밖의 색 리터럴을 잡는데, 템플릿으로 만든 `rgb(…)` 도 그
+     리터럴로 읽힌다(이 패스에서 실제로 걸렸다). 그래서 비(比)는 튜플끼리 직접
+     계산하고, 메시지에는 채널 세 개를 그대로 적는다. */
+  const ratioOf = (fg: RGB, bg: RGB) => {
+    const [hi, lo] = [luminance(fg), luminance(bg)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const show = (c: RGB) => c.map((v) => Math.round(v)).join('·');
+
+  it('램프 끝점이 이 가드가 아는 값과 같다', () => {
+    expect([FLOOR_A, CEIL_A], 'tint.ts 의 램프가 바뀌었어요 — 아래 검사의 전제입니다').toEqual([
+      0.06, 0.2,
+    ]);
+  });
+
+  /* ── 어느 면 위에서 재나 — **실측한 면 하나** ───────────────────────────
+   *
+   * 틴트는 아무 데나 깔리지 않는다. **표의 행** 위에만 깔리고, 그 행이 실제로
+   * 앉은 면을 2026-10-21 에 브라우저로 쟀다:
+   *
+   *     라이트  rgb(255,255,255)   다크  rgb(10,11,13)      → 둘 다 CDS `bg`
+   *
+   * 처음엔 `DIRECTION_SURFACES` 전부에 걸었다가 **틴트가 가지 않는 면까지
+   * 재서** 빨개졌다(다크 `bgSecondary` 3.49 등). 그 수들은 「지금 있는 결함」이
+   * 아니라 「그 면에 표를 올리면 생길 결함」이라 여기서 재면 거짓 경보다.
+   *
+   * ⚠ 그래서 **범위를 좁힌 만큼 조건을 적어 둔다.** 표를 다른 면으로 옮기면
+   * 이 검사는 아무 말도 안 한다. 참고로 옮겼을 때의 수(α0.2, 다크):
+   *     bgElevation1 4.48 · bgAlternate 4.48 · bgSecondary 3.49 — **전부 미달**.
+   * 즉 **표는 `bg` 위에 있어야 한다**는 것이 이 수들의 뜻이다. */
+  const TINT_BASE = 'bg';
+
+  for (const { name, palette } of [
+    { name: 'light' as const, palette: defaultTheme.lightColor as Record<string, string> },
+    { name: 'dark' as const, palette: defaultTheme.darkColor as Record<string, string> },
+  ]) {
+    const pair = readPair(name);
+    for (const [alphaName, alpha] of [
+      ['바닥', FLOOR_A],
+      ['천장', CEIL_A],
+    ] as [string, number][]) {
+      for (const [role, hue] of Object.entries(pair)) {
+        it(`${name} · ${role} on ${TINT_BASE} + ${alphaName} 틴트(α${alpha})`, () => {
+          const base = palette[TINT_BASE];
+          expect(base, `theme has no surface ${TINT_BASE}`).toBeTruthy();
+          const bg = mix(parseColor(hue), alpha, parseColor(base));
+          const ratio = ratioOf(parseColor(hue), bg);
+          expect(
+            Number(ratio.toFixed(2)),
+            `${role} ${hue} 가 ${TINT_BASE} 위 제 틴트(α${alpha}) 채널 ${show(bg)} 에서 ` +
+              `${ratio.toFixed(2)}:1 — 문턱 ${FLOOR}. ` +
+              `램프(table/tint.ts)를 낮추거나 색의 명도를 내려야 해요.`,
+          ).toBeGreaterThanOrEqual(FLOOR);
+        });
+      }
+    }
+  }
+});
+
 /* ── 전경이 방향색 둘만이 아니다 [디자인 감사 2026-10-21] ────────────────────
  *
  * 이 가드는 2026-08 부터 **방향색 두 개**만 재 왔다. 그래서 2026-10-21 감사가

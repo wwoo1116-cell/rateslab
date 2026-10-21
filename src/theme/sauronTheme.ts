@@ -135,12 +135,36 @@ export const sauronTheme: ThemeConfig = {
  * Both schemes clear the floor on all three surfaces below; the failure is
  * light-only.
  */
-export const DIRECTION_SURFACES = ['bg', 'bgElevation1', 'bgElevation2'] as const;
+/* ── ★거부 목록이 비었다 [OWNER 2026-10-21 — 라이트 쌍 명도 −10pt] ───────────
+ *
+ * 위 문단이 「`bgAlternate` 에서 4.19 / 4.31 로 떨어지니 그 면에는 부호 있는
+ * 숫자를 못 올린다」로 **면을 거부**했다. 그 거부는 **옛 쌍의 성질**이었다.
+ *
+ * 2026-10-21 에 라이트 쌍이 틴트 위 문턱을 넘기려고 명도를 10pt 내려가면서
+ * (`direction.css` 의 「라이트 쌍을 한 번 더 민다」) 그 제약이 **같이 사라졌다**:
+ *
+ *     bgAlternate(#eef0f3) 위    up 4.08 → 5.67    down 3.98 → 5.47
+ *
+ * 그래서 두 면이 거부 목록에서 측정 목록으로 옮겨 간다. 거부 목록은 **빈 채로
+ * 남긴다** — 지우지 않는 이유는, 「CDS 가 면을 손보면 빨개진다」는 그 가드의
+ * 목적이 여전히 유효하고 다음에 거부할 면이 생기면 여기 적어야 하기 때문이다.
+ *
+ * ⚠ 제약이 풀렸다고 **줄무늬를 치라는 뜻은 아니다.** 위 문단의 「v1 은 줄무늬
+ * 없이 헤어라인으로 행을 가른다」는 디자인 판단이고 대비와 무관하게 그대로다. */
+export const DIRECTION_SURFACES = [
+  'bg',
+  'bgElevation1',
+  'bgElevation2',
+  'bgAlternate',
+  'bgSecondary',
+] as const;
 
 /** Surfaces CDS offers that v2 has measured and rejected for direction text.
  * Named so the guard can assert they STILL fail — if CDS ever lightens them,
- * that is news, and news should arrive as a failing test rather than silence. */
-export const REJECTED_FOR_DIRECTION = ['bgAlternate', 'bgSecondary'] as const;
+ * that is news, and news should arrive as a failing test rather than silence.
+ *
+ * 2026-10-21 에 비었다 — 위 블록의 까닭. */
+export const REJECTED_FOR_DIRECTION = [] as const as readonly string[];
 
 export type DirectionSurface = (typeof DIRECTION_SURFACES)[number];
 
