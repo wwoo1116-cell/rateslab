@@ -66,6 +66,38 @@ export interface FlowChart {
   /** ⚠**없을 수 있다** — 프런트가 서버보다 새로울 때(배포는 즉시, 백엔드는
    *  30분 주기 재기동). 읽는 쪽이 `?? []` 로 받는다. */
   mas?: (FlowSeries & { window: number; values: (number | null)[] })[];
+  /** ★선물 가격 — 흐름 혼자서는 안 읽힌다(외부 관례의 그 짝).
+   *
+   *  ⚠**수준에 뜻이 없다**(후방 조정 연속 계열) — 모양과 방향만 읽는 선이고,
+   *  그래서 **보조축**에 세우고 리드아웃에도 값을 안 싣는다. 현물 면은 `null`.
+   *  ⚠없을 수 있다(위 `mas` 와 같은 까닭). */
+  price?: FlowSeries | null;
+  /** ★미결제약정 — **시장 전체**다(주체별이 아니다). 현물 면은 `null`. */
+  oi?: FlowSeries | null;
+}
+
+/** 가격 × 미결제약정 2×2 — 선물 면에서만 선다(현물엔 미결제가 없다).
+ *
+ *  선물 데스크의 1차 판독이다. 같은 순매수가 **새 포지션**인지 **되돌림**인지를
+ *  순매수 혼자서는 말하지 못하고, 미결제의 방향이 그것을 가른다.
+ *
+ *  ⚠**시장의 말이고 한 주체의 포지션이 아니다** — 미결제는 시장 전체 한 수다.
+ *  「누가」는 옆의 순위표가 진다. */
+export interface FlowOi {
+  asof: string | null;
+  /** 가격 Δ. ⚠수준은 안 온다 — 뜻이 없어서 서버가 아예 안 싣는다. */
+  dClose: number;
+  dOi: number;
+  oi: number;
+  volume: number | null;
+  /** 네 이름 중 하나. **한쪽이 0 인 날은 `null`** — 「안 움직였다」는 네 칸
+   *  어디도 아니다. */
+  regime: string | null;
+  span: number | null;
+  /** 이름이 선 봉 수 = 집계의 **분모**. `span` 보다 작을 수 있다. */
+  counted: number;
+  tally: Record<string, number>;
+  priceNote: string;
 }
 
 /** 발행시장 인수 보정이 켜졌을 때의 사실. 꺼져 있으면 `null`. */
@@ -121,6 +153,9 @@ export interface FlowBoard {
   sub: FlowRow[];
   rankFloor: number;
   series: FlowChart;
+  /** ★가격 × 미결제 2×2 — **선물 면에서만** 선다. 현물은 `null`(미결제가 없다).
+   *  ⚠없을 수 있다(서버가 옛 코드일 때) — 읽는 쪽이 `?? null` 로 받는다. */
+  oi?: FlowOi | null;
   /** 현물 면의 테너 × (발행 + 주체) 표. 선물 면은 `null`. */
   matrix: FlowMatrixBoard | null;
   /** 그림에 선 주체의 **감마 한 줄** — 속도의 변화다. 선물 면은 `null`.

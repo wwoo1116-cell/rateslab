@@ -117,6 +117,14 @@ const INK = ['--sr-flow-1', '--sr-flow-2', '--sr-flow-3', '--sr-flow-4'] as cons
  *  믿을 만한 창**이라는 뜻이 덤으로 붙는다(Γ5·Γ20 은 잡음). */
 const MA_INK = [42, 60, 80, 100] as const;
 
+/** 가격 선의 끄는 열쇠 — 주체 열쇠와 **같은 사전**에 들어가므로 충돌하지 않게
+ *  접두사를 붙인다(주체 열쇠는 `FRGN`·`bank` 처럼 원천의 이름이다). */
+const PRICE_KEY = '__price';
+
+/** 2×2 를 **읽는 차례** — 가격 ↑ 둘, 그다음 가격 ↓ 둘. 표의 행 순서와 같다.
+ *  서버의 사전 순서에 기대지 않는다(JSON 사전은 차례를 약속하지 않는다). */
+const OI_ORDER = ['신규 매수', '숏 커버', '신규 매도', '롱 청산'] as const;
+
 /** 대분류 **순매수 대조** — 받은 쪽과 낸 쪽을 한 막대에 [2026-10-19].
  *
  * 숫자 넷을 나란히 적으면 「넷이 있다」로 읽히고, 이 면이 말하려는 「한쪽이 산
@@ -412,7 +420,15 @@ export function FlowPage() {
        열었더니 「Cannot read properties of undefined」로 면이 통째로 죽었다).
        새 칸은 **없을 수 있는 것**으로 다룬다. */
     const masS = (got.series.mas ?? []).map((m) => ({ ...m, values: m.values.slice(k) }));
-    return { dates, cum, daily: dailyS, mas: masS };
+    /* ★가격·미결제도 **같은 창**으로 자른다 — 따로 자르면 커서 하나가 두 날을
+       짚는다. 누적처럼 기준점을 빼지는 않는다(가격은 차이가 아니라 모양이다). */
+    const priceS = got.series.price
+      ? { ...got.series.price, values: got.series.price.values.slice(k) }
+      : null;
+    const oiS = got.series.oi
+      ? { ...got.series.oi, values: got.series.oi.values.slice(k) }
+      : null;
+    return { dates, cum, daily: dailyS, mas: masS, price: priceS, oi: oiS };
   }, [got, span]);
 
   /** 누적 선 넷. */
@@ -432,6 +448,26 @@ export function FlowPage() {
         beacon: i === 0,
       }));
   }, [win, fmtCum, off]);
+
+  /** ★누적 위의 **가격 선** — 흐름 혼자서는 안 읽힌다(외부 관례의 그 짝).
+   *
+   *  「샀는데 금리가 올랐다」가 「샀다」보다 훨씬 많은 것을 말한다. 보조축에
+   *  세우는 까닭 둘: 단위가 다르고(계약·원 대 가격), ⚠**수준에 뜻이 없어서**
+   *  (후방 조정 연속 계열) 축에 눈금이 붙어도 읽을 것이 없다.
+   *
+   *  색은 **참조색**이다 — 주체 넷이 `INK` 를 쓰고 있어 같은 색을 쓰면 한 그림에서
+   *  같은 색이 두 가지를 뜻한다. 가격은 주체가 아니라 **배경 사실**이다. */
+  const cumLines: TimeLine[] = useMemo(() => {
+    if (!win?.price || off[PRICE_KEY]) return lines;
+    return [...lines, {
+      id: PRICE_KEY,
+      values: win.price.values,
+      color: (p: LwPalette) => p.refCd,
+      width: 1 as const,
+      axis: 'aux' as const,
+      format: (v: number) => v.toFixed(2),
+    }];
+  }, [lines, win, off]);
 
   /** 일별 막대 하나 + 그 위의 이동평균 선(⑤). 막대는 **부호마다 색**이고,
    *  평균선은 계열색 셋째(바이올렛) — 빨강·파랑 막대 위에서 둘 다와 갈린다. */
@@ -494,6 +530,31 @@ export function FlowPage() {
       toggle: { on: !off[c.key], onToggle: () => toggle(c.key) },
     }));
   }, [win, at.i, fmtCum, off, toggle]);
+
+  /** ★2×2 — **없을 수 있다**(서버가 옛 코드일 때). `?? null` 로 받는다. */
+  const oi = got?.oi ?? null;
+
+  /** 가격 칸 — 스트립 맨 뒤. **값은 Δ 다, 수준이 아니다.**
+   *
+   *  수준을 적으면 누군가 그 수를 호가로 읽는다(후방 조정 연속 계열이라 수준에
+   *  뜻이 없다). Δ 는 뜻이 있고, 2×2 가 쓰는 바로 그 수다 — 한 화면에서 같은
+   *  사실이 두 자리에 같은 수로 선다.
+   *
+   *  칸을 스트립에 세우는 까닭은 **끄는 손잡이가 공짜로 딸려 오기** 때문이다. */
+  const priceSlot = useMemo<StripSlot[]>(() => {
+    if (!win?.price) return [];
+    const v = win.price.values;
+    const d = at.i > 0 ? (v[at.i] ?? 0) - (v[at.i - 1] ?? 0) : null;
+    return [{
+      key: PRICE_KEY,
+      label: '가격 Δ',
+      value: d == null ? '—' : `${d > 0 ? '+' : ''}${d.toFixed(2)}`,
+      color: 'var(--sr-ref-cd)',
+      chars: 6,
+      drop: 6,
+      toggle: { on: !off[PRICE_KEY], onToggle: () => toggle(PRICE_KEY) },
+    }];
+  }, [win, at.i, off, toggle]);
 
   /* ── 컨트롤 행 (등고 32) — 면·구간은 네 면이 같이 쓴다. 발행 면은 이 줄을
      그대로 받아 제 자리에 세운다(같은 손잡이가 같은 자리에 있어야 면을 넘겨도
@@ -616,6 +677,13 @@ export function FlowPage() {
           {got.pd && pdPctShown != null
             ? <Cond k="PD 인수" v={`금융투자 ${pdPctShown}% · 은행 ${100 - pdPctShown}%`} strong />
             : null}
+          {/* ★가격 × 미결제 2×2 — 선물 데스크의 1차 판독이다. 같은 순매수가
+              **새 포지션**인지 **되돌림**인지를 순매수 혼자서는 말하지 못한다.
+              ⚠`regime` 이 `null` 인 날이 있다(한쪽이 제자리) — 그 날은 칸을
+              아예 안 세운다. `—` 를 세우면 「자료가 없다」로 읽힌다. */}
+          {oi?.regime ? <Cond k="오늘" v={oi.regime} strong /> : null}
+          {oi ? <Cond k="미결제"
+            v={`${oi.oi.toLocaleString('ko-KR')} (${oi.dOi > 0 ? '+' : ''}${oi.dOi.toLocaleString('ko-KR')})`} /> : null}
           {/* ★「집계예요 — 새 판단이 아니에요.」를 여기 또 적지 않는다. 바로
               아랫줄의 `got.basis` 가 이미 그 말로 시작한다(`flow.py`) —
               같은 문장이 두 줄 연속으로 서 있었다(실측 2026-10-19). 기준을
@@ -629,6 +697,23 @@ export function FlowPage() {
             ? ` (뺀 것 — ${got.excluded.map((e) => e.label).join(' · ')})`
             : ''}
         </Text>
+        {/* ★구간의 2×2 집계 — 「요즘 무슨 장이었나」.
+            **분모를 같이 적는다**(`counted`). 한쪽이 제자리인 날은 네 칸 어디도
+            아니어서 넷의 합이 구간 봉 수보다 작고, 그걸 안 적으면 읽는 사람이
+            네 수를 더해 보고 「모자란다」고 의심한다.
+            그리고 ⚠**가격 선의 수준에 뜻이 없다**는 사실을 여기서 말한다 —
+            서버가 쥔 문장(`priceNote`)을 그대로 세운다(§16). */}
+        {oi && oi.counted > 0 ? (
+          <Text as="p" font="legal" color="fgMuted">
+            {`구간 ${oi.counted.toLocaleString('ko-KR')}일 — `}
+            {OI_ORDER.filter((n) => oi.tally[n] != null)
+              .map((n) => `${n} ${oi.tally[n]}`)
+              .join(' · ')}
+            {`. 가격이 오르면 미결제가 늘었나 줄었나가 「새로 샀나」와 「숏을
+              되돌렸나」를 가려요. `}
+            {oi.priceNote}
+          </Text>
+        ) : null}
       </VStack>
 
       {/* ★히어로를 **들어냈다** [OWNER 2026-10-20 — 「빼도되는건 빼보면서 가보자」].
@@ -806,14 +891,14 @@ export function FlowPage() {
             <VStack width="100%">
               <ChartReadoutStrip
                 date={at.date}
-                slots={slots}
+                slots={[...slots, ...priceSlot]}
                 ariaLabel={`${FACE[face].label} 누적 순매수 — 커서가 짚은 날의 값`}
               />
             </VStack>
             <Box className="sr-plot" flexGrow={1} flexBasis={0} minHeight={120}>
               <TimeChart
                 dates={win?.dates ?? []}
-                lines={lines}
+                lines={cumLines}
                 precision={0}
                 /* ★시간축을 **둘 다** 세운다. 쌓인 차트는 보통 위쪽 축을 숨기는데
                    (`hideTimeAxis`), 여기는 두 그림 사이에 제목 줄이 끼어 있어

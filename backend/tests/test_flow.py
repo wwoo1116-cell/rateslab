@@ -236,6 +236,17 @@ class Test페이로드:
         flow.set_data(None)
         ki.set_data(None)
 
+    def test_시장_칼럼이_없으면_2x2를_안_싣는다(self, injected):
+        """픽스처에는 `mkt` 가 없다 — 그러면 **지어내지 않는다**."""
+        b = flow.board("fut", "3Y")
+        assert b["oi"] is None
+        assert b["series"]["price"] is None and b["series"]["oi"] is None
+
+    def test_현물면은_2x2를_가지지_않는다(self, injected):
+        """현물엔 미결제가 없다. 열쇠는 있고 값이 `None` 이어야 화면이 추측을 안 한다."""
+        b = flow.board("cash", "ALL")
+        assert "oi" in b and b["oi"] is None
+
     def test_선물면이_대조와_순위를_같이_낸다(self, injected):
         b = flow.board("fut", "3Y")
         assert b["unit"] == "계약"
@@ -462,3 +473,42 @@ class Test라우트:
         # f-string 이라 소스에는 **자리표시자**가 남는다 — 값이 아니라 그것을 본다.
         assert "{FUT_TABLE}" in src and "{CASH_TABLE}" in src
         assert '"{f[0]}|{c[0]}"' in src.replace("f\"", '"')
+
+
+class Test미결제분해:
+    """가격 × 미결제약정 2×2 [2026-10-21 — 외부 관례를 옮긴 것].
+
+    재는 것은 **네 칸의 정의**와 **0 을 어디에도 붙이지 않는다**는 것이다. 가격이
+    제자리인 날을 한 칸에 넣으면 그 칸의 수가 거짓이 된다.
+    """
+
+    def test_네_칸은_금리가_아니라_가격으로_정의된다(self):
+        """뒤집으면 이 관례를 읽어 온 사람이 거꾸로 읽는다(모듈 머리 ⚠3)."""
+        assert flow.oi_regime(+1.0, +100) == flow.OI_NEW_LONG
+        assert flow.oi_regime(+1.0, -100) == flow.OI_SHORT_COVER
+        assert flow.oi_regime(-1.0, +100) == flow.OI_NEW_SHORT
+        assert flow.oi_regime(-1.0, -100) == flow.OI_LONG_LIQ
+
+    def test_한쪽이_0인_날은_네_칸_어디도_아니다(self):
+        assert flow.oi_regime(0.0, +100) is None
+        assert flow.oi_regime(+1.0, 0) is None
+        assert flow.oi_regime(0.0, 0) is None
+
+    def test_집계는_구간만_세고_분모를_같이_낸다(self):
+        close = [100.0, 101.0, 100.0, 100.0, 99.0]
+        oi = [1000.0, 1100.0, 1050.0, 1050.0, 1200.0]
+        names, tally = flow.oi_tally(close, oi)
+        #: 첫 봉은 차분이 없다 — 0 으로 채우면 없는 날을 센다.
+        assert names[0] is None
+        assert names[1] == flow.OI_NEW_LONG
+        assert names[2] == flow.OI_LONG_LIQ
+        assert names[3] is None
+        assert names[4] == flow.OI_NEW_SHORT
+        #: 다섯 봉 중 이름이 선 것은 셋이고, 이름 없는 봉은 분모에서도 빠진다.
+        assert sum(tally.values()) == 3
+        _n, last2 = flow.oi_tally(close, oi, span=2)
+        assert sum(last2.values()) == 1 and last2[flow.OI_NEW_SHORT] == 1
+
+    def test_첫_봉이_하나뿐이면_이름이_없다(self):
+        names, tally = flow.oi_tally([100.0], [1000.0])
+        assert names == [None] and sum(tally.values()) == 0

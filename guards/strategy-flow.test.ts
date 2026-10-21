@@ -131,11 +131,20 @@ describe('⑤ 리드아웃 스트립이 범례를 흡수한다', () => {
        주인공이 되면서 **일별 그림이 앞으로** 왔고(판정 → 일별 → 누적), 그 순간
        이 자가 거짓 양성을 냈다 — 스트립은 여전히 제 그림 위에 있는데.
        재는 것은 「첫 그림보다 앞」이 아니라 **「그 스트립이 설명하는 그림보다 앞」**
-       이다. 누적 그림은 `lines={lines}` 를 받는 쪽이다. */
+       이다.
+
+       ⚠⚠**두 번째로 샜다** [2026-10-21]. 그 고침이 누적 그림을 `lines={lines}`
+       **리터럴**로 집었는데, 가격 선이 들어오면서 변수가 `cumLines` 가 되자 이 자가
+       또 거짓 양성을 냈다 — 이 리포가 적어 둔 그 과다(`chart-stability` 가
+       `addLine(` 로 샌 것과 같다). 변수 이름은 **우연**이다.
+       그래서 이제 **의미**로 집는다: 누적 그림의 `accessibilityLabel` 은 「누적
+       순매수」로, 일별 쪽은 「일별 순매수와 이동평균」으로 시작한다. 그 문구는
+       읽어 주는 말이라 리팩터로 안 바뀐다. */
     const strip = FLOW_PAGE.indexOf('<ChartReadoutStrip');
-    const cum = FLOW_PAGE.indexOf('lines={lines}');
+    const cum = FLOW_PAGE.indexOf('누적 순매수 —');
     expect(strip).toBeGreaterThan(0);
-    expect(cum, '누적 그림을 못 찾았어요').toBeGreaterThan(0);
+    expect(cum, '누적 그림을 못 찾았어요 — 읽어 주는 말이 바뀌었나요?')
+      .toBeGreaterThan(0);
     expect(cum).toBeGreaterThan(strip);
   });
 
@@ -345,14 +354,17 @@ describe('⑦ 만기물 · PD 인수 · 이동평균 · 발행 면 [OWNER 2026-1
   it('이동평균·감마가 **주인공 자리**에 선다', () => {
     const card = FLOW_PAGE.slice(FLOW_PAGE.indexOf('flexBasis={460}'));
     const gamma = card.indexOf('<GammaLine');
-    const daily = card.indexOf('lines={dailyLines}');
-    const cum = card.indexOf('lines={lines}');
+    /* ★그림을 **읽어 주는 말**로 집는다, 변수 이름이 아니라 [2026-10-21] —
+       `lines={lines}` 로 집었더니 가격 선이 들어와 `cumLines` 가 되는 순간 샜다.
+       위 ⑤ 의 같은 자리에 그 경위가 적혀 있다. */
+    const daily = card.indexOf('일별 순매수와 이동평균');
+    const cum = card.indexOf('누적 순매수 —');
     expect(gamma, '판정이 없어요').toBeGreaterThan(0);
     expect(gamma, '판정이 그림들 **뒤**에 있어요 — 머리말이어야 해요')
       .toBeLessThan(daily);
     expect(daily, '일별+MA 가 누적 **뒤**에 있어요 — 앞이어야 해요').toBeLessThan(cum);
     /* 몫도 일별이 커야 한다. */
-    expect(card).toMatch(/lines=\{dailyLines\}[\s\S]{0,40}/);
+    expect(card).toMatch(/lines=\{dailyLines\}/);
     const dailyBox = card.lastIndexOf('flexGrow={2}', daily);
     expect(dailyBox, '일별 그림이 큰 몫(flexGrow 2)을 안 가졌어요').toBeGreaterThan(0);
   });
@@ -483,5 +495,55 @@ describe('⑦ 만기물 · PD 인수 · 이동평균 · 발행 면 [OWNER 2026-1
       .map((m) => m[1]!);
     expect(says.length).toBeGreaterThan(2);
     for (const t of says) expect(FORMAL.test(t), t).toBe(false);
+  });
+});
+
+/* ㉒ 가격 × 미결제약정 2×2 [OWNER 2026-10-21 — 「해외에선 어떻게 해?」].
+ *
+ * 선물 데스크의 1차 판독을 옮긴 것이다. 이 절이 지키는 것 셋:
+ *   ① 2×2 가 **가격** 기준으로 정의돼 있다(금리로 뒤집으면 관례가 거꾸로 읽힌다)
+ *   ② 한쪽이 0 인 날을 **어느 칸에도 안 넣는다**
+ *   ③ 가격 선의 **수준을 읽게 두지 않는다** — 보조축 + 그 사실을 적는 문장
+ */
+describe('㉒ 가격 × 미결제 2×2', () => {
+  it('네 이름이 **가격** 기준으로 서 있다', () => {
+    for (const n of ['신규 매수', '숏 커버', '신규 매도', '롱 청산']) {
+      expect(FLOW_PY, `${n} 가 없어요`).toContain(n);
+    }
+    /* 가격 ↑ × 미결제 ↑ = 신규 매수. 이 짝이 뒤집히면 화면이 거짓말을 한다. */
+    expect(FLOW_PY).toMatch(/if d_close > 0:\s*\n\s*return OI_NEW_LONG if d_oi > 0 else OI_SHORT_COVER/);
+  });
+
+  it('한쪽이 0 인 날은 **네 칸 어디도 아니다**', () => {
+    expect(FLOW_PY, '0 을 한쪽에 붙이고 있어요')
+      .toMatch(/if d_close == 0 or d_oi == 0:\s*\n\s*return None/);
+  });
+
+  it('집계가 **분모를 같이** 낸다 — 넷의 합이 구간 봉 수보다 작다', () => {
+    expect(FLOW_PY, 'counted 가 없어요').toContain('"counted": counted');
+    expect(FLOW_PAGE, '화면이 분모를 안 적어요').toContain('oi.counted');
+  });
+
+  it('가격 선은 **보조축**이고 수준을 읽게 두지 않는다', () => {
+    expect(FLOW_PAGE, '가격이 주축에 서 있어요 — 단위가 다른데 같은 눈금이 돼요')
+      .toMatch(/id: PRICE_KEY[\s\S]{0,220}axis: 'aux'/);
+    /* 서버가 그 사실을 쥔다(§16) — 화면이 지어낸 문장이 아니다. */
+    expect(FLOW_PY).toContain('"priceNote"');
+    expect(FLOW_PY, '수준에 뜻이 없다는 말이 없어요').toMatch(/수준에 뜻이 없어요/);
+    expect(FLOW_PAGE, '화면이 그 문장을 안 세워요').toContain('oi.priceNote');
+    /* 스트립 값은 **Δ** 다 — 수준을 적으면 누군가 호가로 읽는다. */
+    expect(FLOW_PAGE).toMatch(/label: '가격 Δ'/);
+  });
+
+  it('서버 문구는 **평문**이다 — 화면은 마크다운을 안 그린다', () => {
+    const i = FLOW_PY.indexOf('"priceNote"');
+    expect(i).toBeGreaterThan(0);
+    expect(FLOW_PY.slice(i, i + 260), 'priceNote 에 ** 가 새어 나갔어요')
+      .not.toContain('**');
+  });
+
+  it('현물 면은 2×2 를 **열쇠는 두고 값은 없이** 낸다', () => {
+    /* 열쇠가 면마다 없으면 화면이 「안 왔다」와 「없다」를 구별 못 해 추측한다. */
+    expect(FLOW_PY).toMatch(/#: ★현물엔 미결제약정이 없다[\s\S]{0,200}"oi": None/);
   });
 });

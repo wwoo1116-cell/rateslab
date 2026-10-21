@@ -75,6 +75,34 @@
 `infomax_API.investor_intra` 는 오늘치까지 있지만 `underlying` 이 **빈 문자열**이라
 계약코드를 못 푼다. 일중은 별도 레인이다.
 
+## ★가격 × 미결제약정 2×2 [OWNER 2026-10-21 — 「해외에선 어떻게 해?」]
+
+선물 데스크의 **1차 판독**이고, 같은 순매수를 네 가지로 가른다:
+
+|  | 미결제 ↑ | 미결제 ↓ |
+|---|---|---|
+| 가격 ↑ | 신규 매수 | 숏 커버 |
+| 가격 ↓ | 신규 매도 | 롱 청산 |
+
+같은 「+5,000계약」이 **새로 산 것**인지 **숏을 되돌린 것**인지를 순매수 혼자서는
+말하지 못한다. 미결제가 늘면 포지션이 **생긴 것**이고 줄면 **풀린 것**이다.
+이 데스크의 선례도 같은 쪽을 가리킨다 — KTBF 외인수급 레인에서 살아남은 둘 중
+하나가 OI 분해였다.
+
+배관은 **0** 이다. `INTEREST`·`VOLUME`·`CLOSE` 가 이 모듈이 이미 읽는 표에 있고
+(실측: 2,646봉 · NULL 0), 종전 쿼리가 수량 칼럼만 골라 왔을 뿐이다.
+
+⚠**셋을 조심한다.**
+
+1. **`CLOSE` 는 후방 조정된 연속 계열이라 수준이 없다**(`futures.py` 머리 · 함정 ②).
+   2×2 는 **차분의 부호**만 쓰므로 유효하지만, 화면이 그 선에서 **값을 읽으면 안 된다**.
+   그래서 `priceNote` 가 그 사실을 싣는다.
+2. **미결제는 시장 전체 한 수**다 — 주체별 미결제가 아니다. 그래서 2×2 는 **시장의
+   말**이고, 「누가」는 옆의 순매수 표가 진다. 둘을 한 주체의 포지션으로 읽으면 안 된다.
+3. **가격이지 금리가 아니다.** 선물 가격 ↑ = 금리 ↓. 라벨을 금리로 바꾸지 않았다 —
+   2×2 의 네 이름은 **가격 기준**으로 정의된 외부 관례이고, 여기서 뒤집으면 그
+   관례를 읽어 온 사람이 거꾸로 읽는다. `basis` 가 부호 규약을 적는다.
+
 ## 현물 만기물 분리 · PD 인수 · 이동평균 [OWNER 2026-10-19 추가]
 
 ① **현물은 만기물로 갈린다.** `ktb_investor` 는 종목(isin)별이고 종목의 만기물은
@@ -106,12 +134,12 @@ from __future__ import annotations
 import datetime as dt
 import re
 import statistics as st
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from . import ktb_issuance, mysqldb
 
-#: 선물 투자자별 — 이 리포가 처음 읽는 칼럼들. 같은 표의 `CLOSE` 는 `futures.py` 가 읽는다.
+#: 선물 투자자별. 같은 표의 `CLOSE`·`INTEREST`·`VOLUME` 은 §미결제 분해가 읽는다.
 FUT_TABLE = "sim_portfolio.mkt_futures_investor_close"
 #: 현물 투자자별 — 데스크의 인포맥스 창고. 대소문자가 섞여 백틱으로 묶는다.
 CASH_TABLE = "`infomax_API`.`ktb_investor`"
@@ -129,6 +157,12 @@ FUT_SUB: list[tuple[str, str]] = [
 FUT_DEAD = "GOVT"
 
 FUT_TENORS = ("3Y", "10Y")
+
+#: ★선물 **시장 칼럼 셋** [2026-10-21]. 같은 표에 있는데 이 모듈이 안 읽고 있었다.
+#: 실측 2026-10-21: 만기마다 2,646봉 · 2016-01-04~2026-10-20 · NULL 0 · 0 없음.
+FUT_MKT_COLS: list[tuple[str, str]] = [
+    ("CLOSE", "close"), ("INTEREST", "oi"), ("VOLUME", "volume"),
+]
 
 #: 현물 주체 열 — 계층이 없다(선물과 달리 상위 집합이 없다).
 CASH_COLS: list[tuple[str, str]] = [
@@ -188,6 +222,10 @@ class FlowData:
     #: 만기물(`CASH_TENORS`) → (날짜, 주체키 → 값). 단위 **백만원**. 날짜축은 공통이다.
     cash: dict[str, tuple[list[str], dict[str, list[int]]]]
     watermark: tuple[str, int]
+    #: ★만기 → `close`·`oi`·`volume`. 축은 `fut` 와 **같은 날짜**다(§미결제 2×2).
+    #: ⚠**기본값이 빈 사전**이다 — 시험 픽스처가 이 필드 없이 `FlowData` 를 짓고,
+    #: 없으면 2×2 를 **안 싣는다**(지어내지 않는다).
+    mkt: dict[str, dict[str, list[float]]] = field(default_factory=dict)
 
 
 # ── 순수 산술 (DB 를 모른다) ────────────────────────────────────────────────
@@ -211,6 +249,45 @@ def cumulative(vals: list[int]) -> list[int]:
         run += v
         out.append(run)
     return out
+
+
+#: 2×2 의 네 이름 — **가격 기준**이다(§미결제 ⚠3). 서버가 말을 쥔다(§16).
+OI_NEW_LONG = "신규 매수"
+OI_SHORT_COVER = "숏 커버"
+OI_NEW_SHORT = "신규 매도"
+OI_LONG_LIQ = "롱 청산"
+
+
+def oi_regime(d_close: float, d_oi: float) -> str | None:
+    """가격 Δ × 미결제 Δ → 네 이름 중 하나. 어느 쪽이든 0 이면 `None`.
+
+    0 을 한쪽에 붙이지 않는다 — 「안 움직였다」는 네 칸 어디도 아니고, 가격이
+    제자리인 날을 「신규 매수」로 적으면 그 날 수가 거짓이 된다. 실측으로 가격 Δ=0
+    인 날이 있다(연속 계열이라 조정일에 생긴다).
+    """
+    if d_close == 0 or d_oi == 0:
+        return None
+    if d_close > 0:
+        return OI_NEW_LONG if d_oi > 0 else OI_SHORT_COVER
+    return OI_NEW_SHORT if d_oi > 0 else OI_LONG_LIQ
+
+
+def oi_tally(close: list[float], oi: list[float], span: int | None = None,
+             ) -> tuple[list[str | None], dict[str, int]]:
+    """봉마다의 이름과 **고른 구간의 집계**.
+
+    첫 봉은 차분이 없어 `None` 이다 — 0 으로 채우면 없는 날을 세게 된다.
+    집계는 마지막 `span` 봉만 센다(화면이 그림을 자르는 그 수).
+    """
+    names: list[str | None] = [None]
+    for i in range(1, min(len(close), len(oi))):
+        names.append(oi_regime(close[i] - close[i - 1], oi[i] - oi[i - 1]))
+    cut = names[-span:] if span else names
+    tally = {n: 0 for n in (OI_NEW_LONG, OI_SHORT_COVER, OI_NEW_SHORT, OI_LONG_LIQ)}
+    for n in cut:
+        if n is not None:
+            tally[n] += 1
+    return names, tally
 
 
 def sigma_of(hist: list[int], today: int) -> tuple[float | None, float]:
@@ -602,10 +679,13 @@ def _bucket_case(tenor_of: dict[str, str]) -> str:
 def _fetch() -> FlowData:
     """세 표를 **한 연결**에서 읽는다 — `read_sql()` 은 호출마다 연결을 새로 연다."""
     qty = ", ".join(f"{k}QUANTITY" for k, _ in FUT_TOP + FUT_SUB) + f", {FUT_DEAD}QUANTITY"
+    #: ★시장 칼럼 셋을 **같은 쿼리에** 붙인다(§미결제 2×2) — 연결을 더 열지 않는다.
+    mkt = ", ".join(c for c, _ in FUT_MKT_COLS)
     cash_cols = ", ".join(f"SUM(t.{c}) AS {c}" for c, _ in CASH_COLS)
     with mysqldb.engine().connect() as conn:
         frows = conn.execute(mysqldb.text(
-            f"SELECT deal_date, ktb_type, {qty} FROM {FUT_TABLE} ORDER BY deal_date ASC"
+            f"SELECT deal_date, ktb_type, {qty}, {mkt} FROM {FUT_TABLE} "
+            f"ORDER BY deal_date ASC"
         )).fetchall()
         tenor_of = ktb_issuance.fetch_tenor_map(conn)
         crows = conn.execute(mysqldb.text(f"""
@@ -626,10 +706,14 @@ def _fetch() -> FlowData:
         raise FlowError(f"{FUT_TABLE} 에서 행을 읽지 못했어요.")
 
     keys = [k for k, _ in FUT_TOP + FUT_SUB] + [FUT_DEAD]
+    #: 시장 칼럼은 수량 뒤에 붙어 있다 — 자리를 수로 적지 않고 길이로 센다.
+    mkt_at = 2 + len(keys)
     fut: dict[str, tuple[list[str], dict[str, list[int]]]] = {}
+    mkts: dict[str, dict[str, list[float]]] = {}
     for tenor in FUT_TENORS:
         dates: list[str] = []
         cols: dict[str, list[int]] = {k: [] for k in keys + ["ETC"]}
+        mk: dict[str, list[float]] = {name: [] for _c, name in FUT_MKT_COLS}
         for r in frows:
             if str(r[1]) != tenor:
                 continue
@@ -638,9 +722,12 @@ def _fetch() -> FlowData:
             for k in keys:
                 cols[k].append(row[k])
             cols["ETC"].append(close_zero_sum(row))
+            for j, (_c, name) in enumerate(FUT_MKT_COLS):
+                mk[name].append(float(r[mkt_at + j] or 0.0))
         fut[tenor] = (dates, cols)
+        mkts[tenor] = mk
 
-    return FlowData(fut=fut, cash=assemble_cash(
+    return FlowData(mkt=mkts, fut=fut, cash=assemble_cash(
         [(_iso(r[0]), str(r[1]), [int(r[2 + i] or 0) for i in range(len(CASH_COLS))])
          for r in crows]), watermark=watermark())
 
@@ -720,7 +807,7 @@ def board(side: str = "fut", tenor: str = "3Y", pd_share: float | None = None,
         raise FlowError(f"PD 배분은 0~1 사이예요: {pd_share}")
     d = load()
     if side == "fut":
-        return _fut_board(d, tenor, ma=ma, daily=daily)
+        return _fut_board(d, tenor, ma=ma, daily=daily, span=span)
     return _cash_board(d, tenor, pd_share=pd_share, ma=ma, daily=daily, span=span)
 
 
@@ -742,7 +829,7 @@ def _series_row(key: str, label: str, group: str, dates: list[str],
 
 
 def _fut_board(d: FlowData, tenor: str, ma: int = 0,
-               daily: str | None = None) -> dict[str, Any]:
+               daily: str | None = None, span: int | None = None) -> dict[str, Any]:
     dates, cols = d.fut[tenor]
     if not dates:
         raise FlowError(f"선물 {tenor} 자료가 없어요.")
@@ -777,7 +864,10 @@ def _fut_board(d: FlowData, tenor: str, ma: int = 0,
         "top": top,
         "sub": sub,
         "rankFloor": RANK_FLOOR,
-        "series": _chart(dates, cols, picked, FUT_TOP + FUT_SUB, daily=daily, ma=ma),
+        "series": _chart(dates, cols, picked, FUT_TOP + FUT_SUB, daily=daily, ma=ma,
+                         mkt=d.mkt.get(tenor)),
+        #: ★가격 × 미결제 2×2 — **시장의 말**이다(§미결제 ⚠2). 자료가 없으면 `None`.
+        "oi": _oi_block(d.mkt.get(tenor), dates, span),
         "pd": None,
         "tenors": None,
         "excluded": excluded,
@@ -855,6 +945,9 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
         "sub": rows,
         "rankFloor": CASH_RANK_FLOOR,
         "series": _chart(dates, cols, picked, CASH_COLS, daily=daily, ma=ma),
+        #: ★현물엔 미결제약정이 없다 — 열쇠는 **두고** 값을 `None` 으로 둔다.
+        #: 열쇠가 면마다 없으면 화면이 「안 왔다」와 「없다」를 구별 못 해 추측한다.
+        "oi": None,
         #: ★고른 칸의 **감마 한 줄** [OWNER 2026-10-20 — 「그림아래 감마 한줄로」].
         #: 그림이 세운 그 주체와 **같은 열쇠**를 쓴다(`_chart` 의 그 규칙) — 둘이
         #: 갈리면 그림과 그 아래 줄이 다른 계열을 말한다.
@@ -869,9 +962,46 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
     }
 
 
+def _oi_block(mk: dict[str, list[float]] | None, dates: list[str],
+              span: int | None) -> dict[str, Any] | None:
+    """2×2 의 페이로드 — 오늘의 이름 + 고른 구간의 집계.
+
+    `mk` 가 없으면(시험 픽스처) **안 싣는다** — 지어내지 않는다.
+
+    ★`close` 의 **수준은 뜻이 없다**(후방 조정 연속 계열). 그래서 Δ 만 내보내고
+    오늘의 수준은 아예 안 적는다 — 적으면 누군가 그 수를 호가로 읽는다.
+    """
+    if not mk or not mk.get("close") or not mk.get("oi"):
+        return None
+    close, oi = mk["close"], mk["oi"]
+    names, tally = oi_tally(close, oi, span)
+    n = min(len(close), len(oi))
+    if n < 2:
+        return None
+    d_close = close[n - 1] - close[n - 2]
+    d_oi = oi[n - 1] - oi[n - 2]
+    counted = sum(tally.values())
+    return {
+        "asof": dates[-1] if dates else None,
+        #: 오늘 — Δ 와 이름. `regime` 이 `None` 이면 한쪽이 안 움직인 날이다.
+        "dClose": round(d_close, 3),
+        "dOi": int(d_oi),
+        "oi": int(oi[n - 1]),
+        "volume": int(mk["volume"][n - 1]) if mk.get("volume") else None,
+        "regime": oi_regime(d_close, d_oi),
+        #: 구간 집계 — 「요즘 무슨 장이었나」. 분모를 같이 싣는다(이름 없는 날 제외).
+        "span": span,
+        "counted": counted,
+        "tally": tally,
+        #: ⚠평문이다 — 화면은 마크다운을 안 그린다(이 리포가 두 번 밟은 자리).
+        "priceNote": "가격 선은 후방 조정된 연속 계열이라 수준에 뜻이 없어요 — "
+                     "모양과 방향만 읽어요. 가격이 오르면 금리는 내려요.",
+    }
+
+
 def _chart(dates: list[str], cols: dict[str, list[int]], picked: list[str],
            names: list[tuple[str, str]], daily: str | None = None,
-           ma: int = 0) -> dict[str, Any]:
+           ma: int = 0, mkt: dict[str, list[float]] | None = None) -> dict[str, Any]:
     """그림이 받는 것 — 누적 ≤4계열 + 일별 1계열(+이동평균).
 
     ★**최대 4계열**이다. 이 리포에는 N계열 범주형 팔레트가 없어서(이름 있는 색은
@@ -910,6 +1040,13 @@ def _chart(dates: list[str], cols: dict[str, list[int]], picked: list[str],
         "mas": [{"key": f"{key}-ma{w}", "window": w, "label": f"{w}일",
                  "values": moving_average(cols[key], w)}
                 for w in wins] if key is not None else [],
+        #: ★가격 — 흐름 혼자서는 안 읽힌다(§미결제). 선물 면에서만 선다.
+        #: ⚠**수준에 뜻이 없다**(후방 조정 연속 계열) — 모양만 읽는 선이다.
+        "price": {"key": "close", "label": "선물 가격", "values": mkt["close"]}
+        if mkt and mkt.get("close") else None,
+        #: ★미결제약정 — **시장 전체**다(주체별이 아니다).
+        "oi": {"key": "oi", "label": "미결제약정", "values": mkt["oi"]}
+        if mkt and mkt.get("oi") else None,
     }
 
 
