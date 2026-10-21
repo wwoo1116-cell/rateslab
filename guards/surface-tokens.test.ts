@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments } from './_source';
+
 /**
  * The three surface tokens must be declared WHERE CDS's tokens are in scope.
  *
@@ -29,7 +31,19 @@ import { describe, expect, it } from 'vitest';
  */
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const CSS = fs.readFileSync(path.join(ROOT, 'src/theme/direction.css'), 'utf8');
+/* **주석은 걷는다** [디자인 감사 2026-10-21 — 다섯 번째 재발].
+ *
+ * 이 가드는 줄 단위로 「`--sr-*` 가 보이면 `var(--color-` 가 있어야 한다」를
+ * 잰다. 그런데 이 리포의 주석은 근거를 적는 자리라 **주석 문장 안에
+ * `--sr-control` 같은 이름이 그대로 들어간다** — 2026-10-21 에 대비 문턱 수리의
+ * 근거 주석(「… `--sr-control`(= bgSecondary, #282b31)이고 …」)이 선언으로
+ * 읽혀서 이 가드가 빨개졌다. 코드는 멀쩡했고 가드가 산문을 읽은 것이다.
+ *
+ * `guards/guard-hygiene.test.ts` 가 바로 이 계열의 실패를 위해 있고, 그 파일이
+ * 「소스를 훑는 가드 여섯이 `stripComments` 를 지난다」고 적는다. 이 가드는 그
+ * 여섯에 안 들어 있었다 — `contrast.test.ts` 가 2026-09-21 에 같은 이유로
+ * 합류한 뒤 **일곱 번째**로 합류한다. */
+const CSS = stripComments(fs.readFileSync(path.join(ROOT, 'src/theme/direction.css'), 'utf8'));
 
 /* --sr-scrim 은 4번째 재발(2026-08-18)로 합류했다 — :root 로 올라가 조용히
  * 무효가 됐고, 커브 표면의 실색 리졸버가 잡아냈다. */

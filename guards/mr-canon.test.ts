@@ -900,7 +900,7 @@ describe('1순위를 바로 띄운다 — rv 히어로의 문법으로', () => {
        그대로 — **1순위가 히어로에 선다**. */
     expect(code).toMatch(/괴리도 1위예요/);
     expect(code).toMatch(/className="sr-rv-linkbtn"/);
-    expect(code).toMatch(/font="display3"/);
+    expect(code).toMatch(/font="title1"/);
   });
 
   it('히어로는 **1위**를 세운다 — 고른 줄이 아니다', () => {
