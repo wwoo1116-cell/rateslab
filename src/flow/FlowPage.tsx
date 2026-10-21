@@ -72,6 +72,8 @@ import {
 import { FlowLabWindow } from './FlowLabWindow';
 import { FlowMatrix } from './FlowMatrix';
 import { FlowTable } from './FlowTable';
+import { FlowCellWindow } from './FlowCellWindow';
+import { FloatingWindow } from '@/ui/window/FloatingWindow';
 import { SPAN_BARS, SPAN_OPTIONS, type Span } from './span';
 
 /** 면 하나. 선물 둘·현물·발행. */
@@ -314,6 +316,12 @@ export function FlowPage() {
   /** 실험 창 — Backtest 와 같이 **사람이 열고 사람이 실행한다**. 고른 칸이
    *  그대로 들어가서, 「이 칸이 뜻이 있나」를 바로 재 볼 수 있다. */
   const [labOpen, setLabOpen] = useState(false);
+  /** 주체별 순위 창 — 첫 화면을 비우려고 내린 것(아래 그 블록 머리). */
+  const [rankOpen, setRankOpen] = useState(false);
+  /** 20·30·50년을 한 줄로 접나 [트레이더 2026-10-21] — `FlowMatrix::foldLong`. */
+  const [foldLong, setFoldLong] = useState(false);
+  /** 한 칸 자세히 창 — 고른 (만기물 × 주체)에 대해 아는 것을 모은다. */
+  const [cellOpen, setCellOpen] = useState(false);
   const [got, setGot] = useState<FlowBoard | null>(null);
   /** 입찰 상세 — 왼쪽 카드 머리의 사실 줄만 쓴다. 없어도 화면은 선다. */
   const [iss, setIss] = useState<IssuanceBoard | null>(null);
@@ -682,6 +690,22 @@ export function FlowPage() {
 
   const pdPctShown = got.pd ? Math.round(got.pd.share * 100) : null;
 
+  /* ── 「이 칸 자세히」가 세울 값 셋 — **고르기만 한다** ─────────────────────
+   *
+   * 셋 다 서버가 이미 낸 수에서 **집어 오는** 것이고 더하지 않는다(§16). 화면이
+   * 더하면 창과 표가 다른 수를 말하게 된다 — 이 레인에서 `FlowMatrix` 의
+   * `reduce` 가 막힌 그 이유다(`guards/strategy-flow`).
+   *
+   * 만기물이 「전체」면 행렬의 **합계 행**이 그 칸이다(서버가 `ALL` 바구니와
+   * 같은 수로 낸다). 접힌 장기 줄을 고른 상태도 `ALL` 로 오므로 같이 걸린다. */
+  const pickedKey = got.series.daily?.key ?? null;
+  const pickedSub = pickedKey ? got.sub.find((r) => r.key === pickedKey) ?? null : null;
+  const pickedMatrixRow = got.matrix
+    ? (cashTenor === 'ALL' ? got.matrix.total : got.matrix.rows.find((r) => r.key === cashTenor) ?? null)
+    : null;
+  const pickedCell = pickedMatrixRow && pickedKey ? pickedMatrixRow.cols[pickedKey] ?? null : null;
+  const pickedSupply = pickedMatrixRow ? pickedMatrixRow.supply : null;
+
   return (
     <VStack gap={1.5} width="100%" flexGrow={1} minHeight={0}>
       {/* ── 조건 스트립 ─────────────────────────────────────────────────── */}
@@ -802,7 +826,16 @@ export function FlowPage() {
                 말한다(목업에서 가장 잘 읽히던 자리인데 첫 판에서 빼먹었다). */}
             {got.top.length > 0 ? <Balance top={got.top} fmt={fmt} unit={unitWord} /> : null}
           </VStack>
-          <Box flexGrow={1} minHeight={0} paddingX={1} paddingBottom={1}>
+          {/* ── 패딩은 머리와 **같은 리듬** [디자인 감사 2026-10-21] ───────────
+              `paddingX={1}` 이었고 까닭이 안 적혀 있었다. 그래서 같은 카드 안에서
+              머리(12px)와 표(6px)가 **6px 계단**을 졌다 — 실측: 왼쪽 가장자리가
+              37 / 31, 오른쪽이 1131 / 1137 로 갈렸다.
+
+              캐논은 `paddingX={2}` 다(`MrPage` 의 표 블록). CLAUDE.md 얼라인 5
+              「같은 위계의 카드 머리는 같은 패딩 리듬」이고, 캐논 규칙 3 은
+              「근거 없는 이탈은 결함」이다 — 근거가 없었으므로 되돌린다.
+              표가 12px 좁아지지만 가로 스크롤러가 이미 있어 잘리지 않는다. */}
+          <Box flexGrow={1} minHeight={0} paddingX={2} paddingBottom={1}>
             {got.matrix ? (
               <FlowMatrix
                 matrix={got.matrix}
@@ -811,6 +844,7 @@ export function FlowPage() {
                 onPick={pickCell}
                 highlight={hover}
                 onHover={setHover}
+                foldLongTenors={foldLong}
               />
             ) : (
               <FlowTable rows={got.sub} side={side} floor={got.rankFloor} unit={shown} showHold={!!got.hold}
@@ -847,10 +881,43 @@ export function FlowPage() {
                     「이거 내가 사용할 수 있어야한다고,, Backtest에서 처럼」].
                     고른 칸이 그대로 창에 들어간다. 판정은 2026-10-20 에 KILL 이고,
                     그 창은 **수 옆에 우연을 같이** 적어서 같은 실수를 막는다. */}
+                {/* ★한 칸 자세히 — 「재보기」보다 **앞**이다. 보는 것이 재는 것보다
+                    먼저고, 알파벳 순서가 아니라 쓰는 순서로 세운다. */}
+                {got.matrix && pickedSub ? (
+                  <button type="button" className="sr-pillbtn"
+                    data-on={cellOpen || undefined}
+                    aria-pressed={cellOpen}
+                    onClick={() => setCellOpen(true)}>
+                    이 칸 자세히
+                  </button>
+                ) : null}
                 {got.matrix ? (
                   <button type="button" className="sr-pillbtn"
                     onClick={() => setLabOpen(true)}>
                     이 칸 재보기
+                  </button>
+                ) : null}
+                {/* ★장기 합산 토글 [트레이더 2026-10-21 — 「보험에서 20·30·50
+                    현물 매수를 한번에 합산해서」]. 끄고 켜는 것이라 알약의
+                    `data-on` 문법 그대로다(앱 공용 `.sr-pillbtn`). */}
+                {got.matrix?.fold ? (
+                  <button type="button" className="sr-pillbtn"
+                    data-on={foldLong || undefined}
+                    aria-pressed={foldLong}
+                    onClick={() => setFoldLong((v) => !v)}>
+                    {/* 라벨은 **짧게** — 서버의 긴 이름(「20년물 · 30년물 ·
+                        50년물」)을 그대로 쓰면 컨트롤 행을 민다(실측). 긴 이름은
+                        접힌 **줄**이 이미 들고 있으므로 버튼은 짧아도 모호하지 않다. */}
+                    20·30·50 합산
+                  </button>
+                ) : null}
+                {/* ★순위 창 — 첫 화면에서 내려간 것을 여는 손잡이. */}
+                {got.matrix ? (
+                  <button type="button" className="sr-pillbtn"
+                    data-on={rankOpen || undefined}
+                    aria-pressed={rankOpen}
+                    onClick={() => setRankOpen(true)}>
+                    주체별 순위
                   </button>
                 ) : null}
               </HStack>
@@ -952,22 +1019,33 @@ export function FlowPage() {
         </VStack>
       </HStack>
 
-      {/* ── 주체별 순위 ─────────────────────────────────────────────────── */}
-      {/* 행렬이 왼쪽 칸을 가져갔으므로 이 표는 **아래 전폭**으로 내려온다 —
-          지우지 않는다. 행렬에 없는 것 둘을 이 표가 진다: 「오늘이 평소보다
-          센가」(σ)와 순위 하한 밖 주체를 흐리게 남기는 일. 「안 보인다」와
-          「없다」는 다른 말이다(`FlowTable` 머리). */}
-      {got.matrix ? (
-        <VStack className="sr-card" width="100%" flexShrink={0} minWidth={0}>
-          <VStack paddingX={2} paddingTop={1.5} paddingBottom={1} gap={0.5}>
-            <Text as="h3" font="label1">주체별 순위 · {CASH_TENOR_LABEL[cashTenor]}</Text>
+      {/* ── 주체별 순위 — **창으로 내렸다** [OWNER 2026-10-21] ──────────────
+          실측이 먼저다: 이 면은 한 화면에 숫자 204개 · 컨트롤 147개(Main 은 62)
+          · 회색 산문 10줄 723자를 들고 있었고, 그중 **684px 가 내부 스크롤러에
+          숨어** 있었다(509 + 175). 숨은 것의 대부분이 이 카드다 — 8열×10행 표와
+          PD 블록과 회색 두 줄.
+
+          숨어 있는 것은 **있는 것이 아니다.** 첫 화면은 「오늘 수급이 어땠나」
+          하나만 답하고, 그 아래 자세한 것은 **열어서** 본다
+          [OWNER — 「첫 화면에서 수급상황을 확인하고, 버튼 누르면 창」].
+
+          지우지 않는 이유는 종전 주석 그대로다 — 행렬에 없는 것 둘을 이 표가
+          진다(「오늘이 평소보다 센가」·순위 하한 밖 주체를 흐리게 남기는 일). */}
+      {rankOpen && got.matrix ? (
+        <FloatingWindow
+          windowKey="flow-rank"
+          title={`주체별 순위 · ${CASH_TENOR_LABEL[cashTenor]}`}
+          width={1180}
+          onClose={() => setRankOpen(false)}
+        >
+          <VStack gap={0.5} width="100%" minWidth={0}>
             {/* ★마지막 열이 **올해**라는 것을 부제가 말한다 — 위 표의 구간과
                 다른 창이라 같은 주체가 두 수로 선다. 「구간이 다르다」를 안 적으면
                 화면이 스스로를 반박하는 것처럼 읽힌다. */}
             <Text as="span" font="legal" color="fgMuted">
-              위 표가 고른 구간({span === 'ALL' ? '전체' : span})의 합을 말한다면 이
+              뒤의 행렬이 고른 구간({span === 'ALL' ? '전체' : span})의 합을 말한다면 이
               표는 오늘을 말해요 — 그 주체의 지난 1년 분포에 견준 자리예요. 마지막
-              열만 올해(1월부터)라 위 표와 창이 달라요.
+              열만 올해(1월부터)라 행렬과 창이 달라요.
             </Text>
             {/* ★보유 칸의 성질 — **서버가 쥔 문장**이다(§16). 「거래 대 보유」를
                 화면이 제 말로 적으면 두 측정의 경계가 흐려진다. */}
@@ -977,13 +1055,34 @@ export function FlowPage() {
                 {got.hold.asof ? ` (잔고 기준일 ${got.hold.asof})` : ''}
               </Text>
             ) : null}
-          </VStack>
-          <Box paddingX={1} paddingBottom={1}>
             <FlowTable rows={got.sub} side={side} floor={got.rankFloor} unit={shown} showHold={!!got.hold}
               highlight={hover} onHover={setHover}
               picked={got.series.daily?.key ?? null} onPick={setDaily} />
-          </Box>
-        </VStack>
+            {/* PD 가 얼마를 얹었나 — 다른 데 없는 사실이라 표 옆에 같이 둔다. */}
+            {got.pd && pdPctShown != null ? (
+              <HStack className="sr-stats" width="100%" flexWrap="wrap">
+                <StatColumn title="PD 인수 보정 · 올해">
+                  <Stat label="더한 공급" value={fmtCum(got.pd.supplyYtd)}
+                    note={`금융투자 ${pdPctShown}% · 은행 ${100 - pdPctShown}% 가정`} />
+                  <Stat label="반영 전 입찰" value={`${got.pd.pending}건`}
+                    note={got.pd.pending ? '현물 자료가 그 날에 아직 안 닿았어요' : '전부 닿았어요'} />
+                </StatColumn>
+              </HStack>
+            ) : null}
+          </VStack>
+        </FloatingWindow>
+      ) : null}
+
+      {cellOpen && pickedSub ? (
+        <FlowCellWindow
+          board={got}
+          sub={pickedSub}
+          tenorLabel={CASH_TENOR_LABEL[cashTenor]}
+          cellValue={pickedCell}
+          supply={pickedSupply}
+          auction={lastAuction}
+          onClose={() => setCellOpen(false)}
+        />
       ) : null}
 
       {labOpen && got.matrix ? (
@@ -996,26 +1095,6 @@ export function FlowPage() {
         />
       ) : null}
 
-      {/* ── 사실 스트립 — **한 칸만 남았다** [OWNER 2026-10-20] ──────────── */}
-      {/* 넷 중 셋을 들어냈다. 전부 화면 위쪽에 **같은 수가 이미 있었다**:
-            「오늘·순위 위 셋」  → 순위표 1~3행과 글자 그대로 같다.
-            「고른 구간 · 그림 넷」→ 행렬 **합계 행**이 열 주체 전부를 주고,
-                                   리드아웃 줄이 같은 넷을 또 적는다(3중복).
-            「모집단」           → 표본은 조건 줄에, 순위 대상은 순위표 설명
-                                   줄에 있다. 「그림 4계열」은 아무도 안 쓴다.
-          남긴 하나는 **다른 데 없는 사실**이다 — PD 가 얼마를 얹었나. */}
-      {got.pd && pdPctShown != null ? (
-        <Box flexShrink={0} width="100%">
-          <HStack className="sr-stats" width="100%" flexWrap="wrap">
-            <StatColumn title="PD 인수 보정 · 올해">
-              <Stat label="더한 공급" value={fmtCum(got.pd.supplyYtd)}
-                note={`금융투자 ${pdPctShown}% · 은행 ${100 - pdPctShown}% 가정`} />
-              <Stat label="반영 전 입찰" value={`${got.pd.pending}건`}
-                note={got.pd.pending ? '현물 자료가 그 날에 아직 안 닿았어요' : '전부 닿았어요'} />
-            </StatColumn>
-          </HStack>
-        </Box>
-      ) : null}
       </VStack>
     </VStack>
   );

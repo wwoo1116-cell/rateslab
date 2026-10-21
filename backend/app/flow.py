@@ -298,6 +298,13 @@ CASH_RANK_FLOOR = 40_000.0
 
 #: 현물 면의 만기물 — `ALL` 이 기본이고 10-19 이전 화면과 같은 수다(§현물 만기물 ①).
 CASH_TENORS = ("ALL",) + ktb_issuance.TENORS
+
+#: 장기 합산이 접는 만기물과 그 줄의 열쇠 [트레이더 2026-10-21].
+#: `CASH_TENORS` 에 **없는 열쇠**를 일부러 쓴다 — 이것은 고를 수 있는 만기물이
+#: 아니라 «보여 주는 합»이고, 고르기는 `ALL` 로 간다(세 줄의 합에 해당하는 단일
+#: 바구니가 원천에 없으므로 **없는 것을 만들어 내지 않는다**).
+LONG_FOLD_KEYS = ("20Y", "30Y", "50Y")
+LONG_FOLD_KEY = "LONG"
 CASH_TENOR_LABEL = {"ALL": "전체", **ktb_issuance.LABEL}
 #: 만기물을 못 푼 종목이 모이는 바구니. 합계엔 들고 만기물 표에선 빠진다.
 CASH_OTHER = "기타"
@@ -840,6 +847,31 @@ def cash_matrix(d: FlowData, span: int | None = None,
             "key": key, "label": ktb_issuance.LABEL[key],
             "supply": round(s), "cols": vals,
         })
+
+    #: ★장기 합산 줄 — **서버가 더한다** [트레이더 2026-10-21 — 「보험에서
+    #: 20·30·50 현물 매수를 한번에 합산해서 볼 수 있으면」].
+    #:
+    #: 초장기는 같이 움직이는 한 바구니로 읽히는 자리가 있다(보험·기금의 듀레이션
+    #: 매칭). 세 줄로 흩어 두면 눈으로 더해야 하고, 눈으로 더하는 것은 틀린다.
+    #:
+    #: **화면이 더하면 안 된다**(§16). 첫 판에서 프런트의 `reduce` 로 접었다가
+    #: `guards/strategy-flow` 가 잡았고, 그 가드가 맞다 — 화면이 합을 다시 세면
+    #: 서버의 수와 갈릴 길이 열린다. 그래서 여기서 낸다. 화면은 **고르기만** 한다.
+    #:
+    #: 줄을 바꾸는 게 아니라 **더해서 보낸다** — 펼친 세 줄도 그대로 간다. 둘 중
+    #: 무엇을 세울지는 보는 사람이 정하는 것이고, 자료를 지우는 결정이 아니다.
+    long_keys = [k for k in LONG_FOLD_KEYS if k in {r["key"] for r in rows}]
+    fold = None
+    if len(long_keys) >= 2:
+        src = [r for r in rows if r["key"] in long_keys]
+        fold = {
+            "key": LONG_FOLD_KEY,
+            "label": " · ".join(ktb_issuance.LABEL[k] for k in long_keys),
+            "supply": sum(r["supply"] for r in src),
+            "cols": {c: sum(r["cols"][c] for r in src) for c, _ in CASH_COLS},
+            #: 어느 줄을 접은 것인지 — 화면이 그 줄들을 숨길 때 쓴다.
+            "of": long_keys,
+        }
     return {
         "span": span or len(dates),
         "from": dates[cut][0] if dates[cut] else None,
@@ -853,6 +885,8 @@ def cash_matrix(d: FlowData, span: int | None = None,
                   "pd": bool(pd_share is not None and c in PD_COLS)}
                  for c, lab in CASH_COLS],
         "rows": rows,
+        #: 장기 합산 줄(위 블록). 없으면 `None` — 화면은 그때 토글을 안 그린다.
+        "fold": fold,
         "total": {"label": "합계", "supply": round(total_supply), "cols": total},
         "pending": pending_total,
         #: ★**표가 닫혔나** — 화면이 눈으로 더하지 않아도 되게 서버가 센다.

@@ -151,6 +151,17 @@ export interface FlowMatrixBoard {
    *  공급을 비율로 더하므로 「실제로 산 수」가 아니다. 표가 그 사실을 적어야 한다. */
   cols: { key: string; label: string; pd: boolean }[];
   rows: { key: CashTenor; label: string; supply: number; cols: Record<string, number> }[];
+  /** ★장기 합산 줄 — **서버가 더한다**(`flow.py::LONG_FOLD_KEYS`).
+   *
+   *  화면은 더하지 않는다(§16 · `guards/strategy-flow`). 토글이 켜지면 `of` 의
+   *  줄들을 빼고 이 줄을 그 자리에 끼운다. 열쇠(`LONG`)는 **고를 수 있는 만기물이
+   *  아니다** — 고르기는 `ALL` 로 간다. 접을 줄이 둘 미만이면 `null`. */
+  fold?: {
+    key: string; label: string; supply: number;
+    cols: Record<string, number>;
+    /** 이 줄이 접은 만기물들. */
+    of: CashTenor[];
+  } | null;
   total: { label: string; supply: number; cols: Record<string, number> };
   /** 현물 자료가 그 날에 아직 안 닿아 발행 열에 못 얹은 입찰 건수. */
   pending: number;

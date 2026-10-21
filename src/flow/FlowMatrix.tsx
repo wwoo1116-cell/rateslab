@@ -48,8 +48,20 @@ function supplyText(v: number): string {
   return fmtJo(v).replace('+', '');
 }
 
+/** ★장기 합산 — **서버가 더한 줄을 읽기만 한다** [트레이더 2026-10-21 —
+ *  「보험에서 20·30·50 현물 매수를 한번에 합산해서 볼 수 있으면」].
+ *
+ *  첫 판은 여기서 `reduce` 로 접었다가 `guards/strategy-flow` 에 걸렸다. 그
+ *  가드가 맞다 — **화면이 합을 다시 세면 서버의 수와 갈릴 길이 열린다**(§16).
+ *  합은 `flow.py` 의 `fold` 가 내고(`matrix.fold`), 여기서는 세 줄을 빼고 그
+ *  줄을 끼우는 **고르기**만 한다. 산술이 한 줄도 없다.
+ *
+ *  접힌 줄을 누르면 만기물은 `ALL` 이다 — 세 줄의 합에 해당하는 단일 만기물이
+ *  원천에 없으므로 없는 것을 만들어 내지 않는다(서버 주석과 같은 말). */
+type MatrixRow = FlowMatrixBoard['rows'][number];
+
 export function FlowMatrix({
-  matrix, tenor, picked, onPick, highlight, onHover,
+  matrix, tenor, picked, onPick, highlight, onHover, foldLongTenors = false,
 }: {
   matrix: FlowMatrixBoard;
   /** 지금 그림에 선 만기물 — 그 행이 `data-pick` 으로 표시된다. */
@@ -60,8 +72,21 @@ export function FlowMatrix({
   onPick: (tenor: CashTenor, subject: string) => void;
   highlight?: string | null;
   onHover?: (key: string | null) => void;
+  /** 20·30·50년을 한 줄로 접는다(위 `foldLong` 머리). */
+  foldLongTenors?: boolean;
 }) {
   const cells = matrix.cols;
+  const fold = matrix.fold ?? null;
+  const folding = foldLongTenors && !!fold;
+  const hidden = new Set(fold?.of ?? []);
+  /** 접은 자리에 서버의 합산 줄 하나를 끼운다 — 더하지 않고 고르기만 한다. */
+  const rows: MatrixRow[] = !folding
+    ? matrix.rows
+    : matrix.rows.flatMap((r) =>
+        !hidden.has(r.key) ? [r] : r.key === fold!.of[0] ? [fold as MatrixRow] : []);
+  /** 접힌 줄은 어느 한 만기물이 아니므로 고르기를 `ALL` 로 돌린다. */
+  const pickOf = (r: MatrixRow): CashTenor =>
+    folding && r.key === fold!.key ? 'ALL' : (r.key as CashTenor);
   return (
     <div className="sr-rv-rank-fill">
       <div className="sr-rv-rank-scroll">
@@ -105,12 +130,12 @@ export function FlowMatrix({
             </tr>
           </thead>
           <tbody>
-            {matrix.rows.map((r) => (
+            {rows.map((r) => (
               <tr
-                key={r.key}
+                key={r.label}
                 className="sr-rv-row"
                 data-on={r.key === highlight || undefined}
-                data-pick={r.key === tenor || undefined}
+                data-pick={pickOf(r) === tenor || undefined}
                 onMouseEnter={() => onHover?.(r.key)}
                 onMouseLeave={() => onHover?.(null)}
               >
@@ -120,7 +145,7 @@ export function FlowMatrix({
                 <td className="sr-rv-td">{supplyText(r.supply)}</td>
                 {cells.map((c) => {
                   const v = r.cols[c.key] ?? 0;
-                  const on = r.key === tenor && c.key === picked;
+                  const on = pickOf(r) === tenor && c.key === picked;
                   return (
                     <td key={c.key} className="sr-rv-td" data-pick={on || undefined}>
                       <button
@@ -130,7 +155,7 @@ export function FlowMatrix({
                         aria-pressed={on}
                         onFocus={() => onHover?.(r.key)}
                         onBlur={() => onHover?.(null)}
-                        onClick={() => onPick(r.key, c.key)}
+                        onClick={() => onPick(pickOf(r), c.key)}
                       >
                         <span className={directionClass(v)}>{fmtJo(v)}</span>
                       </button>
