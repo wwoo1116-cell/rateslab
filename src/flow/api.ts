@@ -54,6 +54,19 @@ export interface FlowRow {
   ranked: boolean;
   /** 순위 밖이면 `null` — 「없다」와 「0등」은 다른 말이다. */
   rank: number | null;
+  /** ★지금 들고 있는 양 — **누적 순매수가 아니다**(그쪽은 시작일이 임의다).
+   *
+   *  ⚠**`null` 은 「0」이 아니라 「짝이 없다」**다. 딜러(금융투자)와 기금공제가
+   *  그렇다 — 보유잔고표에 그 주체가 없다. 0 으로 그리면 「안 들고 있다」로
+   *  읽힌다. 없을 수 있다(옛 서버). */
+  hold?: {
+    /** 백만원 — 흐름과 같은 자. */
+    face: number;
+    /** 그 만기물 **보유 합 대비 몫**. 분모가 없으면 큰 수인지 알 수 없다. */
+    share: number | null;
+    /** 한 잔고표가 흐름 **두 열**을 덮을 때 그 두 이름(보험기금). */
+    merged: string[] | null;
+  } | null;
 }
 
 export interface FlowSeries {
@@ -182,6 +195,9 @@ export interface FlowBoard {
   /** ★가격 × 미결제 2×2 — **선물 면에서만** 선다. 현물은 `null`(미결제가 없다).
    *  ⚠없을 수 있다(서버가 옛 코드일 때) — 읽는 쪽이 `?? null` 로 받는다. */
   oi?: FlowOi | null;
+  /** ★보유잔량 머리 — `asof` 와 그 측정의 성질. 원천을 못 읽거나 선물 면이면
+   *  `null` 이고 화면이 보유 칸을 **안 세운다**. */
+  hold?: { asof: string | null; note: string | null } | null;
   /** 현물 면의 테너 × (발행 + 주체) 표. 선물 면은 `null`. */
   matrix: FlowMatrixBoard | null;
   /** 그림에 선 주체의 **감마 한 줄** — 속도의 변화다. 선물 면은 `null`.

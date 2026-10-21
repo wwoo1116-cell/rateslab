@@ -650,3 +650,68 @@ class TestDV01환산:
         assert row["avgAbs"] == 100
         #: 그래서 하한 100 위에서 순위 밖이다.
         assert flow.rank_rows([row], 500.0)[0]["ranked"] is False
+
+
+class Test보유잔량:
+    """누적 순매수는 **포지션이 아니다** [OWNER 2026-10-21] — 시작일이 임의다.
+
+    짝과 단위는 **전수 대사로** 확정했다(모듈 머리 §보유잔량). 여기서 재는 것은
+    그 대사의 **결론**이 코드에 그대로 서 있는가다.
+    """
+
+    @staticmethod
+    def _h():
+        return {"asof": {"외국인": "2026-10-20", "은행": "2026-10-20"},
+                "cols": {"foreigner": {"3Y": 100.0, "10Y": 300.0},
+                         "bank": {"3Y": 100.0},
+                         "insurance": {"10Y": 500.0}}}
+
+    def test_짝이_없는_열은_None이고_0이_아니다(self):
+        """★딜러와 기금공제가 그렇다. 0 으로 두면 「안 들고 있다」로 읽힌다."""
+        cols, _asof, _note = flow.holdings_for(self._h(), "ALL")
+        assert cols["financial_investment"] is None
+        assert cols["fund_or_mutual_aid"] is None
+        assert cols["foreigner"] is not None
+
+    def test_전체는_바구니_전부의_합이다(self):
+        cols, _a, _n = flow.holdings_for(self._h(), "ALL")
+        assert cols["foreigner"]["face"] == 400
+        got = flow.holdings_for(self._h(), "3Y")[0]
+        assert got["foreigner"]["face"] == 100
+
+    def test_몫의_분모는_그_만기물의_보유_합이다(self):
+        """「332조」가 큰 수인지 작은 수인지는 분모가 정한다."""
+        cols, _a, _n = flow.holdings_for(self._h(), "3Y")
+        #: 3Y 합은 외국인 100 + 은행 100 = 200.
+        assert abs(cols["foreigner"]["share"] - 0.5) < 1e-9
+        assert abs(cols["bank"]["share"] - 0.5) < 1e-9
+
+    def test_한_표가_두_열을_덮으면_그_사실을_적는다(self):
+        """보험기금 한 표 = 보험 + 기금공제. 같은 수를 두 줄에 적으면 합이 두 배다."""
+        cols, _a, _n = flow.holdings_for(self._h(), "ALL")
+        assert cols["insurance"]["merged"] == ["보험", "기금공제"]
+        assert cols["fund_or_mutual_aid"] is None
+        assert cols["foreigner"]["merged"] is None
+
+    def test_원천이_없으면_아무것도_안_낸다(self):
+        """지어내지 않는다 — 화면이 보유 칸을 안 세운다."""
+        assert flow.holdings_for(None, "ALL") == ({}, None, None)
+        assert flow.holdings_for({"cols": {}}, "ALL") == ({}, None, None)
+
+    def test_단위는_액면_1만원이고_백만원으로_적는다(self):
+        """★전수 대사의 그 결론 — `Δ잔고수량 = 100 × 순매수(백만원)`.
+
+        비율 중위가 여덟 짝 전부 정확히 100.000 이었고, 총합도 맞는다
+        (외국인 33,238,707,524 × 1만원 = 332조원).
+        """
+        assert flow.HOLD_FACE_UNIT == 10_000.0
+        assert flow.HOLD_TO_MILLION == 0.01
+        #: 1만원짜리 수량 1억 개 = 1조원 = 1,000,000 백만원.
+        assert 100_000_000 * flow.HOLD_TO_MILLION == 1_000_000
+
+    def test_짝_표가_대사_결과와_같다(self):
+        """자료가 정한 짝이다 — 손으로 바꾸려면 대사를 다시 돌릴 것."""
+        assert flow.HOLD_MAP["asset_management"] == ("투신", "사모펀드")   # 99.7%
+        assert flow.HOLD_MAP["insurance"] == ("보험기금",)                # 99.7%
+        #: ⚠딜러는 **없다**. 더하면 은행 일치가 45.1% → 4.6% 로 나빠졌다.
+        assert "financial_investment" not in flow.HOLD_MAP

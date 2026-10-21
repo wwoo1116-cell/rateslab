@@ -813,7 +813,7 @@ export function FlowPage() {
                 onHover={setHover}
               />
             ) : (
-              <FlowTable rows={got.sub} side={side} floor={got.rankFloor} unit={shown}
+              <FlowTable rows={got.sub} side={side} floor={got.rankFloor} unit={shown} showHold={!!got.hold}
                 highlight={hover} onHover={setHover}
                 picked={got.series.daily?.key ?? null} onPick={setDaily} />
             )}
@@ -969,9 +969,17 @@ export function FlowPage() {
               표는 오늘을 말해요 — 그 주체의 지난 1년 분포에 견준 자리예요. 마지막
               열만 올해(1월부터)라 위 표와 창이 달라요.
             </Text>
+            {/* ★보유 칸의 성질 — **서버가 쥔 문장**이다(§16). 「거래 대 보유」를
+                화면이 제 말로 적으면 두 측정의 경계가 흐려진다. */}
+            {got.hold?.note ? (
+              <Text as="span" font="legal" color="fgMuted">
+                {got.hold.note}
+                {got.hold.asof ? ` (잔고 기준일 ${got.hold.asof})` : ''}
+              </Text>
+            ) : null}
           </VStack>
           <Box paddingX={1} paddingBottom={1}>
-            <FlowTable rows={got.sub} side={side} floor={got.rankFloor} unit={shown}
+            <FlowTable rows={got.sub} side={side} floor={got.rankFloor} unit={shown} showHold={!!got.hold}
               highlight={hover} onHover={setHover}
               picked={got.series.daily?.key ?? null} onPick={setDaily} />
           </Box>

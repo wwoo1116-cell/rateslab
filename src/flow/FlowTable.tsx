@@ -61,12 +61,16 @@ function unitOf(side: FlowSide, scale: 'day' | 'year',
 
 export function FlowTable({
   rows, side, floor, highlight, onHover, picked, onPick, unit = 'native',
+  showHold = false,
 }: {
   rows: readonly FlowRow[];
   side: FlowSide;
   floor: number;
   /** 눈금 — `dv01` 이면 모든 칸이 억원/bp 다. */
   unit?: FlowUnit;
+  /** 보유 칸을 세우나. 선물 면과 원천을 못 읽은 날은 `false` 다 —
+   *  빈 열을 세우면 「0 을 들고 있다」로 읽힌다. */
+  showHold?: boolean;
   highlight?: string | null;
   onHover?: (key: string | null) => void;
   /** 일별 그림에 서 있는 주체 — 그 줄의 이름에 밑줄이 선다. */
@@ -99,6 +103,17 @@ export function FlowTable({
               <th className="sr-rv-th">5일 ({unitOf(side, 'day', unit)})</th>
               <th className="sr-rv-th">20일 ({unitOf(side, 'day', unit)})</th>
               <th className="sr-rv-th">올해 ({unitOf(side, 'year', unit)})</th>
+              {/* ★보유 — 흐름 옆의 **수준**. 누적 순매수는 시작일이 임의라
+                  포지션이 아니다. 선물 면과 원천을 못 읽은 날은 칸이 아예 없다. */}
+              {showHold ? (
+                <th className="sr-rv-th">
+                  <ThHelp
+                    font="inherit"
+                    label="보유 (조)"
+                    help="지금 들고 있는 국고채 액면이에요 — 거래가 아니라 보유라서 누적 순매수와 다른 측정이고, 서로를 판정하지 않아요. 괄호는 그 만기물 보유 합 대비 몫이에요. 딜러(금융투자)와 기금공제는 잔고표에 짝이 없어서 비어 있어요."
+                  />
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -168,6 +183,24 @@ export function FlowTable({
                 <td className="sr-rv-td">
                   <span className={directionClass(r.ytd)}>{val(r.ytd, side, 'year', unit)}</span>
                 </td>
+                {showHold ? (
+                  <td className="sr-rv-td">
+                    {/* ⚠`null` 은 **「짝이 없다」**다 — 0 이 아니다. `—` 로 세운다.
+                        0 으로 그리면 「안 들고 있다」로 읽힌다. */}
+                    {r.hold == null ? (
+                      '—'
+                    ) : (
+                      <>
+                        {fmtJo(r.hold.face)}
+                        {r.hold.share != null ? (
+                          <span className="sr-rv-sub">
+                            {' '}({(r.hold.share * 100).toFixed(1)}%)
+                          </span>
+                        ) : null}
+                      </>
+                    )}
+                  </td>
+                ) : null}
               </tr>
             ))}
           </tbody>

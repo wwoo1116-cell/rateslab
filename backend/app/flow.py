@@ -122,6 +122,46 @@
    2×2 의 네 이름은 **가격 기준**으로 정의된 외부 관례이고, 여기서 뒤집으면 그
    관례를 읽어 온 사람이 거꾸로 읽는다. `basis` 가 부호 규약을 적는다.
 
+## ★보유잔량 — 누적 순매수는 **포지션이 아니다** [OWNER 2026-10-21]
+
+누적 순매수는 **시작일이 임의**다. 창을 바꾸면 수가 바뀌므로 「지금 얼마나 들고
+있나」를 답하지 못한다. 외부 관례는 흐름 옆에 **보유잔량/보유비중**을 같이 둔다.
+
+원천은 `Mirae_DB_통합.종목별 <주체> 보유잔고` **아홉 표**다 — `일자`·`종목코드`·
+`<주체>_잔고수량`, **2005-09-20~2026-10-20(21년)**. 흐름보다 훨씬 길고 흐름의
+2016~2019 공백을 덮는다.
+
+### ★단위와 짝을 **전수 대사로** 확정했다
+
+규약은 `flow.py` 가 검증한 것 그대로(`market='전체'`·`buysell='순매수'`·
+`deal_time` 최대값 한 장). 2024-01-01 이후 (종목 × 날짜) 칸에서 `Δ잔고 / 순매수`:
+
+    단위  **Δ잔고수량 = 100 × 순매수(백만원)**  → `잔고수량` 한 단위 = **액면 1만원**.
+          비율 중위가 여덟 짝 전부 **정확히 100.000** 이고, 총합도 맞는다
+          (외국인 전 종목 33,238,707,524 × 1만원 = **332조원**).
+
+    짝    보험기금 ↔ insurance + fund_or_mutual_aid   66.8% → **99.7%**
+          투신 + 사모펀드 ↔ asset_management          93.1% → **99.7%**
+          정부 ↔ government_or_municipal                      **99.5%**
+          종금 ↔ other_financial                              94.0%
+          외국인 ↔ foreigner                                  93.6%
+          개인 ↔ individual                                   79.5%
+          기타법인 ↔ other_corporate                          78.4%
+          은행 ↔ bank                                       ⚠**45.1%**
+
+⚠**은행이 약하다.** 중위는 정확히 100.000 인데 칸의 절반만 맞는다 — 수준이
+틀린 게 아니라 **어긋나는 날이 많다**는 뜻이다. `financial_investment` 를 더해
+보면 **더 나빠진다**(중위 −6.156 · 4.6%) → 딜러가 은행에 숨은 것이 아니다.
+까닭을 모르므로 **적어만 두고 수를 고치지 않는다.**
+
+⚠⚠**딜러(`financial_investment`)는 보유잔고에 아예 없다.** 흐름의 1위 주체인데
+(일평균 7,947억) 짝이 없다. 그래서 그 줄의 보유 칸은 **`None`** 이고, 화면이
+「없다」를 적는다 — 0 으로 두면 「안 들고 있다」로 읽힌다.
+
+★**함정 ⑤(ktb 대 bis)의 새 판이다.** 두 측정은 설계가 다르다 — 흐름은 거래,
+잔량은 보유다. 섞어서 서로를 판정하지 않는다. 짝은 위 표가 **자료로** 정한
+것뿐이고, 짝이 없는 주체는 비워 둔다.
+
 ## ★DV01 환산 — 「누가 듀레이션을 가져갔나」 [OWNER 2026-10-21]
 
 금리 데스크는 흐름을 **계약수로 적지 않는다.** 3년 1만 계약과 10년 1만 계약은
@@ -266,6 +306,27 @@ CASH_OTHER = "기타"
 #: 전 표본 순매수의 88%(134.4조 중 118.0조)를 담는데 그 움직임이 분기 눈금이라,
 #: 60일까지로는 가속·감속이 잡음에 묻힌다(아래 §감마의 실측).
 MA_WINDOWS = (0, 5, 20, 60, 120)
+#: ★보유잔고 — 흐름 열 → 그 열에 짝이 되는 **잔고표들**(§보유잔량 의 그 대사).
+#: 짝이 **없는** 열은 여기 없다 — `financial_investment`(딜러)가 그렇다.
+HOLD_MAP: dict[str, tuple[str, ...]] = {
+    "foreigner": ("외국인",),
+    "bank": ("은행",),                      # ⚠일치 45.1% — 적어만 둔다
+    "asset_management": ("투신", "사모펀드"),   # 99.7%
+    "insurance": ("보험기금",),              # ⚠보험 + 기금공제 가 한 표다
+    "individual": ("개인",),
+    "other_corporate": ("기타법인",),
+    "other_financial": ("종금",),
+    "government_or_municipal": ("정부",),
+}
+#: ★`보험기금` 한 표가 흐름 **두 열**을 덮는다. 그래서 `insurance` 에 붙이고
+#: `fund_or_mutual_aid` 는 **비워 둔다** — 같은 수를 두 줄에 적으면 합이 두 배가
+#: 된다. 화면이 그 사실을 적는다.
+HOLD_MERGED = {"insurance": ("보험", "기금공제")}
+#: 잔고수량 한 단위의 액면(원). **전수 대사로 확정**(§보유잔량).
+HOLD_FACE_UNIT = 10_000.0
+#: 잔고를 **백만원**으로 — 흐름과 같은 자로 적는다.
+HOLD_TO_MILLION = HOLD_FACE_UNIT / 1_000_000.0
+
 #: ★국채선물 한 계약의 액면(원). KRX 3년·10년 **둘 다 1억**이다.
 FUT_CONTRACT_FACE = 100_000_000.0
 #: 현물 순매수 한 단위의 액면(원) — 원천이 백만원이다.
@@ -303,6 +364,9 @@ class FlowData:
     mkt: dict[str, dict[str, list[float]]] = field(default_factory=dict)
     #: ★DV01 배수 — 만기 → 봉마다 **한 계약당 원/bp**. 축은 `fut` 와 같다.
     futDv01: dict[str, list[float]] = field(default_factory=dict)
+    #: ★보유잔고 — `{"cols": {흐름열: {바구니: 백만원}}, "asof": {표: 날짜}}`.
+    #: 없을 수 있다(원천을 못 읽음) — 그러면 화면이 보유 칸을 **안 세운다**.
+    holdings: dict[str, Any] | None = None
     #: ★DV01 배수 — 바구니 → 봉마다 **백만원당 원/bp**. 축은 `cash` 와 같다.
     #: ⚠`ALL` 은 **없다** — 바구니마다 환산한 뒤 더해야 하기 때문이다
     #: (`cash_dv01_sum`). 여기에 `ALL` 을 두면 틀린 길이 생긴다.
@@ -914,6 +978,12 @@ def _fetch() -> FlowData:
             f"ORDER BY deal_date ASC"
         )).fetchall()
         tenor_of = ktb_issuance.fetch_tenor_map(conn)
+        #: ★보유잔량 — **같은 연결**에서 읽는다(`read_sql` 은 호출마다 연결을 연다).
+        #: 실패해도 면은 선다 — 잔량은 덧칸이고 흐름이 본체다.
+        try:
+            holdings = _fetch_holdings(conn, tenor_of)
+        except Exception:                                   # noqa: BLE001
+            holdings = None
         crows = conn.execute(mysqldb.text(f"""
             SELECT t.deal_date, {_bucket_case(tenor_of)} AS bucket, {cash_cols}
             FROM {CASH_TABLE} t
@@ -958,7 +1028,51 @@ def _fetch() -> FlowData:
          for r in crows])
     return FlowData(mkt=mkts, fut=fut, cash=cash, watermark=watermark(),
                     futDv01=_fut_dv01_scales(fut),
-                    cashDv01=_cash_dv01_scales(cash))
+                    cashDv01=_cash_dv01_scales(cash),
+                    holdings=holdings)
+
+
+def _fetch_holdings(conn, tenor_of: dict[str, str]) -> dict[str, Any] | None:
+    """**마지막 날**의 보유잔고 — 만기물 바구니 × 흐름 열.
+
+    ★「지금 얼마나 들고 있나」 한 장면이면 충분하다. 이력을 다 읽으면 아홉 표 ×
+    21년이고, 이 면이 묻는 것은 흐름 옆의 **수준** 하나다.
+
+    ⚠표마다 `asof` 가 다를 수 있어 **표마다 제 마지막 날**을 쓴다. 한 날로
+    맞추면 늦게 들어온 표가 0 이 되어 「안 들고 있다」로 읽힌다 — `asof` 를
+    표마다 싣고 화면이 그 둘을 적는다.
+    """
+    tables = sorted({t for ts in HOLD_MAP.values() for t in ts})
+    per: dict[str, dict[str, float]] = {}
+    asof: dict[str, str] = {}
+    for t in tables:
+        rows = conn.execute(mysqldb.text(f"""
+            SELECT 종목코드 isin, `{t}_잔고수량` q, DATE(일자) d
+            FROM `Mirae_DB_통합`.`종목별 {t} 보유잔고`
+            WHERE 일자 = (SELECT MAX(일자) FROM `Mirae_DB_통합`.`종목별 {t} 보유잔고`)
+        """)).fetchall()
+        if not rows:
+            continue
+        asof[t] = _iso(rows[0][2])
+        acc: dict[str, float] = {}
+        for isin, q, _d in rows:
+            bucket = tenor_of.get(str(isin))
+            if bucket is None or bucket not in ktb_issuance.TENORS:
+                bucket = CASH_OTHER
+            acc[bucket] = acc.get(bucket, 0.0) + float(q or 0) * HOLD_TO_MILLION
+        per[t] = acc
+    if not per:
+        return None
+    #: 흐름 열로 접는다 — 짝이 여럿인 열은 더한다(투신 + 사모펀드).
+    cols: dict[str, dict[str, float]] = {}
+    for col, ts in HOLD_MAP.items():
+        got: dict[str, float] = {}
+        for t in ts:
+            for b, v in per.get(t, {}).items():
+                got[b] = got.get(b, 0.0) + v
+        if got:
+            cols[col] = got
+    return {"cols": cols, "asof": asof}
 
 
 def _fut_dv01_scales(fut: dict[str, tuple[list[str], dict[str, list[int]]]],
@@ -1181,6 +1295,8 @@ def _fut_board(d: FlowData, tenor: str, ma: int = 0,
         "pd": None,
         "tenors": None,
         "excluded": excluded,
+        #: ★선물엔 보유잔고 원천이 없다 — 열쇠는 두고 값은 `None`.
+        "hold": None,
         #: 화면이 「무엇을 보고 있나」를 지어내지 않게 서버가 말을 쥔다.
         #: ★하한의 **수**는 안 적는다 — 화면이 제 자(계약·억)로 조건 스트립에
         #: 이미 적는다. 서버가 원단위로 또 적으면 한 화면에 두 수가 선다.
@@ -1253,8 +1369,12 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
         #: 행렬은 **금액** 질문이라 안 바꾼다 — 그 경계를 말로 못 박는다.
         unit_note += " 왼쪽의 테너 × 주체 표는 금액(조·억) 그대로예요."
 
+    #: ★보유잔량 — 흐름 옆의 **수준**. 누적 순매수는 시작일이 임의라 포지션이
+    #: 아니다(§보유잔량). 고른 만기물로 갈린다.
+    hold, hold_asof, hold_note = holdings_for(d.holdings, tenor)
     rows = rank_rows(
-        [_series_row(c, lab, "국고채 현물", dates, cols[c], native[c])
+        [{**_series_row(c, lab, "국고채 현물", dates, cols[c], native[c]),
+          "hold": hold.get(c)}
          for c, lab in CASH_COLS],
         CASH_RANK_FLOOR,
     )
@@ -1291,6 +1411,8 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
         #: ★현물엔 미결제약정이 없다 — 열쇠는 **두고** 값을 `None` 으로 둔다.
         #: 열쇠가 면마다 없으면 화면이 「안 왔다」와 「없다」를 구별 못 해 추측한다.
         "oi": None,
+        #: ★보유잔량 — 원천을 못 읽으면 `None` 이고 화면이 칸을 **안 세운다**.
+        "hold": ({"asof": hold_asof, "note": hold_note} if hold else None),
         #: ★고른 칸의 **감마 한 줄** [OWNER 2026-10-20 — 「그림아래 감마 한줄로」].
         #: 그림이 세운 그 주체와 **같은 열쇠**를 쓴다(`_chart` 의 그 규칙) — 둘이
         #: 갈리면 그림과 그 아래 줄이 다른 계열을 말한다.
@@ -1303,6 +1425,46 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
         "excluded": excluded,
         "basis": basis,
     }
+
+
+def holdings_for(h: dict[str, Any] | None, tenor: str,
+                 ) -> tuple[dict[str, dict[str, Any] | None], str | None, str | None]:
+    """고른 만기물의 **보유잔고** — 흐름 열마다 `{face, share, merged}`.
+
+    - `face` 는 **백만원**이다(흐름과 같은 자).
+    - `share` 는 그 만기물 **보유 합 대비 몫**이다 — 분모를 같이 못 실으면
+      「332조」가 큰 수인지 작은 수인지 읽을 수 없다.
+    - 짝이 **없는 열은 `None`** 이다(딜러·기금공제) — 0 으로 두면 「안 들고
+      있다」로 읽힌다. 그 둘이 다른 말이라는 것이 이 모듈의 규율이다.
+
+    `tenor='ALL'` 이면 바구니 전부(`기타` 포함)의 합이다 — 흐름의 `ALL` 과 같은 뜻.
+    """
+    if not h or not h.get("cols"):
+        return {}, None, None
+    cols: dict[str, dict[str, Any] | None] = {}
+    total = 0.0
+    raw: dict[str, float] = {}
+    for col, by in h["cols"].items():
+        face = sum(by.values()) if tenor == "ALL" else by.get(tenor, 0.0)
+        raw[col] = face
+        total += face
+    for col, _ in CASH_COLS:
+        if col not in raw:
+            cols[col] = None            # 짝이 없다 — 「없다」와 「0」은 다른 말
+            continue
+        face = raw[col]
+        cols[col] = {
+            "face": round(face),
+            "share": round(face / total, 4) if total > 0 else None,
+            #: 한 표가 흐름 두 열을 덮으면 그 사실을 적는다(보험기금).
+            "merged": list(HOLD_MERGED[col]) if col in HOLD_MERGED else None,
+        }
+    days = sorted(set(h.get("asof", {}).values()))
+    #: ⚠평문이다 — 화면은 마크다운을 안 그린다(이 리포가 세 번 밟은 자리).
+    note = ("보유 칸은 거래가 아니라 지금 들고 있는 양이에요 — 누적 순매수와 "
+            "설계가 다른 측정이라 서로를 판정하지 않아요. 딜러(금융투자)와 "
+            "기금공제는 잔고표에 짝이 없어서 비어 있어요.")
+    return cols, (days[-1] if days else None), note
 
 
 def _unit_words(unit: str, ok: bool, native: str, dates: list[str],

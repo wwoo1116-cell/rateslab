@@ -36,6 +36,9 @@ const ISSUE_PY = fs.readFileSync(path.join(ROOT, 'backend/app/ktb_issuance.py'),
 /* 주석을 **안** 벗긴다 — 틴트의 눈금과 그 비용이 머리 주석에 적혀 있고,
    「적어 뒀나」가 이 절이 재는 것의 절반이다. */
 const TINT_TS = fs.readFileSync(path.join(ROOT, 'src/table/tint.ts'), 'utf8');
+/* 주석을 **안** 벗긴다 — 「짝이 없다와 0 은 다른 말이다」가 주석에 있고,
+   그 경고가 적혀 있나가 이 절이 재는 것의 절반이다. */
+const FLOW_TABLE_RAW = fs.readFileSync(path.join(ROOT, 'src/flow/FlowTable.tsx'), 'utf8');
 
 describe('① 등록만 하고 안 그려지는 함정', () => {
   it('page.tsx 에 **명시 분기**가 있다 — 없으면 Momentum 이 그려진다', () => {
@@ -643,5 +646,61 @@ describe('㉔ DV01 눈금', () => {
   it('원단위를 **지우지 않는다** — DV01 은 덧눈금이다', () => {
     expect(FLOW_PY).toMatch(/UNITS = \("native", "dv01"\)/);
     expect(FLOW_PY, '원단위가 기본이 아니에요').toMatch(/unit: str = "native"/);
+  });
+});
+
+/* ㉕ 보유잔량 [OWNER 2026-10-21 — 「대사도 해주고」].
+ *
+ * 누적 순매수는 시작일이 임의라 포지션이 아니다. 짝과 단위는 **전수 대사로**
+ * 확정했고(모듈 머리 §보유잔량), 이 절은 그 결론이 코드에 서 있는지 잰다.
+ * ★제일 중요한 것: **「짝이 없다」와 「0」은 다른 말이다.**
+ */
+describe('㉕ 보유잔량', () => {
+  it('짝 표가 **대사 결과**로 적혀 있다', () => {
+    expect(FLOW_PY).toMatch(/HOLD_MAP: dict\[str, tuple\[str, \.\.\.\]\]/);
+    expect(FLOW_PY, '투신+사모펀드 짝이 없어요')
+      .toMatch(/"asset_management": \("투신", "사모펀드"\)/);
+    expect(FLOW_PY, '보험기금 합성 표시가 없어요').toContain('HOLD_MERGED');
+    /* 그 수치가 적혀 있어야 다음 사람이 손으로 바꾸지 않는다. */
+    expect(FLOW_PY).toMatch(/99\.7%/);
+    expect(FLOW_PY, '은행이 약하다는 실측이 없어요').toMatch(/45\.1%/);
+  });
+
+  it('★딜러는 **없다** — 더하면 더 나빠진다는 실측이 적혀 있다', () => {
+    expect(FLOW_PY, 'HOLD_MAP 에 딜러가 들어갔어요')
+      .not.toMatch(/HOLD_MAP[\s\S]{0,700}"financial_investment":/);
+    expect(FLOW_PY).toMatch(/중위 −6\.156|중위 -6\.156/);
+  });
+
+  it('단위가 **전수 대사로** 확정돼 있다', () => {
+    expect(FLOW_PY).toMatch(/HOLD_FACE_UNIT = 10_000\.0/);
+    expect(FLOW_PY, '비율 100.000 실측이 없어요').toMatch(/\*\*정확히 100\.000\*\*/);
+  });
+
+  it('★「짝이 없다」와 「0」을 **화면이 가른다**', () => {
+    /* 0 으로 그리면 「안 들고 있다」로 읽힌다 — 딜러가 바로 그 자리다. */
+    expect(FLOW_TABLE).toMatch(/r\.hold == null \?[\s\S]{0,60}'—'/);
+    expect(FLOW_TABLE_RAW, '짝 없음과 0 이 다르다는 경고가 없어요')
+      .toMatch(/「짝이 없다」\*\*다 — 0 이 아니다/);
+  });
+
+  it('몫의 **분모**를 같이 낸다 — 332조가 큰 수인지 알 수 없다', () => {
+    expect(FLOW_PY).toMatch(/"share": round\(face \/ total, 4\)/);
+    expect(FLOW_TABLE, '화면이 몫을 안 적어요').toMatch(/r\.hold\.share \* 100/);
+  });
+
+  it('빈 열을 세우지 않는다 — 선물 면엔 칸이 아예 없다', () => {
+    expect(FLOW_PY, '선물 면에 hold 열쇠가 없어요')
+      .toMatch(/★선물엔 보유잔고 원천이 없다[\s\S]{0,80}"hold": None/);
+    expect(FLOW_PAGE).toContain('showHold={!!got.hold}');
+  });
+
+  it('두 측정을 섞지 말라는 말을 **서버가** 쥔다', () => {
+    expect(FLOW_PY).toMatch(/서로를 판정하지 않아요/);
+    expect(FLOW_PAGE, '화면이 그 문장을 안 세워요').toContain('got.hold.note');
+    /* 평문이어야 한다 — 이 리포가 세 번 밟았다. */
+    const i = FLOW_PY.indexOf('note = ("보유 칸은');
+    expect(i).toBeGreaterThan(0);
+    expect(FLOW_PY.slice(i, i + 300)).not.toContain('**');
   });
 });
