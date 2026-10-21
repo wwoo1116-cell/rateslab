@@ -26,7 +26,7 @@
 import { Text } from '@coinbase/cds-web/typography';
 
 import { fmtContracts, fmtEok, fmtJo } from '@/lib/format';
-import { directionClass, flowTint } from '@/table/tint';
+import { directionClass, flowPctTint } from '@/table/tint';
 import { ThHelp } from '@/ui/ThHelp';
 
 import type { FlowRow, FlowSide } from './api';
@@ -79,8 +79,8 @@ export function FlowTable({
               <th className="sr-rv-th">
                 <ThHelp
                   font="inherit"
-                  label="평소 대비"
-                  help="그 주체의 지난 1년 분포에 견준 오늘이에요. 창에서 오늘은 빼고 재요 — 오늘이 제 잣대를 키우면 안 되니까요."
+                  label="분포 자리"
+                  help="그 주체의 지난 1년 분포에서 오늘이 몇 번째 백분위인지예요 — 50 이 평소, 100 이 가장 큰 순매수, 0 이 가장 큰 순매도예요. 창에서 오늘은 빼고 재요(오늘이 제 잣대를 키우면 안 되니까요). 꼬리의 크기는 이 수로 안 갈려요 — 같은 줄의 「오늘」과 「일평균」을 보세요."
                 />
               </th>
               <th className="sr-rv-th">5일 ({unitOf(side, 'day')})</th>
@@ -125,19 +125,21 @@ export function FlowTable({
                     </span>
                   </button>
                 </td>
-                {/* 틴트 축은 **편차**다 — 크기로 칠하면 계약수가 천장을 뚫는다
-                    (`table/tint.ts::flowTint` 머리). 세우는 축과 같아야 눈과
+                {/* 틴트 축은 **백분위**다 — 크기로 칠하면 계약수가 천장을 뚫는다
+                    (`table/tint.ts::flowPctTint` 머리). 세우는 축과 같아야 눈과
                     순위가 서로를 반박하지 않는다. */}
-                <td className="sr-rv-td" style={flowTint(r.sigma)}>
+                <td className="sr-rv-td" style={flowPctTint(r.pct)}>
                   <span className={directionClass(r.d1)}>{val(r.d1, side)}</span>
                 </td>
                 <td className="sr-rv-td">
-                  {r.sigma == null ? (
+                  {/* ★백분위 — 0~100 이고 **50 이 평소**다. 방향색은 50 기준으로
+                      가른다(위가 순매수 쪽). 소수는 안 적는다 — 0.1 백분위 차이는
+                      읽는 사람에게 뜻이 없고 열만 넓어진다. */}
+                  {r.pct == null ? (
                     '—'
                   ) : (
-                    <span className={directionClass(r.sigma)}>
-                      {r.sigma > 0 ? '+' : r.sigma < 0 ? '−' : ''}
-                      {Math.abs(r.sigma).toFixed(2)}σ
+                    <span className={directionClass(r.pct - 50)}>
+                      {Math.round(r.pct)}
                     </span>
                   )}
                 </td>
@@ -158,8 +160,9 @@ export function FlowTable({
         <Text as="p" font="legal" color="fgMuted" paddingX={1} paddingY={1}>
           흐린 줄은 순위 밖이에요 — 지난 1년 일평균 순매수가{' '}
           {val(floor, side).replace('+', '')}{unitOf(side, 'day')}에 못 미쳐요. 그만큼 작게 움직이는
-          주체는 평소 대비로 세우면 아주 작은 수가 1위가 돼요. 이름을 누르면 그 주체가
-          일별 그림에 서요.
+          주체는 분포 자리로 세우면 아주 작은 수가 1위가 돼요 — 종금이 10계약
+          거래한 날이 그 주체의 97번째 백분위예요. 맞는 수지만 뜻이 없어요.
+          이름을 누르면 그 주체가 일별 그림에 서요.
         </Text>
       </div>
     </div>

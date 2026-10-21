@@ -33,6 +33,9 @@ const TYPE_CSS = fs.readFileSync(path.join(ROOT, 'src/theme/type.css'), 'utf8');
 const ISSUE_FACE = read('src/flow/IssuanceFace.tsx');
 const FLOW_PY = fs.readFileSync(path.join(ROOT, 'backend/app/flow.py'), 'utf8');
 const ISSUE_PY = fs.readFileSync(path.join(ROOT, 'backend/app/ktb_issuance.py'), 'utf8');
+/* 주석을 **안** 벗긴다 — 틴트의 눈금과 그 비용이 머리 주석에 적혀 있고,
+   「적어 뒀나」가 이 절이 재는 것의 절반이다. */
+const TINT_TS = fs.readFileSync(path.join(ROOT, 'src/table/tint.ts'), 'utf8');
 
 describe('① 등록만 하고 안 그려지는 함정', () => {
   it('page.tsx 에 **명시 분기**가 있다 — 없으면 Momentum 이 그려진다', () => {
@@ -545,5 +548,47 @@ describe('㉒ 가격 × 미결제 2×2', () => {
   it('현물 면은 2×2 를 **열쇠는 두고 값은 없이** 낸다', () => {
     /* 열쇠가 면마다 없으면 화면이 「안 왔다」와 「없다」를 구별 못 해 추측한다. */
     expect(FLOW_PY).toMatch(/#: ★현물엔 미결제약정이 없다[\s\S]{0,200}"oi": None/);
+  });
+});
+
+/* ㉓ 순위 키 = 백분위, 그리고 **칠하는 축이 세우는 축과 같다** [2026-10-21].
+ *
+ * 이 절이 생긴 까닭: σ → 백분위 전환을 **가드가 하나도 안 잡았다.** 「칠하는 축과
+ * 세우는 축이 같아야 눈과 순위가 서로를 반박하지 않는다」가 `table/tint.ts` 머리와
+ * CLAUDE.md 캐논에 적혀 있는데 재는 자가 없었다 — 적어만 둔 규칙은 다음 사람이
+ * 모르고 지나간다.
+ */
+describe('㉓ 순위 키는 백분위다', () => {
+  it('서버가 **|백분위 − 50|** 로 세운다', () => {
+    expect(FLOW_PY, 'percentile_of 가 없어요').toContain('def percentile_of(');
+    expect(FLOW_PY, '정렬 키가 백분위가 아니에요')
+      .toMatch(/rows\.sort\([\s\S]{0,200}pct[\s\S]{0,80}- 50\.0\)/);
+  });
+
+  it('동점은 **중간 순위**다 — 0 이 많은 주체의 0 이 바닥으로 읽히면 안 된다', () => {
+    expect(FLOW_PY).toMatch(/below \+ 0\.5 \* ties/);
+  });
+
+  it('★칠하는 축이 세우는 축과 **같다**', () => {
+    /* 표가 백분위로 줄을 세우면서 σ 로 칠하면 눈과 순위가 서로를 반박한다. */
+    expect(FLOW_TABLE, '표가 백분위로 칠하지 않아요').toContain('flowPctTint(r.pct)');
+    expect(FLOW_TABLE, 'σ 틴트가 남아 있어요 — 축이 둘이 됐어요')
+      .not.toContain('flowTint(');
+    expect(TINT_TS, '백분위 틴트가 없어요').toContain('export function flowPctTint');
+  });
+
+  it('하한은 **남아 있다** — 백분위로도 필요하다는 것이 실측이다', () => {
+    /* ⚠내가 「백분위는 안 터지니 하한을 없앨 수 있다」로 적었고 틀렸다.
+       하한 아래가 1위를 가져가는 비중이 백분위 37.9/60.8/29.1% 로 σ 와 같다. */
+    expect(FLOW_PY).toContain('RANK_FLOOR = 500.0');
+    expect(FLOW_PY).toContain('CASH_RANK_FLOOR = 40_000.0');
+    expect(FLOW_PY, '그 실측이 적혀 있지 않아요 — 다음 사람이 또 없애려 한다')
+      .toMatch(/백분위로 바꿔도 하한은 못 없앤다/);
+  });
+
+  it('꼬리 해상도를 잃는다는 **비용**이 적혀 있다', () => {
+    expect(TINT_TS, '백분위의 비용이 안 적혀 있어요').toMatch(/꼬리 해상도를 잃는다/);
+    expect(FLOW_TABLE, '화면이 꼬리를 어디서 보라고 말하지 않아요')
+      .toMatch(/꼬리의 크기는 이 수로 안 갈려요/);
   });
 });

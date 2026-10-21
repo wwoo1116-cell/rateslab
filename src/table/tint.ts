@@ -149,23 +149,36 @@ export function signalTint(rate: number | null | undefined): React.CSSProperties
  * 색 있는 글자라 깊은 채움이 대비를 갉는다).
  */
 
-/** 편차(σ) 바닥. 이 아래는 아예 안 칠한다 — 「평소와 다를 것 없다」를 옅은
- *  이례로 읽게 가르치지 않는다. */
-export const FLOW_SIGMA_FLOOR = 0.5;
-/** 천장. 3σ 위는 더 진해지지 않는다(1년 창에서 그 위는 드물고, 더 진하게 하면
- *  글자가 안 읽힌다). */
-export const FLOW_SIGMA_CEIL = 3;
+/** 백분위 틴트의 바닥 — 50 에서 이만큼 떨어져야 칠한다.
+ *
+ *  ★종전 σ 바닥(0.5σ)과 **같은 자리**로 잡았다: 정규분포에서 0.5σ 는
+ *  69.1 백분위이고 50 에서 **19.1** 떨어져 있다. 눈금을 바꾸면서 「언제부터
+ *  칠하나」를 같이 바꾸면 종전 화면과 진하기가 달라진 까닭이 둘이 된다. */
+export const FLOW_PCT_FLOOR = 19;
+/** 천장 — 백분위는 50 에서 최대 50 떨어진다. 그래서 **끝이 곧 천장**이다.
+ *
+ *  ⚠**이것이 백분위의 비용이다** [2026-10-21]. σ 는 2.5σ 와 4σ 를 갈랐는데
+ *  백분위는 둘 다 99 대라 **꼬리 해상도를 잃는다.** 얻은 것은 분포 가정이 없고
+ *  0~100 에 갇혀 계약과 백만원이 한 자에 선다는 것이다. 꼬리의 크기가 필요하면
+ *  같은 행의 「오늘」과 「일평균」을 본다 — 둘 다 그 행에 있다. */
+export const FLOW_PCT_CEIL = 50;
 
-/** 수급 칸의 틴트 — 축은 **편차**이고 색은 순매수/순매도 부호다. */
-export function flowTint(sigma: number | null | undefined): React.CSSProperties | undefined {
-  if (sigma == null || sigma === 0) return undefined;
-  const a = Math.abs(sigma);
-  if (a < FLOW_SIGMA_FLOOR) return undefined;
-  const span = FLOW_SIGMA_CEIL - FLOW_SIGMA_FLOOR;
-  const t = Math.min(1, (a - FLOW_SIGMA_FLOOR) / span);
+/** 수급 칸의 틴트 — 축은 **백분위의 50 에서의 거리**이고 색은 위/아래 부호다.
+ *
+ *  ★축이 **순위 키와 같아야 한다**(위 머리) — 2026-10-21 에 순위 키가 σ 에서
+ *  백분위로 바뀌었으므로 칠하는 축도 같이 옮겼다. 안 옮기면 표가 백분위로 줄을
+ *  세우면서 σ 로 칠해 **눈과 순위가 서로를 반박한다.** */
+export function flowPctTint(pct: number | null | undefined): React.CSSProperties | undefined {
+  if (pct == null) return undefined;
+  const dev = pct - 50;
+  const a = Math.abs(dev);
+  if (a < FLOW_PCT_FLOOR) return undefined;
+  const span = FLOW_PCT_CEIL - FLOW_PCT_FLOOR;
+  const t = Math.min(1, (a - FLOW_PCT_FLOOR) / span);
   const alpha = Number((0.06 + t * 0.14).toFixed(3));
-  const hue = sigma > 0 ? 'var(--sr-up)' : 'var(--sr-down)';
+  const hue = dev > 0 ? 'var(--sr-up)' : 'var(--sr-down)';
   return {
     backgroundColor: `color-mix(in srgb, ${hue} ${Math.round(alpha * 100)}%, transparent)`,
   };
 }
+

@@ -12,15 +12,34 @@
 (= 개인 + 기타)은 중위 176 / 114 계약이다. 그래서 대분류는 **대조**로 세우고,
 순위는 기관계를 세분한 하위 분류가 진다 — 거기에만 진짜 경쟁이 있다.
 
-## 순위 키 — **과거 분포 대비**, 그리고 하한 [OWNER 2026-10-19]
+## 순위 키 — **백분위**, 그리고 하한 [OWNER 2026-10-19 · 백분위 2026-10-21]
 
 규모로 세우면 외국인·증권이 매일 1·2위라 화면이 날마다 같은 말을 한다. 자기
-직전 252봉 분포 대비 당일 편차(σ)로 세운다 — 인접 세입자 Mean Reversion 이 밴드
+직전 252봉 **분포 안의 자리**로 세운다 — 인접 세입자 Mean Reversion 이 밴드
 대비 위치를 재는 것과 같은 결이다.
 
-⚠ 그런데 **분모가 거의 0인 주체가 위로 올라온다**. 하한 없이 σ 로 세우면 3년
-1위가 개인(−598계약), 10년 1위가 기타(+98계약)가 된다. 그래서 `RANK_FLOOR` 를
-둔다. 실측 일평균 |순매수|(직전 252봉):
+★**자는 σ 가 아니라 백분위다** [OWNER 2026-10-21 — 외부 관례]. CFTC COT 를 읽는
+관례가 이것이고(「COT index」), σ 를 안 쓰는 까닭 셋이 다 우리에게 해당한다:
+① 흐름은 **꼬리가 두껍고 비대칭**인데 σ 는 분포를 가정한다 · ② 백분위는
+**0~100 에 갇혀** 주체끼리·면끼리 **같은 자**가 된다(계약과 백만원이 한 눈금에
+선다 — σ 로는 안 됐다) · ③ 「상위 몇 %」가 「2.3σ」보다 바로 읽힌다.
+정렬은 **`|백분위 − 50|`** 이다 — 큰 매수와 큰 매도가 **둘 다** 극단이다
+(종전 `|σ|` 와 같은 뜻).
+
+⚠⚠**백분위로 바꿔도 하한은 못 없앤다** [실측 2026-10-21 — 내가 틀렸다].
+바꾸기 전에 「백분위는 안 터지니 하한을 없앨 수 있다」로 적었는데, **전수로 재니
+아니었다.** 하한 아래 주체가 1위를 가져가는 비중:
+
+    선물 3Y   백분위 **37.9%**(908/2,393)  ↔  σ 36.6%
+    선물 10Y  백분위 **60.8%**(1,454/2,393) ↔  σ 57.4%
+    현물 ALL  백분위 **29.1%**(449/1,543)   ↔  σ 27.7%
+
+★**백분위가 오히려 살짝 더 샌다.** 까닭은 분명하다 — 종금이 **10계약** 거래한 날
+(2017-01-13, 일평균 |순| 2계약) 백분위가 97.6 이다. 그 수는 **옳다**. 자기
+이력으로는 극단이 맞다. 다만 **뜻이 없다.** 하한이 막고 있던 것은 σ 의 폭발이
+아니라 **그 뜻 없음**이었고, 그래서 백분위에도 그대로 필요하다.
+
+실측 일평균 |순매수|(직전 252봉):
 
     3Y  외국인 8,399 · 기관계 8,324 · 증권 6,961 · 은행 3,805 · 투신 1,338 ·
         연기금 702 · 보험 570 │ 개인 225 · 기타 64 · 종금 27
@@ -290,6 +309,38 @@ def oi_tally(close: list[float], oi: list[float], span: int | None = None,
     return names, tally
 
 
+def percentile_of(hist: list[int], today: int) -> float | None:
+    """오늘이 **자기 직전 `WINDOW` 봉 분포의 몇 번째 백분위**인가 (0~100).
+
+    ## 왜 σ 가 아니라 백분위인가 [OWNER 2026-10-21 — 외부 관례]
+
+    CFTC COT 를 읽는 관례가 이것이다(흔히 「COT index」) — σ 를 안 쓰는 이유가
+    우리가 겪은 것과 같다: **흐름은 꼬리가 두껍고 비대칭**이라 σ 는 분포를
+    가정하고, 분모가 작은 주체에서 **터진다**(모듈 머리 §순위 키의 그 실측 —
+    하한 없이 σ 로 세우면 3년 1위가 개인 −598계약이 된다).
+
+    백분위는 **분포를 가정하지 않고 0~100 에 갇힌다.** 그래서
+    ① 터지지 않고 ② 주체끼리·면끼리 **같은 자**로 비교되고(계약과 백만원이
+    같은 눈금이 된다) ③ 「평소보다 센가」가 「상위 몇 %」로 읽힌다.
+
+    ## 동점 처리 — **중간 순위**다
+
+    `종금` 처럼 0 이 많은 주체는 동점이 수십 개다. 「미만의 수」로만 세면 0 인 날이
+    전부 같은 백분위에 몰리면서 **0 이 분포의 바닥**으로 읽히는데, 0 은 중앙에
+    가깝다. 그래서 동점을 절반씩 나눠 갖는 중간 순위를 쓴다 —
+    `(미만 + 동점/2) / n`. 통계의 표준 규약이고, 0 이 많아도 0 의 백분위가
+    제자리에 선다.
+
+    창은 **오늘을 뺀** 직전 `WINDOW` 봉이다(`sigma_of` 와 같은 까닭).
+    """
+    w = hist[-WINDOW:]
+    if len(w) < MIN_OBS:
+        return None
+    below = sum(1 for v in w if v < today)
+    ties = sum(1 for v in w if v == today)
+    return round(100.0 * (below + 0.5 * ties) / len(w), 1)
+
+
 def sigma_of(hist: list[int], today: int) -> tuple[float | None, float]:
     """(편차, 일평균 |순매수|) — 창은 **오늘을 뺀** 직전 `WINDOW` 봉.
 
@@ -307,14 +358,19 @@ def sigma_of(hist: list[int], today: int) -> tuple[float | None, float]:
 
 
 def rank_rows(rows: list[dict[str, Any]], floor: float) -> list[dict[str, Any]]:
-    """편차 큰 순. **하한 아래는 순위 밖**이고 지우지 않는다(위 §순위 키).
+    """**분포 안의 자리가 극단인 순.** 하한 아래는 순위 밖이고 지우지 않는다.
+
+    키는 **`|백분위 − 50|`** 이다(위 §순위 키) — 큰 매수와 큰 매도가 둘 다
+    극단이고, 50 이 평소다. 종전 `|σ|` 와 같은 뜻이면서 0~50 에 갇힌다.
 
     순위를 못 받은 줄은 뒤에 서고 `rank` 가 `None` 이다 — 「없다」와 「0등」은
     다른 말이다.
     """
     for r in rows:
-        r["ranked"] = bool(r["avgAbs"] >= floor and r["sigma"] is not None)
-    rows.sort(key=lambda r: (not r["ranked"], -abs(r["sigma"] or 0.0), r["key"]))
+        r["ranked"] = bool(r["avgAbs"] >= floor and r.get("pct") is not None)
+    rows.sort(key=lambda r: (not r["ranked"],
+                             -abs((r.get("pct") if r.get("pct") is not None else 50.0) - 50.0),
+                             r["key"]))
     n = 0
     for r in rows:
         if r["ranked"]:
@@ -816,6 +872,8 @@ def _series_row(key: str, label: str, group: str, dates: list[str],
     """한 주체의 오늘·구간·편차. **창은 오늘을 뺀** 직전 `WINDOW` 봉이다."""
     today = vals[-1] if vals else 0
     sigma, avg = sigma_of(vals[:-1], today)
+    #: ★순위 키. σ 는 **남긴다** — 읽는 사람이 이미 보는 수를 지우지 않는다.
+    pct = percentile_of(vals[:-1], today)
     year = dates[-1][:4] if dates else ""
     return {
         "key": key, "label": label, "group": group,
@@ -824,6 +882,8 @@ def _series_row(key: str, label: str, group: str, dates: list[str],
         "d20": sum(vals[-20:]),
         "ytd": sum(v for dte, v in zip(dates, vals) if dte[:4] == year),
         "sigma": sigma,
+        #: 0~100. 50 이 평소다. 못 재면 `None`(창이 안 찼다).
+        "pct": pct,
         "avgAbs": round(avg),
     }
 

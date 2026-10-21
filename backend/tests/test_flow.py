@@ -128,14 +128,16 @@ class Test이동평균:
 
 
 class Test순위:
+    """순위 키는 **백분위**다 [2026-10-21] — 정렬은 `|백분위 − 50|`."""
+
     @staticmethod
     def _rows(*spec: tuple[str, float | None, float]):
-        return [{"key": k, "sigma": s, "avgAbs": a} for k, s, a in spec]
+        return [{"key": k, "pct": p, "sigma": None, "avgAbs": a} for k, p, a in spec]
 
     def test_하한_아래는_순위_밖이고_지우지_않는다(self):
         """±20계약짜리 종금이 1위가 되는 것을 막는 그 하한."""
         rows = flow.rank_rows(
-            self._rows(("MERCH", 3.1, 27.0), ("SECU", -0.93, 6961.0)),
+            self._rows(("MERCH", 97.6, 27.0), ("SECU", 28.2, 6961.0)),
             flow.RANK_FLOOR)
         by = {r["key"]: r for r in rows}
         assert by["MERCH"]["ranked"] is False
@@ -143,20 +145,47 @@ class Test순위:
         assert by["SECU"]["rank"] == 1
         assert len(rows) == 2                     # 지우지 않는다
 
-    def test_편차의_크기로_세운다_부호가_아니라(self):
-        """−1.09 가 +0.72 보다 센 날이다."""
+    def test_백분위로도_하한이_필요하다(self):
+        """★**내가 틀린 자리** [실측 2026-10-21].
+
+        바꾸기 전에 「백분위는 안 터지니 하한을 없앨 수 있다」로 적었는데, 전수로
+        재니 하한 아래가 1위를 가져가는 비중이 백분위 **37.9/60.8/29.1%** 로 σ
+        (36.6/57.4/27.7%)와 거의 같고 **오히려 살짝 더 샌다.** 종금이 10계약
+        거래한 날 백분위 97.6 이 **옳고** 다만 뜻이 없다 — 하한이 막던 것은 σ 의
+        폭발이 아니라 그 뜻 없음이었다.
+
+        그래서 이 시험이 **하한 없이 세우면 어떻게 되나**를 못 박는다.
+        """
+        spec = (("MERCH", 97.6, 2.0), ("SECU", 52.4, 3491.0))
+        #: 하한을 0 으로 두면(= 없애면) 10계약짜리가 1위다.
+        no_floor = flow.rank_rows(self._rows(*spec), 0.0)
+        assert [r["key"] for r in no_floor] == ["MERCH", "SECU"]
+        #: 하한을 두면 뜻 있는 쪽이 1위이고 작은 쪽은 순위 밖이다.
+        with_floor = flow.rank_rows(self._rows(*spec), flow.RANK_FLOOR)
+        assert [r["key"] for r in with_floor] == ["SECU", "MERCH"]
+        assert with_floor[1]["ranked"] is False
+
+    def test_극단성으로_세운다_방향이_아니라(self):
+        """백분위 10 이 72 보다 센 날이다 — 큰 매도도 극단이다."""
         rows = flow.rank_rows(
-            self._rows(("PENS", 0.72, 702.0), ("BANK", -1.09, 3805.0)),
+            self._rows(("PENS", 72.0, 702.0), ("BANK", 10.0, 3805.0)),
             flow.RANK_FLOOR)
         assert [r["key"] for r in rows] == ["BANK", "PENS"]
 
-    def test_편차를_못_낸_주체도_순위_밖이다(self):
+    def test_50은_평소다(self):
+        """정확히 평소인 주체가 꼴등이어야 한다 — `|50 − 50| = 0`."""
+        rows = flow.rank_rows(
+            self._rows(("FLAT", 50.0, 9999.0), ("HOT", 55.0, 9999.0)),
+            flow.RANK_FLOOR)
+        assert [r["key"] for r in rows] == ["HOT", "FLAT"]
+
+    def test_백분위를_못_낸_주체도_순위_밖이다(self):
         rows = flow.rank_rows(self._rows(("X", None, 9999.0)), flow.RANK_FLOOR)
         assert rows[0]["ranked"] is False
 
     def test_순위_밖은_뒤에_선다(self):
         rows = flow.rank_rows(
-            self._rows(("SMALL", 9.9, 1.0), ("BIG", 0.1, 9999.0)),
+            self._rows(("SMALL", 99.9, 1.0), ("BIG", 51.0, 9999.0)),
             flow.RANK_FLOOR)
         assert [r["key"] for r in rows] == ["BIG", "SMALL"]
 
@@ -165,6 +194,35 @@ class Test순위:
         그래서 틈 가운데(40,000)로 내렸다. 그 여유를 여기서 지킨다."""
         assert flow.CASH_RANK_FLOOR <= 49_450 * 0.9
         assert flow.CASH_RANK_FLOOR >= 34_924 * 1.1
+
+
+class Test백분위:
+    """0~100 에 갇히고 분포를 가정하지 않는다. 동점은 **중간 순위**."""
+
+    def test_창이_안_차면_None이다(self):
+        assert flow.percentile_of([1] * (flow.MIN_OBS - 1), 5) is None
+
+    def test_0에_몰린_주체의_0은_중앙에_선다(self):
+        """★동점을 절반씩 나눠 갖는 규약 — 「미만의 수」로만 세면 0 이 **바닥**
+        으로 읽힌다. 종금처럼 0 이 많은 주체에서 그게 거짓이 된다."""
+        hist = [0] * 200 + [10] * 26 + [-10] * 26
+        got = flow.percentile_of(hist, 0)
+        assert got is not None and 45.0 <= got <= 55.0
+
+    def test_최고와_최저가_끝에_붙는다(self):
+        """⚠`x or 기본값` 을 쓰지 않는다 — **0.0 이 유효한 값**이라
+        `0.0 or 100` 이 100 이 된다(이 시험을 쓰면서 한 번 걸렸다)."""
+        hist = list(range(-130, 130))
+        hi = flow.percentile_of(hist, 10_000)
+        lo = flow.percentile_of(hist, -10_000)
+        assert hi is not None and hi > 99.0
+        assert lo is not None and lo < 1.0
+
+    def test_꼬리가_두꺼워도_안_터진다(self):
+        """σ 가 터지는 모양 — 거의 전부 0 이고 한 번 큰 값. 백분위는 갇힌다."""
+        hist = [0] * 259 + [1_000_000]
+        got = flow.percentile_of(hist, 50)
+        assert got is not None and 0.0 <= got <= 100.0
 
 
 class Test페이로드:
