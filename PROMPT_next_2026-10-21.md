@@ -16,9 +16,9 @@
 리포 깨끗 · 미푸시 0 · 로컬 master 가 origin/main 을 추적한다
 (origin/master 는 유령이니 쳐다보지 마라). Vercel 은 main 에서 굽는다.
 
-★★첫 할 일은 코드가 아니라 디스크다. C 드라이브가 237GB 중 3.7GB(99%) 남았고
-[OWNER 10-20] 「1/2는 내일」로 넘긴 청소가 있다. 프롬프트 §0 ⓐ 의 세 줄을 오너에게
-실행해 달라고 하라(자동 모드 분류기가 삭제를 막는다). 25GB 가 돌아온다.
+✔디스크는 끝났다 — 2026-10-21 에 **6.14GB → 30.84GB**(+24.7GB). §0 ⓐ 를 다시 돌리지
+마라. ★그 과정의 교훈 하나: **`!` 는 Bash 로 돈다** — 오너에게 삭제를 청할 때 PowerShell
+cmdlet 으로 적으면 `command not found` 로 죽는다(10-20 의 명령이 그랬다).
 
 그다음 §0 의 ⓑ~ⓔ(10분):
   ⓑ :8200 이 사는지. ★404 가 나오면 서버가 꺼진 게 아니라 «프로세스 나이»다 —
@@ -56,40 +56,32 @@ hex 는 direction.css 에만 · 같은 리포를 두 세션이 만지면 경로�
 
 ## §0 먼저 — 숨 쉬는지 본다 (15분)
 
-### ⓐ ★★디스크가 먼저다 — C 드라이브 99% [OWNER 10-20 「1/2는 내일」]
+### ⓐ ✔디스크 — **끝났다 [2026-10-21]**
 
-**237GB 중 3.7GB 남았다.** 코드를 만지기 전에 이것부터다. 범인은 `Local\Temp`
-26.9GB 이고, 그중 `arctic/pit/data.mdb` **244개 · 25.3GB** 다 —
-★**희소 파일이 아니라 실제 25.3GB**(`fsutil sparse queryflag` 로 확인했다. 다시 재지 마라).
+**여유 6.14GB → 30.84GB** 로 돌아왔다(+24.7GB). 10-20 이 추정한 「25GB」가 맞았다.
+`Temp` 에 남은 200MB 이상은 **당일 것 둘뿐**이다(`claude` 714MB — 그중 하나가 지금
+세션 스크래치패드 · `pytest-of-infomax` 201MB). **다시 재지 말고 다시 지우지 마라.**
 
-전부 **6일 전**에 멈췄고 잡고 있는 프로세스는 없다(살아 있는 `python`·`node` 는 전부
-당일 것). ⚠`pythonw 21560` 은 **라이브 봇이니 건드리지 말 것** — 일괄
-`Stop-Process -Name python` 금지.
+지운 것: `troika*` 두 덩이(15.1GB) + 닫힌 Troika 세션 스크래치패드의
+`pt`(`.mdb` 88개·4,070MB)와 `pt2`(`test_*` 96개·6,869MB).
 
-세 줄이고, ⚠**자동 모드 분류기가 삭제를 막으니** 오너에게 `!` 로 실행을 청한다:
+★★**`!` 는 Bash 로 돈다 — PowerShell 이 아니다.** 10-20 이 적어 둔 명령이 PowerShell
+cmdlet 이어서 오너의 첫 실행이 `Get-ChildItem: command not found` 로 죽었다. 다음에
+오너에게 삭제를 청할 때는 **Bash 로 적어라**(`rm -rf …`), 아니면
+`powershell -NoProfile -Command "…"` 로 감싸라.
 
-```powershell
-Get-ChildItem "$env:LOCALAPPDATA\Temp" -Directory -Filter "troika*" -Force | Remove-Item -Recurse -Force
-Get-ChildItem "$env:LOCALAPPDATA\Temp\claude\C--Users-infomax-Desktop-Project-Troyka\670b6bd7-5afc-4860-98f2-a8f3db6c35d8\scratchpad\pt2" -Directory -Filter "test_*" -Force | Remove-Item -Recurse -Force
-Get-PSDrive C | Select-Object @{n='FreeGB';e={[math]::Round($_.Free/1GB,2)}}
-```
+★**10-20 의 명령은 `pt` 를 몰랐다** — `pt2/test_*` 만 지목해서 4,070MB 가 남았을
+것이다. 같은 세션 스크래치패드 안에 `pt`·`pt2` **둘**이 있다. 다음에 같은 일이
+생기면 `scratchpad` 한 단계를 먼저 재라.
 
-3.7GB → **29GB 안팎**이면 맞다. 함정 둘:
+⚠여전히 참인 것 둘: `pythonw` 는 **라이브 봇이니 건드리지 말 것**(일괄
+`Stop-Process -Name python` 금지) · `pytest-of-infomax` 는 **당일 것이라 지우지 마라**.
 
-- ★첫 줄의 필터는 **`troika*`** 다. `troika_dryrun_*` 로 거르면
-  `troika-pytest-381d93f2-2072`(189MB·7.2일)가 안 걸려 「다 지웠는데 왜 남지」가 된다.
-- ⚠둘째 줄 경로에 **세션 id** 가 박혀 있어 오타가 쉽다. 안 줄어들면 거기부터 보라.
-- ⚠`pytest-of-infomax` 201MB 는 **당일 것이니 지우지 마라.** ①②와 생김새가 비슷해서
-  같이 쓸어버리기 쉬운 자리다.
-
-`Temp` 전수 집계(다시 재지 마라): `troika_dryrun_07_eos7vswm` 14,871MB(6일) ·
-`claude` 11,620MB(안의 Troika 스크래치패드) · `troika-pytest-*` 189MB(7.2일) ·
-나머지는 20MB 아래 잡음.
-
-★**뿌리 원인은 이 리포가 아니다.** Troika 쪽이 시험 **케이스마다** LMDB 를 새로 열어
-한 번 돌리면 25GB 가 쌓인다. `tmp_path`(함수 스코프)를 세션 스코프로 돌리거나 픽스처가
-끝에 닫고 지우면 된다 — **그 레인 주인이 할 일**이라 손대지 않았다. Troika 세션이
-열리면 전할 것. 6일에 한 번 이렇게 쌓이면 주마다 디스크가 찬다.
+★**뿌리 원인은 이 리포가 아니고 아직 살아 있다.** Troika 쪽이 시험 **케이스마다**
+LMDB 를 새로 열어 한 번 돌리면 10~25GB 가 쌓인다(`.mdb` 184개를 이번에 지웠다).
+`tmp_path`(함수 스코프)를 세션 스코프로 돌리거나 픽스처가 끝에 닫고 지우면 된다 —
+**그 레인 주인이 할 일**이라 손대지 않았다. Troika 세션이 열리면 전할 것.
+**안 고치면 주마다 다시 찬다.**
 
 ### ⓑ ★★라이브 백엔드 — 404 는 「꺼짐」이 아니라 **프로세스 나이**다
 
