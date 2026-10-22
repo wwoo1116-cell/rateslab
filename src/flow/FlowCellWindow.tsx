@@ -77,7 +77,11 @@ export function FlowCellWindow({
       width={760}
       onClose={onClose}
     >
-      <VStack gap={1.5} width="100%" minWidth={0}>
+      {/* ★패딩은 **창 머리와 같은 리듬** — `.sr-window-body` 는 패딩 0 이고
+          머리가 `0 8 0 16` 이라, 없으면 제목만 16px 안으로 들어간다(실측
+          2026-10-22, 순위 창에서 같은 계단을 쟀다). 캐논은 `FlowLabWindow`. */}
+      <VStack gap={1.5} width="100%" minWidth={0}
+        paddingX={2} paddingTop={0.5} paddingBottom={2}>
         {/* ★이 창이 무엇인지 **먼저** 적는다 — 「재료」와 「판단」의 경계가
             흐려지면 이 면 전체가 예측 화면으로 읽힌다. */}
         <Text as="p" font="legal" color="fgMuted">
@@ -137,6 +141,23 @@ export function FlowCellWindow({
                  0 으로 적으면 「안 들고 있다」가 되어 거짓이 된다. */
               <Stat label="보유" value="—"
                 note="잔고표에 이 주체의 짝이 없어요 — 0 이라는 뜻이 아니에요" />
+            )}
+            {/* ★COT index — **잔고의 정규화판**이고 이 칸의 제 자리다.
+                위 「보유」는 액면 조라 주체끼리 못 견주고, 이 수는 0~100 이라
+                견줄 수 있다. 창은 3년(156주)으로 CFTC 관례 그대로이고,
+                PD 인수분은 빼고 잰다(서버 `cot_index` 머리).
+
+                ⚠`cotUsable` 이 거짓이면 **수를 적지 않는다**. 단조로 쌓는
+                주체에서는 늘 100 근처라, 적으면 「극단으로 길다」로 읽힌다 —
+                그 말을 하는 자리는 왼쪽 「분포 자리」(변화량)다. */}
+            {sub.cot != null && sub.cotUsable ? (
+              <Stat label="COT index" value={`${Math.round(sub.cot)}`}
+                note="3년 순포지션 범위에서의 자리 · 100이 3년 최고" />
+            ) : (
+              <Stat label="COT index" value="—"
+                note={sub.cot == null
+                  ? '3년(156주) 창이 아직 안 찼어요'
+                  : '이 주체는 포지션을 되돌리지 않아 수준으로는 못 재요 — 왼쪽 분포 자리를 보세요'} />
             )}
           </StatColumn>
         </HStack>

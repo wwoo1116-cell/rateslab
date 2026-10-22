@@ -71,6 +71,7 @@ import {
 } from './api';
 import { FlowLabWindow } from './FlowLabWindow';
 import { FlowMatrix } from './FlowMatrix';
+import { CotLine, CotPanel } from './CotPanel';
 import { FlowTable } from './FlowTable';
 import { FlowCellWindow } from './FlowCellWindow';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
@@ -923,6 +924,16 @@ export function FlowPage() {
               </HStack>
             </HStack>
           </VStack>
+          {/* ── 포지셔닝 한 줄 — **판정보다 앞** ──────────────────────────
+              차례의 근거: 감마는 「지금 사는 속도가 어떻게 바뀌나」이고 이 줄은
+              「애초에 얼마나 들고 있나」다. 수준이 먼저 서야 속도가 어느 자리에서
+              일어나는 일인지 읽힌다 — 외부 COT 패널도 지수 막대를 맨 위에 둔다.
+              열한 줄 전부는 「주체별 순위」 창에 있다(`CotLine` 머리). */}
+          {pickedSub ? (
+            <VStack paddingX={2} paddingBottom={1}>
+              <CotLine row={pickedSub} />
+            </VStack>
+          ) : null}
           {/* ── 판정 — 이 카드의 머리말 ──────────────────────────────────── */}
           {got.gamma ? (
             <VStack paddingX={2} paddingBottom={1}>
@@ -1034,11 +1045,16 @@ export function FlowPage() {
       {rankOpen && got.matrix ? (
         <FloatingWindow
           windowKey="flow-rank"
-          title={`주체별 순위 · ${CASH_TENOR_LABEL[cashTenor]}`}
+          title={`포지셔닝과 순위 · ${CASH_TENOR_LABEL[cashTenor]}`}
           width={1180}
           onClose={() => setRankOpen(false)}
         >
-          <VStack gap={0.5} width="100%" minWidth={0}>
+          {/* ★패딩은 **창 머리와 같은 리듬** [실측 2026-10-22]. 없었다 —
+              `.sr-window-body` 는 패딩 0 이고 `.sr-window-head` 가 `0 8 0 16` 이라,
+              제목은 387 에 서는데 본문·표·패널이 전부 **371** 에 섰다(16px 계단).
+              캐논은 `FlowLabWindow` 의 `paddingX={2}` 다(CLAUDE.md 얼라인 5). */}
+          <VStack gap={0.5} width="100%" minWidth={0}
+            paddingX={2} paddingTop={0.5} paddingBottom={2}>
             {/* ★마지막 열이 **올해**라는 것을 부제가 말한다 — 위 표의 구간과
                 다른 창이라 같은 주체가 두 수로 선다. 「구간이 다르다」를 안 적으면
                 화면이 스스로를 반박하는 것처럼 읽힌다. */}
@@ -1055,6 +1071,11 @@ export function FlowPage() {
                 {got.hold.asof ? ` (잔고 기준일 ${got.hold.asof})` : ''}
               </Text>
             ) : null}
+            {/* ★포지셔닝이 **표보다 먼저** 선다 — COT 관례 그대로다
+                (`CotPanel` 머리). 표는 「오늘 얼마나 샀나」의 전수이고, 이
+                패널은 「지금 어디에 서 있나」다. 창의 제목이 「순위」인 까닭도
+                이쪽이다 — 수준의 순위가 먼저고 흐름의 순위가 그 증거다. */}
+            <CotPanel rows={got.sub} />
             <FlowTable rows={got.sub} side={side} floor={got.rankFloor} unit={shown} showHold={!!got.hold}
               highlight={hover} onHover={setHover}
               picked={got.series.daily?.key ?? null} onPick={setDaily} />

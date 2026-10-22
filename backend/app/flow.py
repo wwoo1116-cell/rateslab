@@ -550,6 +550,119 @@ def cash_dv01_per_unit(y_pct: float, bucket: str) -> float:
     return CASH_FACE_UNIT / 100.0 * par_pvbp(y_pct, years)
 
 
+#: ★COT index 의 창 — **156주 = 3년**. CFTC 관례 그대로이고, 우리는 일별이라
+#: 영업일로 환산해 쓴다(주 5일 × 156 = 780봉).
+COT_WEEKS = 156
+COT_WINDOW = COT_WEEKS * 5
+
+
+def _running(vals: list[int]) -> list[int]:
+    """누적 합. `cot_index` 가 쓰는 순포지션 대용이고, 까닭은 그 함수 머리에 있다."""
+    out: list[int] = []
+    acc = 0
+    for v in vals:
+        acc += v
+        out.append(acc)
+    return out
+
+
+#: 누적이 **되돌아온 정도**의 문턱. 이 아래면 단조 축적이라 수준 지표가 천장에 붙는다.
+#: 0.25 는 실측에서 두 무리가 갈리는 자리다(아래 `_cot_usable` 머리의 표).
+COT_RETRACE_MIN = 0.25
+
+
+def _cot_usable(run: list[int]) -> tuple[bool, float | None]:
+    """수준 지표(COT index)가 **이 주체에서 뜻이 있나**.
+
+    ## 왜 이 검사가 필요한가 [실측 2026-10-22]
+
+    COT index 는 순포지션이 **평균회귀한다는 전제** 위에 있다 — 선물 투기자는
+    롱↔숏을 뒤집으니까. 그런데 현물 보유는 **단조로 쌓인다.** 관례대로 구현해
+    전 주체에 걸었더니 지난 1년 동안:
+
+        외국인·보험·개인·국가지자체·기타법인   ≥90 에 **100%** (중앙 100.0)
+        금융투자                            ≤10 에 **100%** (중앙  0.0)
+        움직인 것은 은행(0~26)과 기금공제(60~100) 둘뿐
+
+    8/10 이 천장·바닥에 붙어 **변별을 못 한다.**
+
+    ## 「파느냐」가 아니라 「되돌아오느냐」다
+
+    보험은 **38% 의 날에 순매도**한다 — 매도 전제가 없는 게 아니다. 다만 누적
+    되돌림이 **6.8%** 뿐이라 사실상 단조 상승이다. 되돌림으로 줄을 세우면:
+
+        금융투자 100.0% · 은행 100.0% | 기타금융 21.8% · 기금공제 12.0% ·
+        자산운용 7.0% · 보험 6.8% · 기타법인 5.1% · 외국인 1.1% ·
+        개인 0.8% · 국가지자체 0.7%
+
+    **되돌림 100% 는 금융투자와 은행 둘뿐**이고, 그 둘이 양방향(딜러·흡수자)이다.
+    ★이것은 결함이 아니라 **시장의 성질**이다 [OWNER 2026-10-22 — 「보험은 만기
+    매칭해야 하니까 정상 아닌가」]. 맞는 말이고, 그래서 지우는 게 아니라
+    **단방향 주체는 수준 대신 변화량으로 읽는다.**
+    """
+    if len(run) < COT_WINDOW:
+        return False, None
+    win = run[-COT_WINDOW:]
+    span = max(win) - min(win)
+    if span <= 0:
+        return False, 0.0
+    peak = win[0]
+    dd = 0
+    for x in win:
+        peak = max(peak, x)
+        dd = max(dd, peak - x)
+    r = round(dd / span, 3)
+    return r >= COT_RETRACE_MIN, r
+
+
+def cot_index(net: list[int]) -> float | None:
+    """★**COT index 를 관례 그대로** — [OWNER 2026-10-22 — 「COT index 관례를
+    따라가 달라」].
+
+    정의는 Larry Williams 의 그것이고 지금도 그대로 쓰인다:
+
+        (현재 순포지션 − 창 안 최저) ÷ (창 안 최고 − 창 안 최저) × 100
+
+    범위가 0 이면 **50** 을 돌려준다(관례의 안전값).
+
+    ## 우리 `percentile_of` 와 **세 가지가 다르다**
+
+    둘 다 0~100 이라 같아 보이지만 같은 수가 아니다. 섞어 쓰면 안 된다.
+
+    ① **대상이 다르다.** COT index 는 **순포지션(스톡)** 위에서 센다.
+       `percentile_of` 는 **순매수(플로우)** 위에서 센다. 「지금 얼마나 들고
+       있나」와 「오늘 얼마나 샀나」는 다른 질문이다.
+    ② **창이 다르다.** COT 는 156주(3년), 우리 백분위는 252봉(1년).
+    ③ **셈법이 다르다.** COT 는 **min-max 정규화**(최고·최저 두 점만 쓴다),
+       백분위는 **순위**(분포 전체를 쓴다). 그래서 COT index 는 바깥값 하나에
+       휘둘리고, 백분위는 안 휘둘린다. 둘 다 맞는 자이고 뜻이 다르다.
+
+    ## 왜 **누적 순매수**로 재도 되는가 — 이게 열쇠다
+
+    진짜 순포지션은 보유잔고인데 서버는 그것을 **마지막 날 한 장**만 읽는다
+    (`_holdings`). 그런데 **min-max 는 평행이동에 불변**이다 —
+    누적 순매수는 「참 보유 − 창 시작 시점의 미지 보유」이고, 그 미지의 상수가
+    분자·분모에서 **약분된다.** 그래서 창 안에서는 **같은 수가 나온다.**
+
+    덤이 둘이다:
+      · 「누적의 시작일이 임의라 뜻이 없다」는 이 모듈의 경고(§보유잔량)가
+        **이 지표에는 해당하지 않는다** — 약분되기 때문이다.
+      · 보유잔고표에 **짝이 없는 주체**(딜러 `financial_investment`·기금공제)도
+        잴 수 있다. 흐름은 모든 주체에 있다.
+
+    ⚠ 단, **창이 자료 공백을 건너면 안 된다.** 현물 흐름에 2016~2019 공백이
+    있으므로(모듈 머리), 창이 그 구간에 걸치면 「3년」이 달력 3년이 아니다.
+    그래서 창이 안 차면 `None` 이고, 화면은 그때 이 수를 안 세운다.
+    """
+    if len(net) < COT_WINDOW:
+        return None
+    win = net[-COT_WINDOW:]
+    lo, hi = min(win), max(win)
+    if hi == lo:
+        return 50.0
+    return round((win[-1] - lo) / (hi - lo) * 100, 1)
+
+
 def percentile_of(hist: list[int], today: int) -> float | None:
     """오늘이 **자기 직전 `WINDOW` 봉 분포의 몇 번째 백분위**인가 (0~100).
 
@@ -1245,7 +1358,8 @@ def board(side: str = "fut", tenor: str = "3Y", pd_share: float | None = None,
 
 
 def _series_row(key: str, label: str, group: str, dates: list[str],
-                vals: list[int], native: list[int] | None = None) -> dict[str, Any]:
+                vals: list[int], native: list[int] | None = None,
+                level: list[int] | None = None) -> dict[str, Any]:
     """한 주체의 오늘·구간·편차. **창은 오늘을 뺀** 직전 `WINDOW` 봉이다.
 
     ★`native` 는 **하한을 재는 계열**이다 [2026-10-21]. 화면 눈금이 DV01 이면
@@ -1262,6 +1376,18 @@ def _series_row(key: str, label: str, group: str, dates: list[str],
     _s, avg = sigma_of(base[:-1], base[-1] if base else 0)
     #: ★순위 키. σ 는 **남긴다** — 읽는 사람이 이미 보는 수를 지우지 않는다.
     pct = percentile_of(vals[:-1], today)
+    #: ★COT index — **순포지션 위, 3년, min-max**(`cot_index` 머리). 위 `pct` 와
+    #: 는 **다른 수**다: 저쪽은 「오늘 얼마나 샀나」의 1년 순위, 이쪽은 「지금
+    #: 얼마나 들고 있나」의 3년 자리. 둘을 한 칸에 섞어 적으면 안 된다.
+    #:
+    #: ⚠**PD 이전 계열로 잰다**(`level`). PD 인수분은 「시장에서 산 것」이 아니라
+    #: 배정받은 것이고 발행은 늘 양수라, 더하면 단조 성분이 주입된다 —
+    #: 실측 2026-10-22: 은행이 PD 끔 10.6 → PD 켬 **98.7** 로 천장에 붙고
+    #: 되돌림이 100% → 3.9% 로 죽었다. 포지셔닝은 PD 끔에서 잰다.
+    lv = level if level is not None else base
+    run = _running(lv)
+    cot = cot_index(run)
+    usable, retrace = _cot_usable(run)
     year = dates[-1][:4] if dates else ""
     return {
         "key": key, "label": label, "group": group,
@@ -1272,6 +1398,13 @@ def _series_row(key: str, label: str, group: str, dates: list[str],
         "sigma": sigma,
         #: 0~100. 50 이 평소다. 못 재면 `None`(창이 안 찼다).
         "pct": pct,
+        #: ★0~100. CFTC 관례 그대로(156주 · min-max · 순포지션). 창이 안 차면 `None`.
+        "cot": cot,
+        #: ★이 주체에서 그 수가 **뜻이 있나**(`_cot_usable` 머리). 거짓이면 화면은
+        #: 수준 대신 **변화량**(`pct`)을 세운다.
+        "cotUsable": usable,
+        #: 누적이 되돌아온 정도(0~1). 「왜 못 쓰나」를 화면이 말할 때 쓴다.
+        "retrace": retrace,
         "avgAbs": round(avg),
     }
 
@@ -1347,6 +1480,12 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
     if not dates:
         raise FlowError("현물 자료가 없어요.")
 
+    #: ★**PD 더하기 이전**을 붙잡아 둔다 — 포지셔닝(`cot`)은 이 위에서 잰다.
+    #: 까닭은 `_cot_usable`/`cot_index` 머리에 있다(PD 는 늘 양수라 단조 성분을
+    #: 주입하고, 실측에서 은행 COT 가 10.6 → 98.7 로 천장에 붙었다).
+    #: `apply_pd` 는 새 dict 를 돌려주므로 이 참조는 PD 로 안 바뀐다.
+    pre_pd = cols
+
     #: 발행시장 인수 — 노브가 켜졌을 때만 공급을 두 주체에 더한다(§현물 만기물 ②).
     pd: dict[str, Any] | None = None
     if pd_share is not None:
@@ -1407,7 +1546,8 @@ def _cash_board(d: FlowData, tenor: str = "ALL", pd_share: float | None = None,
     #: 아니다(§보유잔량). 고른 만기물로 갈린다.
     hold, hold_asof, hold_note = holdings_for(d.holdings, tenor)
     rows = rank_rows(
-        [{**_series_row(c, lab, "국고채 현물", dates, cols[c], native[c]),
+        [{**_series_row(c, lab, "국고채 현물", dates, cols[c], native[c],
+                        level=pre_pd[c]),
           "hold": hold.get(c)}
          for c, lab in CASH_COLS],
         CASH_RANK_FLOOR,
