@@ -69,6 +69,7 @@ import { fmtKrw, fmtKrwFromMan, manUnits, splitCashBondKrw, splitKrw } from '@/l
 import { useFunding } from '@/state/funding';
 import type { Row } from '@/table/rows';
 import { Field, Segmented } from '@/ui/ControlCard';
+import { ChartBlank } from '@/ui/DataState';
 import { fitWidth, useControlFont } from '@/ui/fit';
 import { BUTTON_ROW, GAP } from '@/ui/gaps';
 import { CONTROL_H } from '@/ui/controlHeight';
@@ -1370,7 +1371,17 @@ export function BacktestWindow({
                     ]}
                   />
                 </Box>
-              ) : null;
+              ) : (
+                /* ★그림 자리의 빈칸은 **0선 + 한 문장**이다 [디자인 감사
+                   2026-10-21]. 종전에는 `null` 이라, 차트 한 쌍이 설 자리가
+                   **아무 말 없이 사라졌다** — 위 결과 블록과 아래 포지션 표가
+                   붙어서, 읽는 사람에게는 「이 창엔 원래 그림이 없다」로 보인다.
+                   점이 둘보다 적은 것은 자료의 사실이므로 그렇게 적는다. */
+                <ChartBlank
+                  minHeight={200}
+                  note="그릴 점이 둘보다 적어요 — 구간이 너무 짧아요."
+                />
+              );
             })()}
 
             {/* 포지션별 — 선이 아니라 숫자다. 줄마다 자기 `kind` 를 지므로

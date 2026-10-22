@@ -294,6 +294,13 @@ export function FlowPage() {
   /* 이동평균 창은 더 이상 **고르는 것이 아니다** — 그림이 넷을 늘 그린다
      (`MA_INK` 머리). 서버에 `ma` 를 안 보내면 `series.ma` 는 `null` 이고
      `series.mas` 넷만 온다. */
+  /** 누적 그림을 펴 놓았나 — **기본은 접힘** [OWNER 2026-10-22 — 「걍 뺄 수
+   *  있는 건 다 빼보는 방식으로 미니멀하게, COT 정도의 밀도면 좋을 듯」].
+   *
+   *  지우지 않고 접는 까닭: 누적은 **증거**다(「이 구간에 얼마나 샀나」). 다만
+   *  위 그림이 같은 계열을 일별로 이미 그리고 있어서, 첫 화면에서 둘이 동시에
+   *  설 까닭이 없다. 접으면 일별 그림이 카드 높이를 다 쓴다. */
+  const [cumOpen, setCumOpen] = useState(false);
   const [pdOn, setPdOn] = useState(false);
   const [pdPct, setPdPct] = useState(60);
   const [daily, setDaily] = useState<string | null>(null);
@@ -495,6 +502,28 @@ export function FlowPage() {
 
   /** 일별 막대 하나 + 그 위의 이동평균 선(⑤). 막대는 **부호마다 색**이고,
    *  평균선은 계열색 셋째(바이올렛) — 빨강·파랑 막대 위에서 둘 다와 갈린다. */
+  /** 그림에 설 이동평균 창 — **서버의 「잡음」 판정이 고른다**.
+   *
+   *  ★[OWNER 2026-10-22 — 「걍 뺄 수 있는 건 다 빼보는 방식으로 미니멀하게,
+   *  COT 정도의 밀도면 좋을 듯」]. 10-20 의 「동시에 여러 MA」를 이 지시가
+   *  덮는다 — 넷을 다 그리던 자리다.
+   *
+   *  하드코딩이 아니라 `gamma.rows[].trust` 를 읽는다. 그 판정은 서버가 실측한
+   *  것이고(부호가 이어지는 길이 — Γ5·Γ20 은 5~7일, 10년에 150번 뒤집힌다),
+   *  **판정 문장도 이미 그 둘을 빼고 쓴다**. 그림만 넷을 같은 무게로 그려서,
+   *  한 카드가 「이 둘은 신호가 아니에요」라고 적으면서 동시에 그리고 있었다.
+   *
+   *  ⚠**수는 안 지운다** — 감마 줄에 넷이 그대로 있고 잡음인 둘은 흐리다.
+   *  「재 봤고 잡음이더라」는 사실이지, 숨길 것이 아니다.
+   *
+   *  판정이 없으면(옛 서버) 넷을 다 그린다 — 「모른다」를 「잡음」으로 읽지 않는다. */
+  const maShown = useMemo(() => {
+    const rows = got?.gamma?.rows;
+    if (!rows?.length) return win?.mas ?? [];
+    const noisy = new Set(rows.filter((r) => r.trust === '잡음').map((r) => r.window));
+    return (win?.mas ?? []).filter((m) => !noisy.has(m.window));
+  }, [win, got]);
+
   const dailyLines: TimeLine[] = useMemo(() => {
     if (!win?.daily) return [];
     const bars: TimeLine = {
@@ -506,7 +535,7 @@ export function FlowPage() {
       colorAt: (v, p) => (v >= 0 ? p.up : p.down),
       format: fmt,
     };
-    if (!win.mas.length) return [bars];
+    if (!maShown.length) return [bars];
     /* ★평균선 **넷을 같이** 그린다 [OWNER 2026-10-20 — 「동시에 여러 MA도 보고
        싶고 그런거야」]. 하나씩 갈아 끼우면 「짧은 쪽은 식고 긴 쪽은 빨라진다」를
        기억으로 맞대야 하는데, 그건 화면이 할 일이다.
@@ -517,15 +546,22 @@ export function FlowPage() {
        믿을 만한 창**이 된다(`flow.WINDOW_TRUST` 와 같은 차례).
 
        넷 다 **왼쪽 축**이다 — 막대와 겹치면 묻힌다(위 `bars` 아래의 그 실측). */
-    return [bars, ...win.mas.map((m, i) => ({
+    /* ★진하기는 **원래 차례**(`MA_INK`)를 따른다 — 그려지는 둘만 남아도
+       감마 줄의 네 이름과 같은 잉크를 써야 눈이 이어진다. 걸러진 뒤 다시
+       0부터 매기면 60일이 가장 흐린 선이 되어 뜻이 뒤집힌다. */
+    const inkOf = (m: { window: number }) => {
+      const i = (win.mas ?? []).findIndex((x) => x.window === m.window);
+      return MA_INK[i] ?? 100;
+    };
+    return [bars, ...maShown.map((m) => ({
       id: m.key,
       values: m.values,
-      color: (p: LwPalette) => p.dim(`var(${INK[2]})`, MA_INK[i] ?? 100),
-      width: (i >= 2 ? 2 : 1) as 1 | 2,
+      color: (p: LwPalette) => p.dim(`var(${INK[2]})`, inkOf(m)),
+      width: 2 as const,
       axis: 'aux' as const,
       format: fmt,
     }))];
-  }, [win, fmt]);
+  }, [win, maShown, fmt]);
 
   /** 커서가 짚은 자리. 그림 밖이면 **마지막 봉**을 읽는다 — 「비어 있는 상태」가
    *  없어야 줄이 생겼다 사라지며 그림 높이를 흔들지 않는다. */
@@ -875,9 +911,11 @@ export function FlowPage() {
                 {CASH_TENOR_LABEL[cashTenor]} · {win?.daily?.label ?? ''} — 사는 속도
               </Text>
               <HStack gap={1} alignItems="baseline">
-                <Text as="span" font="legal" color="fgMuted">
-                  일별 {unitWord} · 누적 {cumWord}
-                </Text>
+                {/* ★단위 줄을 걷어냈다 [OWNER 2026-10-22 — 「미니멀하게」].
+                    「일별 {unitWord} · 누적 {cumWord}」였는데, 그 두 수는 바로
+                    아래 그림 제목이 **이미 괄호로 적는다**(「일별 — 자산운용
+                    (억)」·「누적 순매수 (조)」). 같은 카드에서 같은 사실을 두 번
+                    적던 자리다. */}
                 {/* ★「이 칸이 뜻이 있나」를 **직접 재는** 자리 [OWNER 2026-10-20 —
                     「이거 내가 사용할 수 있어야한다고,, Backtest에서 처럼」].
                     고른 칸이 그대로 창에 들어간다. 판정은 2026-10-20 에 KILL 이고,
@@ -898,6 +936,14 @@ export function FlowPage() {
                     이 칸 재보기
                   </button>
                 ) : null}
+                {/* ★누적 펴기 — 접힌 것을 여는 손잡이. 끄고 켜는 것이라
+                    알약의 `data-on` 문법 그대로다(앱 공용 `.sr-pillbtn`). */}
+                <button type="button" className="sr-pillbtn"
+                  data-on={cumOpen || undefined}
+                  aria-pressed={cumOpen}
+                  onClick={() => setCumOpen((v) => !v)}>
+                  누적
+                </button>
                 {/* ★장기 합산 토글 [트레이더 2026-10-21 — 「보험에서 20·30·50
                     현물 매수를 한번에 합산해서」]. 끄고 켜는 것이라 알약의
                     `data-on` 문법 그대로다(앱 공용 `.sr-pillbtn`). */}
@@ -946,24 +992,33 @@ export function FlowPage() {
               <Text as="span" font="label2">
                 일별 — {win?.daily?.label ?? ''} ({unitWord})
               </Text>
-              {/* 범례 — 선 넷의 **진하기와 창**을 짝지어 적는다. 진하기로만 갈린
-                  선이라 글자 없이는 어느 것이 몇 일인지 못 읽는다. 축이 둘이라는
-                  것도 여기서 말한다 — 안 적으면 평균선이 막대보다 위에 있는 것을
-                  「그날보다 평균이 크다」로 읽는다. */}
+              {/* 범례 — **그려진 선만**. 진하기로만 갈린 선이라 글자 없이는 어느
+                  것이 몇 일인지 못 읽는다.
+
+                  ★문장 하나를 걷어냈다 [OWNER 2026-10-22 — 「미니멀하게」]:
+                  「막대는 빨강이 순매수, 파랑이 순매도예요」는 **앱 전체 문법**
+                  이라 이 그림만 또 적을 까닭이 없었다(표·행렬·틴트가 전부 그 색을
+                  쓰고 어디서도 범례를 달지 않는다).
+
+                  ⚠**「왼쪽 축」은 남긴다.** 축이 둘인 것은 이 그림만의 사실이고,
+                  안 적으면 평균선이 막대보다 위에 있는 것을 「그날보다 평균이
+                  크다」로 읽는다. 축을 하나로 합치는 것은 못 한다 — 막대가
+                  ±10,000억이고 평균이 ±1,000억이라 합치면 평균선이 0 에 눌린다. */}
               <HStack gap={1} alignItems="baseline" flexWrap="wrap">
-                {(win?.mas ?? []).map((m, i) => (
-                  <HStack key={m.key} gap={0.5} alignItems="center">
-                    <Box width={14} height={0} borderRadius={100}
-                      style={{
-                        borderTop: `${i >= 2 ? 2 : 1}px solid var(${INK[2]})`,
-                        opacity: (MA_INK[i] ?? 100) / 100,
-                      }} />
-                    <Text as="span" font="legal" color="fgMuted">{m.label}</Text>
-                  </HStack>
-                ))}
-                <Text as="span" font="legal" color="fgMuted">
-                  평균선은 왼쪽 축 · 막대는 빨강이 순매수, 파랑이 순매도예요
-                </Text>
+                {maShown.map((m) => {
+                  const i = (win?.mas ?? []).findIndex((x) => x.window === m.window);
+                  return (
+                    <HStack key={m.key} gap={0.5} alignItems="center">
+                      <Box width={14} height={0} borderRadius={100}
+                        style={{
+                          borderTop: `2px solid var(${INK[2]})`,
+                          opacity: (MA_INK[i] ?? 100) / 100,
+                        }} />
+                      <Text as="span" font="legal" color="fgMuted">{m.label}</Text>
+                    </HStack>
+                  );
+                })}
+                <Text as="span" font="legal" color="fgMuted">왼쪽 축</Text>
               </HStack>
             </HStack>
             {/* ★`flexBasis={0}` 이 있어야 `flexGrow` 가 **실제로** 그 비율이 된다.
@@ -990,7 +1045,9 @@ export function FlowPage() {
                 {...stack}
               />
             </Box>
-            {/* ── 누적 — **증거**. 아래 작은 그림으로 내려왔다 ─────────────── */}
+            {/* ── 누적 — **증거**. 기본은 접혀 있다(`cumOpen` 머리) ────────── */}
+            {cumOpen ? (
+              <>
             <HStack alignItems="baseline" justifyContent="space-between" gap={1}>
               <Text as="span" font="label2">누적 순매수 ({cumWord})</Text>
               <Text as="span" font="legal" color="fgMuted">
@@ -1026,6 +1083,8 @@ export function FlowPage() {
                 {...stack}
               />
             </Box>
+              </>
+            ) : null}
           </VStack>
         </VStack>
       </HStack>

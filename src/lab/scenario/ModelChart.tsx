@@ -45,6 +45,7 @@ import { Stat, StatColumn } from '@/ui/Stat';
 
 import { CurveChart, type CurveLine } from '@/chart/CurveChart';
 import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
+import { ChartBlank } from '@/ui/DataState';
 
 import type { ScenarioRow } from './assemble';
 
@@ -147,7 +148,14 @@ export function ModelChart({ rows, asof }: { rows: ScenarioRow[]; asof: string }
     return out;
   })();
 
-  if (!head) return null;
+  /* ★그림 자리의 빈칸은 **0선 + 한 문장**이다 [디자인 감사 2026-10-21].
+     `head` 가 없다 = `rows` 가 비었다는 뜻이고, 종전에는 `null` 을 돌려줘
+     **호출부의 상자만 남았다**(`StrategySurface` 는 `curveRows` 가 참인지만
+     보는데 **빈 배열도 참**이라 거기서 안 걸린다). 커브 자리가 말없이
+     사라지면 「이 전략엔 커브가 없다」로 읽힌다. */
+  if (!head) {
+    return <ChartBlank note="그릴 커브가 없어요 — 만기 행이 비었어요." />;
+  }
 
   return (
     <VStack gap={0} width="100%" flexGrow={1} minHeight={0}>

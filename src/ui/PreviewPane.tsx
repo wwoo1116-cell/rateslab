@@ -36,6 +36,7 @@ import { useFillHeight } from './useFillHeight';
    같은 값에 표면마다 다른 이름을 붙이지 않기 위해서다. */
 import { READOUT_LABEL } from './ReadoutCard';
 import { ChartReadoutStrip, slotChars, type StripSlot } from './ChartReadoutStrip';
+import { ChartBlank } from './DataState';
 
 /** `d` = 그날의 전일 대비 변화. **백엔드가 낸다**(`derive.py::series_history`) —
  * 브라우저는 시계열을 차분하지 않는다(§16). 카드의 「당일 변화」가 이 값이다. */
@@ -1124,7 +1125,21 @@ export function PreviewPane({
             hoverLabel={scrubLabel}
           />
         ) : (
-          <Box height={chartH} />
+          /* ★그림 자리의 빈칸은 **0선 + 한 문장**이다 [디자인 감사 2026-10-21].
+             여기는 `<Box height={chartH} />` — 아무 말 없는 **흰 칸**이었고,
+             이 pane 이 앱에서 제일 많이 서는 그림 자리라 그 흰 칸을 가장 자주
+             봤다. 같은 화면의 옆 카드들은 같은 상태를 문장으로 처리한다.
+
+             두 상태를 **가른다** — `data` 가 아직 없으면 기다리는 중이고,
+             있는데 `view` 가 비면 **고른 구간에 점이 없는 것**이다(구간 알약
+             이나 확대가 빈 조각을 집은 자리). 한 문장으로 뭉치면 읽는 사람이
+             기다릴지 구간을 바꿀지 모른다. */
+          <ChartBlank
+            minHeight={chartH}
+            note={data
+              ? '고른 구간에 점이 없어요 — 기간을 넓혀 보세요.'
+              : '추이를 불러오는 중이에요.'}
+          />
         )}
       </Box>
 

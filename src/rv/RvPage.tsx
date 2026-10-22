@@ -51,7 +51,6 @@ import { Box, Divider, HStack, VStack } from '@coinbase/cds-web/layout';
 import {
   Text,
   TextBody,
-  TextCaption,
   TextLabel1,
   TextLabel2,
   TextLegal,
@@ -64,7 +63,7 @@ import { useFunding } from '@/state/funding';
 import { Cond } from '@/ui/Cond';
 import { NumField } from '@/ui/ControlCard';
 import { fitWidth, useControlFont } from '@/ui/fit';
-import { ErrorState, LoadingState } from '@/ui/DataState';
+import { ChartBlank, ErrorState, LoadingState } from '@/ui/DataState';
 import { ChartReadoutStrip, slotChars, type StripSlot } from '@/ui/ChartReadoutStrip';
 import { DROPDOWN_STYLES } from '@/ui/window/popup';
 import { FloatingWindow } from '@/ui/window/FloatingWindow';
@@ -345,13 +344,15 @@ function DrillWindow({
             이력을 읽지 못했어요 — {err}
           </TextBody>
         ) : !data ? (
-          <TextCaption as="span" color="fgMuted">
-            불러오는 중이에요…
-          </TextCaption>
+          /* ★그림 자리의 빈칸은 **0선 + 한 문장**이다 [디자인 감사 2026-10-21].
+             종전에는 맨 한 줄짜리 캡션이었고, 그 아래로 밴드 차트 **둘**이 설
+             자리가 통째로 비었다. `LoadingState` 꼴의 한 줄은 표에는 맞지만
+             그림 자리에는 안 맞는다 — 0선이 그어져 있어야 들어올 수가 그 위인지
+             아래인지 읽을 준비가 되고, 수가 도착할 때 틀이 안 흔들린다.
+             높이는 밴드 차트 하나 몫(180)이다 — 둘인 척하지 않는다. */
+          <ChartBlank minHeight={180} note="이력을 불러오는 중이에요." />
         ) : data.points.length < 2 ? (
-          <TextCaption as="span" color="fgMuted">
-            그릴 이력이 없어요.
-          </TextCaption>
+          <ChartBlank minHeight={180} note="그릴 이력이 없어요 — 점이 둘보다 적어요." />
         ) : (
           <>
             <BandChart
